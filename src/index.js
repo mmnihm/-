@@ -89,11 +89,11 @@ function normalizeText(text) {
 function prettyText(text) {
   const s = normalizeText(text);
   if (!s) return s;
-  const lines = s.split("\n");
-  if (lines.length >= 2 && !lines[0].startsWith("━━━━━━━━") && !lines[0].startsWith("╭") && !lines[0].startsWith("<")) {
-    return lines[0] + "\n━━━━━━━━━━━━━━\n" + lines.slice(1).join("\n");
-  }
-  return s;
+  if (s.startsWith("<")) return s;
+  const lines = s.split("\n").filter((x,i,a) => !(x === "" && a[i-1] === ""));
+  if (!lines.length) return s;
+  if (lines[0].startsWith("━━━━━━━━") || lines[0].startsWith("╭")) return lines.join("\n");
+  return "━━━━━━━━━━━━━━\n" + lines[0] + "\n━━━━━━━━━━━━━━\n" + lines.slice(1).join("\n") + "\n━━━━━━━━━━━━━━";
 }
 
 const send = (token, chat_id, text, extra = {}) =>
@@ -298,18 +298,18 @@ async function allowed(token, userId) {
 
 function userMenu() {
   return {reply_markup:{keyboard:[
-    ["📂 资源目录","🔎 搜索资源"],
-    ["🎲 随机获取","🆕 最新资源"],
-    ["🤖 克隆机器人"]
-  ],resize_keyboard:true}};
+    ["🏠 开始","📂 资源目录"],
+    ["🔎 搜索资源","🎲 随机获取"],
+    ["🆕 最新资源","🤖 克隆机器人"]
+  ],resize_keyboard:true,input_field_placeholder:"请选择功能"}};
 }
 function adminMenu() {
   return {reply_markup:{keyboard:[
-    ["📊 数据统计","🔍 仓库扫描"],
-    ["📦 资源仓库","🔐 指定群"],
-    ["🤖 克隆机器人","📢 广播消息"],
-    ["⚙️ 平台设置"]
-  ],resize_keyboard:true}};
+    ["🏠 开始","📊 数据统计"],
+    ["🔍 仓库扫描","📦 资源仓库"],
+    ["🔐 指定群","🤖 克隆机器人"],
+    ["📢 广播消息","⚙️ 平台设置"]
+  ],resize_keyboard:true,input_field_placeholder:"请选择管理功能"}};
 }
 function scanMenu() {
   return {reply_markup:{keyboard:[
@@ -539,14 +539,14 @@ async function mainMessage(msg) {
     return;
   }
 
-  if(t==="/start") return send(TOKEN,uid,"👋 <b>欢迎使用资源平台</b>\n\n📚 资源目录 · 搜索 · 随机 · 最新\n👇 请选择你要使用的功能",{parse_mode:"HTML",...(admin?adminMenu():userMenu())});
+  if(t==="/start" || t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\n\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
   if(t==="/admin") {
     if(!admin) return send(TOKEN,uid,"⛔ 无管理员权限。");
-    return send(TOKEN,uid,"👑 <b>管理员控制台</b>\n\n"+configText()+"\n\n请选择下方功能进行管理。",{parse_mode:"HTML",...adminMenu()});
+    return sendHtml(TOKEN,uid,"<b>👑 管理员控制台</b>\n\n"+configText()+"\n\n👇 <i>请选择需要管理的功能</i>",adminMenu());
   }
   if(t==="/状态") {
     if(!admin) return send(TOKEN,uid,"⛔ 无管理员权限。");
-    return send(TOKEN,uid,configText(),{parse_mode:"HTML",...adminMenu()});
+    return sendHtml(TOKEN,uid,configText(),adminMenu());
   }
   if(t==="🔐 绑定指定群" && admin)
     return send(TOKEN,uid,"🔐 绑定指定群\n\n1. 把主机器人加入你要限制访问的群。\n2. 确保机器人能查看群成员。\n3. 在该群发送：\n\n/绑定指定群\n\n发送成功后会自动绑定。");
@@ -633,7 +633,7 @@ async function mainMessage(msg) {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
     return send(TOKEN,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
   }
-  if(t==="🔎 搜索资源") { states.set(key,{step:"search"}); return send(TOKEN,uid,"🔎 <b>搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"}); }
+  if(t==="🔎 搜索资源") { states.set(key,{step:"search"}); return sendHtml(TOKEN,uid,"<b>🔎 搜索资源</b>\n\n请输入 <b>关键词</b>，例如：作者名、标题或关键词。\n\n━━━━━━━━━━━━━━\n↩️ 发送 <code>/cancel</code> 可取消搜索。"); }
   if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10());
   if(t==="🆕 最新资源") return deliver(TOKEN,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search") { states.delete(key); return deliver(TOKEN,uid,uid,search(t)); }
