@@ -186,10 +186,10 @@ async function childHandle(env, bot, msg){
   if(msg.text==="/start") return send(bot.token,chat,"👋 欢迎使用资源库\\n\\n请选择功能：",childMenu());
   if(s?.step==="search" && msg.text){
     await env.DB.prepare("DELETE FROM clone_sessions WHERE scope=? AND user_id=?").bind("child:"+bot.bot_id,uid).run();
-    if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
+    if(!(await member(env,env.BOT_TOKEN,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
     const l=await resources(env,"search",msg.text); return send(bot.token,chat,"🔎 搜索结果："+(l.results?.length||0),inline(await resourceButtons(env,l)));
   }
-  if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
+  if(!(await member(env,env.BOT_TOKEN,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
   if(msg.text==="📂 资源目录"){const f=await resources(env,"folders");return send(bot.token,chat,"📂 资源目录\\n\\n请选择分类：",inline((f.results||[]).map(x=>[{text:"📁 "+x.name,callback_data:"folder:"+x.id}])));}
   if(msg.text==="🔎 搜索资源"){await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES(?,?,?,'') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind("child:"+bot.bot_id,uid,"search").run();return send(bot.token,chat,"🔎 请输入资源名称或关键词：");}
   if(msg.text==="🎲 随机获取"){const l=await resources(env,"random");for(const r of l.results||[]) await sendResource(env,bot.token,chat,r.id);return;}
@@ -232,7 +232,7 @@ async function childUpdate(env,bot,u){
     const q=u.callback_query,d=q.data||'',uid=q.from.id,chat=q.message?.chat?.id;
     await tg(bot.token,"answerCallbackQuery",{callback_query_id:q.id});
     if(d==="home")return send(bot.token,chat,"🏠 返回首页",childMenu());
-    if(d.startsWith("res:")){if(!(await member(env,bot.token,uid)))return;return sendResource(env,bot.token,chat,Number(d.slice(4)));}
+    if(d.startsWith("res:")){if(!(await member(env,env.BOT_TOKEN,uid)))return;return sendResource(env,bot.token,chat,Number(d.slice(4)));}
     if(d.startsWith("folder:")){const id=Number(d.split(":")[1]);const rs=await env.DB.prepare("SELECT id,filename,file_id,file_type,file_size,folder_id,created_at FROM resources WHERE status='active' AND folder_id=? ORDER BY created_at DESC LIMIT 8").bind(id).all();return send(bot.token,chat,"📁 分类资源",inline([...await resourceButtons(env,rs),[{text:"🏠 返回首页",callback_data:"home"}]]));}
     return;
   }
