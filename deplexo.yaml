@@ -1,4 +1,4 @@
 framework: node
 install: npm install
-start: node src/index.js
+start: npm start
 port: 3000
