@@ -163,27 +163,51 @@ async function deliver(token,chatId,userId,items) {
 const states=new Map();
 
 async function binding(msg) {
-  if(!isAdmin(msg.from?.id) || !["group","supergroup"].includes(msg.chat?.type)) return false;
-  const t=msg.text||"";
-  if(!["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"].includes(t)) return false;
+  const admin=isAdmin(msg.from?.id);
+  const t=(msg.text||"").trim().split(/\\s+/)[0];
+  if(!admin) return false;
 
-  if(t==="/绑定指定群") {
-    db.settings.requiredGroup={chatId:String(msg.chat.id),title:msg.chat.title||String(msg.chat.id),username:msg.chat.username||"",type:msg.chat.type,url:msg.chat.username?"https://t.me/"+msg.chat.username:""};
+  if(["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"].includes(t) &&
+     !["group","supergroup"].includes(msg.chat?.type)) {
+    return send(TOKEN,msg.from.id,"⚠️ 这个命令请在目标群里发送。");
+  }
+
+  if(["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"].includes(t) &&
+     ["group","supergroup"].includes(msg.chat?.type)) {
+    if(t==="/绑定指定群") {
+      db.settings.requiredGroup={chatId:String(msg.chat.id),title:msg.chat.title||String(msg.chat.id),username:msg.chat.username||"",type:msg.chat.type,url:msg.chat.username?"https://t.me/"+msg.chat.username:""};
+      saveDb();
+      await send(TOKEN,msg.from.id,"✅ 指定群绑定成功。\\n\\n"+configText());
+      return true;
+    }
+    if(t==="/绑定仓库") {
+      db.settings.repository={chatId:String(msg.chat.id),title:msg.chat.title||String(msg.chat.id),username:msg.chat.username||"",type:msg.chat.type};
+      saveDb();
+      await send(TOKEN,msg.from.id,"✅ 资源仓库绑定成功。\\n\\n"+configText());
+      return true;
+    }
+    if(t==="/解绑指定群") db.settings.requiredGroup=null;
+    if(t==="/解绑仓库") db.settings.repository=null;
     saveDb();
-    await send(TOKEN,msg.from.id,"✅ 指定群绑定成功。\n\n"+configText());
+    await send(TOKEN,msg.from.id,"✅ 已解除绑定。\\n\\n"+configText());
     return true;
   }
-  if(t==="/绑定仓库") {
-    db.settings.repository={chatId:String(msg.chat.id),title:msg.chat.title||String(msg.chat.id),username:msg.chat.username||"",type:msg.chat.type};
+
+  // 私聊点击“绑定资源仓库”后，转发仓库中的任意一条消息给主机器人即可绑定。
+  if(msg.chat?.type==="private" && msg.forward_origin?.chat) {
+    const fc=msg.forward_origin.chat;
+    db.settings.repository={
+      chatId:String(fc.id),
+      title:fc.title||fc.username||String(fc.id),
+      username:fc.username||"",
+      type:fc.type||"channel"
+    };
     saveDb();
-    await send(TOKEN,msg.from.id,"✅ 资源仓库绑定成功。\n\n"+configText());
+    await send(TOKEN,msg.from.id,"✅ 资源仓库绑定成功。\\n\\n📦 "+(fc.title||fc.username||fc.id)+"\\n🆔 "+fc.id+"\\n\\n现在把主机器人加入该仓库并确保有读取消息权限。\\n新资源会自动建立索引。");
     return true;
   }
-  if(t==="/解绑指定群") db.settings.requiredGroup=null;
-  if(t==="/解绑仓库") db.settings.repository=null;
-  saveDb();
-  await send(TOKEN,msg.from.id,"✅ 已解除绑定。\n\n"+configText());
-  return true;
+
+  return false;
 }
 
 async function mainMessage(msg) {
@@ -211,7 +235,7 @@ async function mainMessage(msg) {
     return send(TOKEN,uid,"🔐 绑定指定群\n\n1. 把主机器人加入你要限制访问的群。\n2. 确保机器人能查看群成员。\n3. 在该群发送：\n\n/绑定指定群\n\n发送成功后会自动绑定。");
 
   if(t==="📦 绑定资源仓库" && admin)
-    return send(TOKEN,uid,"📦 绑定资源仓库\n\n1. 把主机器人加入资源仓库群/频道。\n2. 机器人需要能读取消息。\n3. 在仓库里发送：\n\n/绑定仓库\n\n绑定后，新资源会自动建立索引。");
+    return send(TOKEN,uid,"📦 绑定资源仓库\n\n最简单的绑定方法：\n\n1. 先把主机器人加入资源仓库群/频道。\n2. 从资源仓库里转发任意一条消息给主机器人。\n3. 主机器人会自动识别并绑定这个群/频道。\n\n也可以直接在资源群里发送：/绑定仓库");
 
   if(t==="🤖 克隆机器人") {
     states.set(key,{step:"token"});
