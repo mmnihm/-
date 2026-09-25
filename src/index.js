@@ -83,7 +83,7 @@ function isAdmin(userId) {
 
 async function ownerHasRequiredGroup(bot) {
   if (!requiredGroupId()) return false;
-  return isMember(bot.token, bot.ownerId);
+  return checkMemberCached(bot.token, bot.ownerId, true);
 }
 
 async function enforceChildOwner(bot, notify = false) {
@@ -208,6 +208,20 @@ const main = (method, body) => tg(TOKEN, method, body);
 const send = (token, chatId, text, extra = {}) =>
   tg(token, 'sendMessage', {chat_id: chatId, text, ...extra});
 
+const membershipCache = new Map();
+const MEMBERSHIP_CACHE_MS = 15000;
+async function checkMemberCached(token, userId, force = false) {
+  const groupId = requiredGroupId();
+  if (!groupId) return true;
+  const key = token + ':' + groupId + ':' + userId;
+  const now = Date.now();
+  const cached = membershipCache.get(key);
+  if (!force && cached && now - cached.at < MEMBERSHIP_CACHE_MS) return cached.ok;
+  const ok = await isMember(token, userId);
+  membershipCache.set(key, { ok, at: now });
+  return ok;
+}
+
 function keyboard(rows) {
   return { reply_markup: { keyboard: rows, resize_keyboard: true } };
 }
@@ -255,11 +269,19 @@ function addResource(msg) {
   saveDb();
 }
 async function copyResource(token, toChatId, item) {
-  return tg(TOKEN, 'copyMessage', {chat_id: toChatId, from_chat_id: item.chatId, message_id: item.messageId});
+  return tg(token, 'copyMessage', {chat_id: toChatId, from_chat_id: item.chatId, message_id: item.messageId});
 }
 
-async function deliverResources(token, chatId, items) {
+async function deliverResources(token, chatId, items, userId = null, ownerBot = null) {
   if (!repositoryChatId()) return send(token, chatId, '⚠️ 尚未绑定资源仓库。');
+  if (ownerBot) {
+    if (!(await enforceChildOwner(ownerBot, false))) {
+      return send(token, chatId, '⏸️ 该专属机器人目前已暂停使用。');
+    }
+  }
+  if (userId != null && !(await checkMemberCached(token, userId, true))) {
+    return send(token, chatId, '🔐 暂无访问权限，请先加入指定群。');
+  }
   if (!items.length) return send(token, chatId, '📭 暂无资源。');
   let ok = 0;
   for (const item of items) {
@@ -400,7 +422,7 @@ async function handleMain(msg) {
       return send(TOKEN, chatId, '🔐 还没有绑定扫描账号。\n\n请先发送 /绑定扫描账号。');
     }
     if (!repositoryChatId()) {
-      return send(TOKEN, chatId, '⚠️ 尚未配置 repositoryChatId()。历史扫描需要先绑定资源仓库。');
+      return send(TOKEN, chatId, '⚠️ 尚未绑定资源仓库。历史扫描需要先绑定资源仓库。');
     }
     if (historyScanner.running) {
       return send(TOKEN, chatId, '⏳ 历史扫描已经在运行中。');
@@ -500,7 +522,7 @@ async function handleMain(msg) {
   }
 
   if (['📂 资源目录','🔎 搜索资源','🎲 随机获取','🆕 最新资源'].includes(text)) {
-    if (!(await isMember(TOKEN, userId))) return send(TOKEN, chatId, '🔐 暂无访问权限，请先加入指定群。');
+    if (!(await checkMemberCached(TOKEN, userId))) return send(TOKEN, chatId, '🔐 暂无访问权限，请先加入指定群。');
     if (text === '📂 资源目录') {
       const list = latestResources(10);
       return send(TOKEN, chatId, list.length ? '📂 最新资源\n\n' + list.map((x,i)=>`${i+1}. ${x.title}`).join('\n') : '📭 暂无资源。');
@@ -509,13 +531,13 @@ async function handleMain(msg) {
       sessions.set(userId, {step:'search'});
       return send(TOKEN, chatId, '🔎 请输入关键词：');
     }
-    if (text === '🎲 随机获取') return deliverResources(TOKEN, chatId, randomResources(10));
-    return deliverResources(TOKEN, chatId, latestResources(10));
+    if (text === '🎲 随机获取') return deliverResources(TOKEN, chatId, randomResources(10), userId);
+    return deliverResources(TOKEN, chatId, latestResources(10), userId);
   }
 
   if (session?.step === 'search') {
     sessions.delete(userId);
-    return deliverResources(TOKEN, chatId, searchResources(text));
+    return deliverResources(TOKEN, chatId, searchResources(text), userId);
   }
   if (text === '⚙️ 平台管理' && admin) {
     return send(TOKEN, chatId, `⚙️ 平台管理\n\n👤 广播用户：${broadcastUsers.size}\n🤖 子机器人：${db.children.length}\n📦 资源：${db.resources.length}\n🔍 扫描账号：${historyScanner.client ? '已连接' : '未绑定'}\n🧭 扫描状态：${historyScanner.running ? '运行中' : '空闲'}`);
@@ -533,7 +555,7 @@ async function handleChild(bot, msg) {
     return send(bot.token, chatId, '⏸️ 该专属机器人目前已暂停使用。\n\n机器人所属用户不在指定群内。');
   }
   if (text === '/start') return send(bot.token, chatId, '👋 欢迎使用资源机器人\n\n请选择功能：', userMenu(false, true));
-  if (!(await isMember(bot.token, userId))) {
+  if (!(await checkMemberCached(bot.token, userId))) {
     return send(bot.token, chatId, '🔐 暂无访问权限，请先加入指定群。');
   }
   if (['📂 资源目录','🔎 搜索资源','🎲 随机获取','🆕 最新资源'].includes(text)) {
@@ -545,13 +567,13 @@ async function handleChild(bot, msg) {
       sessions.set(`c:${bot.botId}:${userId}`, {step:'search'});
       return send(bot.token, chatId, '🔎 请输入关键词：');
     }
-    if (text === '🎲 随机获取') return deliverResources(bot.token, chatId, randomResources(10));
-    return deliverResources(bot.token, chatId, latestResources(10));
+    if (text === '🎲 随机获取') return deliverResources(bot.token, chatId, randomResources(10), userId, bot);
+    return deliverResources(bot.token, chatId, latestResources(10), userId, bot);
   }
   const key = `c:${bot.botId}:${userId}`;
   if (sessions.get(key)?.step === 'search') {
     sessions.delete(key);
-    return deliverResources(bot.token, chatId, searchResources(text));
+    return deliverResources(bot.token, chatId, searchResources(text), userId, bot);
   }
 }
 
@@ -586,6 +608,15 @@ async function childLoop(bot) {
       for (const u of updates) {
         offset = u.update_id + 1;
         bot.offset = offset;
+        if (u.callback_query) {
+          const ok = await enforceChildOwner(bot, false) &&
+            await checkMemberCached(token, u.from.id, true);
+          await tg(token, 'answerCallbackQuery', {
+            callback_query_id: u.callback_query.id,
+            text: ok ? '验证成功' : '🔐 请先加入指定群',
+            show_alert: true
+          });
+        }
         if (u.message) await handleChild(bot, u.message);
       }
       saveDb();
