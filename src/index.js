@@ -145,11 +145,17 @@ async function mainHandle(env, msg){
 async function childHandle(env, bot, msg){
   const uid=msg.from?.id, chat=msg.chat?.id;
   if(!uid) return;
-  await env.DB.prepare("INSERT INTO bot_users(bot_instance_id,user_id,last_seen,status) VALUES(?,?,datetime('now'),'active') ON CONFLICT(bot_instance_id,user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(bot.id,uid).run();
-  if(msg.text==="/start") return send(bot.token,chat,"👋 欢迎使用资源库\n\n请选择功能：",childMenu());
-  if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\n\n请先加入指定群。");
-  if(msg.text==="📂 资源目录"){const f=await resources(env,"folders");return send(bot.token,chat,"📂 资源目录\n\n请选择分类：",inline((f.results||[]).map(x=>[{text:"📁 "+x.name,callback_data:"folder:"+x.id}])));}
-  if(msg.text==="🔎 搜索资源"){await env.DB.prepare("INSERT OR REPLACE INTO clone_sessions(user_id,step,payload) VALUES(?, 'search:'+bot.id, '')").bind(uid).run();return send(bot.token,chat,"🔎 请输入资源名称或关键词：");}
+  await env.DB.prepare("INSERT INTO bot_users(bot_instance_id,user_id,last_seen,status) VALUES(?,?,datetime('now'),'active') ON CONFLICT(bot_instance_id,user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(bot.bot_id,uid).run();
+  const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE user_id=?").bind(uid).first();
+  if(msg.text==="/start") return send(bot.token,chat,"👋 欢迎使用资源库\\n\\n请选择功能：",childMenu());
+  if(s?.step===("search:"+bot.bot_id) && msg.text){
+    await env.DB.prepare("DELETE FROM clone_sessions WHERE user_id=?").bind(uid).run();
+    if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
+    const l=await resources(env,"search",msg.text); return send(bot.token,chat,"🔎 搜索结果："+(l.results?.length||0),inline(await resourceButtons(env,l)));
+  }
+  if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
+  if(msg.text==="📂 资源目录"){const f=await resources(env,"folders");return send(bot.token,chat,"📂 资源目录\\n\\n请选择分类：",inline((f.results||[]).map(x=>[{text:"📁 "+x.name,callback_data:"folder:"+x.id}])));}
+  if(msg.text==="🔎 搜索资源"){await env.DB.prepare("INSERT OR REPLACE INTO clone_sessions(user_id,step,payload) VALUES(?, ?, '')").bind(uid,"search:"+bot.bot_id).run();return send(bot.token,chat,"🔎 请输入资源名称或关键词：");}
   if(msg.text==="🎲 随机获取"){const l=await resources(env,"random");for(const r of l.results||[]) await sendResource(env,bot.token,chat,r.id);return;}
   if(msg.text==="🆕 最新资源"){const l=await resources(env,"latest");return send(bot.token,chat,"🆕 最新资源",inline(await resourceButtons(env,l)));}
 }
