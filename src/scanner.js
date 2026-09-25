@@ -27,7 +27,7 @@ export class HistoryScanner {
   }
 
   async connectSaved() {
-    if (!this.sessionValue) return false;
+    if (!this.sessionValue || !this.apiId || !this.apiHash) return false;
     const session = new StringSession(this.decrypt(this.sessionValue));
     const client = new TelegramClient(session, this.apiId, this.apiHash, {
       connectionRetries: 5,
