@@ -78,23 +78,20 @@ async function tgUploadBuffer(token, method, chatId, buffer, fileName, caption="
   if (!j.ok) throw new Error(j.description || method + " failed");
   return j.result;
 }
-function prettyText(text) {
-  let s = String(text ?? "")
-    .replace(/\\\\n/g, "\\n")
+function normalizeText(text) {
+  return String(text ?? "")
+    .replace(/\\n/g, "\n")
     .replace(/\\r/g, "")
-    .replace(/\\n{3,}/g, "\\n\\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
 
+function prettyText(text) {
+  const s = normalizeText(text);
   if (!s) return s;
-
-  const lines = s.split("\\n");
-  if (
-    lines.length >= 2 &&
-    !lines[0].startsWith("━━━━━━━━") &&
-    !lines[0].startsWith("╭") &&
-    !lines[0].startsWith("<")
-  ) {
-    return lines[0] + "\\n━━━━━━━━━━━━━━\\n" + lines.slice(1).join("\\n");
+  const lines = s.split("\n");
+  if (lines.length >= 2 && !lines[0].startsWith("━━━━━━━━") && !lines[0].startsWith("╭") && !lines[0].startsWith("<")) {
+    return lines[0] + "\n━━━━━━━━━━━━━━\n" + lines.slice(1).join("\n");
   }
   return s;
 }
@@ -103,12 +100,7 @@ const send = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:prettyText(text), ...extra});
 
 const sendHtml = (token, chat_id, text, extra = {}) =>
-  tg(token, "sendMessage", {
-    chat_id,
-    text:String(text ?? "").replace(/\\\\n/g, "\\n"),
-    parse_mode:"HTML",
-    ...extra
-  });
+  tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
   return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}}};
@@ -265,7 +257,7 @@ async function scanHistory(uid) {
     db.resources=db.resources.slice(0,MAX_RESOURCES);
     db.settings.historyScan={status:"completed",scanned,indexed,startedAt:db.settings.historyScan.startedAt,finishedAt:Date.now(),error:""};
     saveDb();
-    return sendHtml(TOKEN,uid,`<b>✅ 历史扫描完成</b>\\n\\n📦 <b>资源仓库</b>：${r.title}\\n🔎 <b>扫描消息</b>：${scanned} 条\\n📚 <b>新增/更新</b>：${indexed} 条\\n📊 <b>当前资源</b>：${db.resources.length} 条\\n\\n<i>历史消息已建立索引，现在可以直接搜索资源。</i>`,adminMenu());
+    return sendHtml(TOKEN,uid,`<b>✅ 历史扫描完成</b>\n\n📦 <b>资源仓库</b>：${r.title}\n🔎 <b>扫描消息</b>：${scanned} 条\n📚 <b>新增 / 更新</b>：${indexed} 条\n📊 <b>当前资源</b>：${db.resources.length} 条\n\n━━━━━━━━━━━━━━\n✨ <i>历史消息已建立索引</i>\n现在可以直接使用搜索、随机获取和最新资源功能。`,adminMenu());;
   } catch(e) {
     db.settings.historyScan.status="error";
     db.settings.historyScan.error=e.message;
