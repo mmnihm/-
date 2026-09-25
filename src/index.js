@@ -15,7 +15,7 @@ function boundRepository() { return db.settings?.repository || null; }
 function requiredGroupId() { return boundGroup()?.chatId || ''; }
 function requiredGroupUrl() { return boundGroup()?.url || ''; }
 function repositoryChatId() { return boundRepository()?.chatId || ''; }
-const DATA_FILE = process.env.DATA_FILE || './database.json';
+const DATA_FILE = './database.json';
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
 // Built-in encryption secret: STORAGE_KEY is optional now.
 // Keep this value unchanged so encrypted child-bot tokens survive restarts/redeploys.
@@ -822,7 +822,13 @@ async function childLoop(bot) {
 }
 
 async function mainLoop() {
-  await main('deleteWebhook', {drop_pending_updates:false});
+  // Always clear any old webhook before long-polling. If the platform restarts,
+  // retry the setup instead of leaving the main bot silently offline.
+  try {
+    await main('deleteWebhook', {drop_pending_updates:false});
+  } catch (e) {
+    console.error('main webhook setup:', e.message);
+  }
   while (true) {
     try {
       const updates = await main('getUpdates', {
@@ -845,6 +851,11 @@ async function mainLoop() {
       saveDb();
     } catch (e) {
       console.error('main loop:', e.message);
+      // 409 means another polling process is using this bot token. Clear the
+      // webhook and retry; do not terminate the whole service.
+      if (String(e.message).includes('409') || String(e.message).includes('Conflict')) {
+        try { await main('deleteWebhook', {drop_pending_updates:false}); } catch {}
+      }
       await sleep(3000);
     }
   }
