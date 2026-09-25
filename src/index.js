@@ -461,29 +461,7 @@ async function mainMessage(msg) {
     catch(e) { return send(TOKEN,uid,"❌ 扫描授权失败：\\n\\n"+e.message,adminMenu()); }
   }
 
-  if(t==="🔍 仓库扫描" && admin) {
-    const r=repo();
-    if(!r) return send(TOKEN,uid,"🔍 仓库扫描\\n\\n❌ 尚未绑定资源仓库。\\n\\n先点击「📦 资源仓库」完成绑定。",adminMenu());
-    try {
-      const chat=await main("getChat",{chat_id:r.chatId});
-      const me=await main("getMe");
-      const member=await main("getChatMember",{chat_id:r.chatId,user_id:me.id});
-      return send(TOKEN,uid,
-        "🔍 仓库状态\\n\\n"+
-        "📦 "+(chat.title||chat.username||r.chatId)+"\\n"+
-        "🆔 "+r.chatId+"\\n"+
-        "🤖 机器人权限： "+member.status+"\\n"+
-        "📚 已索引： "+db.resources.length+" 条\\n\\n"+
-        "🟢 实时扫描：已开启\\n"+
-        "频道后续新消息会自动进入资源索引。",
-        adminMenu());
-    } catch(e) {
-      return send(TOKEN,uid,
-        "🔍 仓库状态\\n\\n❌ 无法读取仓库。\\n\\n"+
-        "请确认主机器人已经加入频道并具有管理员权限。\\n"+
-        "原因："+e.message,adminMenu());
-    }
-  }
+
 
   if(t==="📂 资源目录") {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
@@ -534,7 +512,7 @@ async function pollMain() {
           console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));
           indexResource(u.edited_channel_post);
         }
-        if(u.message) await mainMessage(u.message);
+        if(u.message) mainMessage(u.message).catch(e=>console.error("MAIN MESSAGE:",e.message));
         db.offset=u.update_id+1;
       }
       saveDb();
