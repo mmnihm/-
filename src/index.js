@@ -677,11 +677,13 @@ async function handleMain(msg) {
   if (session?.step === 'directorySelect') {
     const value = text.trim();
     const directory = db.directories[Number(value) - 1] || db.directories.find(d => d.name === value);
-    if (!directory) return send(TOKEN, chatId, '⚠️ 找不到这个目录，请输入目录编号或名称。');
+    if (!directory) return send(TOKEN, chatId, '⚠️ 找不到这个目录，请点击下面的目录按钮。');
     sessions.delete(userId);
     const items = directoryResources(directory.id).slice(0, 20);
-    if (!items.length) return send(TOKEN, chatId, '📁 ' + directory.name + '\\n\\n📭 这个目录暂时没有资源。');
-    return send(TOKEN, chatId, '📁 ' + directory.name + '\\n\\n' + items.map((x,i)=>`${i+1}. ${x.title}`).join('\\n') + '\\n\\n发送资源编号即可获取对应资源。');
+    if (!items.length) return send(TOKEN, chatId, '📁 ' + directory.name + '\\n\\n📭 这个目录暂时没有资源。', userMenu(admin));
+    return send(TOKEN, chatId, '📁 ' + directory.name + '\\n\\n请选择资源：', {
+      reply_markup: { inline_keyboard: items.map((x,i)=>[{text:`${i+1}. ${x.title}`.slice(0,64), callback_data:`dirres:${directory.id}:${i}`}]) }
+    });
   }
 
   if (session?.step === 'search') {
@@ -723,11 +725,13 @@ async function handleChild(bot, msg) {
   if (sessions.get(key)?.step === 'directorySelect') {
     const value = text.trim();
     const directory = db.directories[Number(value) - 1] || db.directories.find(d => d.name === value);
-    if (!directory) return send(bot.token, chatId, '⚠️ 找不到这个目录，请输入目录编号或名称。');
+    if (!directory) return send(bot.token, chatId, '⚠️ 找不到这个目录，请点击下面的目录按钮。');
     sessions.delete(key);
     const items = directoryResources(directory.id).slice(0, 20);
-    if (!items.length) return send(bot.token, chatId, '📁 ' + directory.name + '\\n\\n📭 这个目录暂时没有资源。');
-    return send(bot.token, chatId, '📁 ' + directory.name + '\\n\\n' + items.map((x,i)=>`${i+1}. ${x.title}`).join('\\n') + '\\n\\n发送资源编号即可获取对应资源。');
+    if (!items.length) return send(bot.token, chatId, '📁 ' + directory.name + '\\n\\n📭 这个目录暂时没有资源。', userMenu(false, true));
+    return send(bot.token, chatId, '📁 ' + directory.name + '\\n\\n请选择资源：', {
+      reply_markup: { inline_keyboard: items.map((x,i)=>[{text:`${i+1}. ${x.title}`.slice(0,64), callback_data:`dirres:${directory.id}:${i}`}]) }
+    });
   }
 
   if (sessions.get(key)?.step === 'search') {
@@ -768,13 +772,26 @@ async function childLoop(bot) {
         offset = u.update_id + 1;
         bot.offset = offset;
         if (u.callback_query) {
+          const cq = u.callback_query;
           const ok = await enforceChildOwner(bot, false) &&
-            await checkMemberCached(token, u.from.id, true);
-          await tg(token, 'answerCallbackQuery', {
-            callback_query_id: u.callback_query.id,
-            text: ok ? '验证成功' : '🔐 请先加入指定群',
-            show_alert: true
-          });
+            await checkMemberCached(token, cq.from.id, true);
+          if (cq.data?.startsWith('dirres:') && ok) {
+            const [, dirId, idxRaw] = cq.data.split(':');
+            const items = directoryResources(dirId).slice(0, 20);
+            const idx = Number(idxRaw);
+            if (items[idx]) {
+              await tg(token, 'answerCallbackQuery', {callback_query_id:cq.id, text:'正在发送…'});
+              await deliverResources(token, cq.message.chat.id, [items[idx]], cq.from.id, bot);
+            } else {
+              await tg(token, 'answerCallbackQuery', {callback_query_id:cq.id, text:'资源不存在', show_alert:true});
+            }
+          } else {
+            await tg(token, 'answerCallbackQuery', {
+              callback_query_id: cq.id,
+              text: ok ? '验证成功' : '🔐 请先加入指定群',
+              show_alert: true
+            });
+          }
         }
         if (u.message) await handleChild(bot, u.message);
       }
