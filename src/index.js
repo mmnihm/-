@@ -533,13 +533,12 @@ async function mainMessage(msg) {
   if(t==="/start") return send(TOKEN,uid,"👋 <b>欢迎使用资源平台</b>\n\n📚 资源目录 · 搜索 · 随机 · 最新\n👇 请选择你要使用的功能",{parse_mode:"HTML",...(admin?adminMenu():userMenu())});
   if(t==="/admin") {
     if(!admin) return send(TOKEN,uid,"⛔ 无管理员权限。");
-    return send(TOKEN,uid,"👑 管理员控制台\n\n"+configText()+"\n\n绑定操作请把主机器人加入目标群/仓库后，在对应群里发送：\n/绑定指定群\n/绑定仓库",adminMenu());
+    return send(TOKEN,uid,"👑 <b>管理员控制台</b>\n\n"+configText()+"\n\n请选择下方功能进行管理。",{parse_mode:"HTML",...adminMenu()});
   }
   if(t==="/状态") {
     if(!admin) return send(TOKEN,uid,"⛔ 无管理员权限。");
-    return send(TOKEN,uid,configText(),adminMenu());
+    return send(TOKEN,uid,configText(),{parse_mode:"HTML",...adminMenu()});
   }
-
   if(t==="🔐 绑定指定群" && admin)
     return send(TOKEN,uid,"🔐 绑定指定群\n\n1. 把主机器人加入你要限制访问的群。\n2. 确保机器人能查看群成员。\n3. 在该群发送：\n\n/绑定指定群\n\n发送成功后会自动绑定。");
 
