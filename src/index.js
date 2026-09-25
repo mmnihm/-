@@ -170,6 +170,12 @@ const historyScanner = new HistoryScanner({
     if (event.status === 'auth_error') {
       await send(TOKEN, event.adminId, '⚠️ 扫描账号登录遇到问题：' + event.error);
     }
+    if (event.status === 'scan_progress' && Number(event.scanned || 0) % 500 === 0) {
+      await send(TOKEN, event.adminId, '🔍 正在真实扫描：已读取 ' + event.scanned + ' 条，发现资源 ' + event.resources + ' 条，当前消息 ID：' + event.lastMessageId);
+    }
+    if (event.status === 'scan_finished' && event.adminId) {
+      await send(TOKEN, event.adminId, '📌 扫描任务已停止/结束，实际读取 ' + event.scanned + ' 条。');
+    }
   }
 });
 
@@ -274,6 +280,7 @@ async function handleMain(msg) {
       const stats = await historyScanner.scan({
         chatId: REPOSITORY_CHAT_ID,
         maxMessages,
+        adminId: userId,
         onResource: async (item) => {
           const i = db.resources.findIndex(x => x.messageId === item.messageId && x.chatId === item.chatId);
           if (i >= 0) db.resources[i] = item;
@@ -282,6 +289,7 @@ async function handleMain(msg) {
           if (statsSafeCounter()) saveDb();
         }
       });
+      saveDb();
       await send(TOKEN, chatId, '✅ 历史扫描完成\n\n🔍 实际读取：' + stats.scanned + '\n📦 发现资源：' + stats.resources + '\n⏭️ 跳过：' + stats.skipped + '\n❌ 错误：' + stats.errors + '\n\n📚 当前索引：' + db.resources.length);
     } catch (error) {
       await send(TOKEN, chatId, '❌ 历史扫描失败：' + error.message);
