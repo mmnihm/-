@@ -262,7 +262,10 @@ async function mainMessage(msg) {
 async function childMessage(child,msg,token) {
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
-  if((t.split(" ")[0].split("@")[0])==="/start") return send(token,uid,"👋 欢迎使用资源机器人\n\n请选择功能：",userMenu());
+  if((t.split(" ")[0].split("@")[0])==="/start") return send(token,uid,"👋 欢迎使用资源机器人\n\n请选择功能：",{reply_markup:{keyboard:[
+    ["📂 资源目录","🔎 搜索资源"],
+    ["🎲 随机获取","🆕 最新资源"]
+  ],resize_keyboard:true}});
   // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。\n  if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
   if(t==="📂 资源目录") return send(token,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
   if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 请输入关键词：");}
