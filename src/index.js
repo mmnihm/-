@@ -1,8 +1,29 @@
 import 'dotenv/config';
+import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+const PORT = Number(process.env.PORT || 3000);
+
+const healthServer = http.createServer((req, res) => {
+  if (req.url === '/health' || req.url === '/') {
+    res.writeHead(200, {'content-type': 'text/plain; charset=utf-8'});
+    res.end('Telegram Clone Platform OK\\n');
+    return;
+  }
+  res.writeHead(404);
+  res.end('Not Found');
+});
+
+healthServer.on('error', error => {
+  console.error('❌ HTTP SERVER ERROR:', error);
+});
+
+healthServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Deplexo HTTP server listening on 0.0.0.0:${PORT}`);
+});
+
 console.log('====================================');
 console.log('🚀 Telegram Clone Platform starting...');
 console.log('📦 Node.js:', process.version);
