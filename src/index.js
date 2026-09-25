@@ -93,6 +93,7 @@ async function broadcast(env, token, adminChat, text){
   return send(token,adminChat,"✅ 广播完成\n\n📊 总数："+users.results.length+"\n✅ 成功："+okc+"\n❌ 失败："+fail);
 }
 
+async function sessionMain(env,uid,step,payload=""){return env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES('main',?,?,?) ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind(uid,step,payload).run()}
 async function mainHandle(env, msg){
   const token=env.BOT_TOKEN, uid=msg.from?.id, chat=msg.chat?.id;
   if(!uid) return;
@@ -119,7 +120,11 @@ async function mainHandle(env, msg){
     }
     return send(token,chat,"🆕 最新资源",inline(await resourceButtons(env,list)));
   }
-  if(msg.text==="⚙️ 平台管理" && admin) return send(token,chat,"⚙️ 平台管理\n\n当前版本已接入：指定群、子机器人、中央资源索引。\n\n资源仓库扫描/上传需要绑定资源来源后使用。");
+  if(msg.text==="⚙️ 平台管理" && admin) return send(token,chat,"⚙️ 平台管理",kb([["📦 绑定仓库","📁 新建文件夹"],["📤 上传资源","👤 管理员设置"],["🔄 扫描仓库"],["🏠 返回首页"]]));
+  if(msg.text==="📦 绑定仓库"&&admin){await sessionMain(env,uid,"repo","");return send(token,chat,"📦 请发送仓库 Chat ID。\\n\\n先把主机器人加入私有群/频道并授予必要权限。\\n/cancel 取消。")}
+  if(msg.text==="📁 新建文件夹"&&admin){await sessionMain(env,uid,"folder","");return send(token,chat,"📁 请输入新文件夹名称。\\n/cancel 取消。")}
+  if(msg.text==="👤 管理员设置"&&admin)return send(token,chat,"👤 管理员设置\\n\\n发送 +数字 添加管理员\\n发送 -数字 删除管理员\\n发送 list 查看管理员\\n/cancel 取消。");
+  if(msg.text==="🔄 扫描仓库"&&admin)return send(token,chat,"🔄 仓库扫描说明\\n\\n当前 Telegram Bot API 无法保证读取私有仓库的完整历史消息，因此这里不会伪造“全量扫描成功”。\\n\\n现有资源可继续通过上传流程建立索引；完整历史恢复需要 MTProto/user-account 扫描层。");
   if(s?.step==="search" && msg.text){
     await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();
     const list=await resources(env,"search",msg.text);
