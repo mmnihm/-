@@ -268,6 +268,55 @@ async function mainMessage(msg) {
     }
   }
 
+  if(t==="📊 数据统计" && admin)
+    return send(TOKEN,uid,
+      "📊 平台数据\\n\\n"+
+      "👤 用户： "+db.users.length+"\\n"+
+      "🤖 子机器人： "+db.children.length+"\\n"+
+      "📚 已索引资源： "+db.resources.length+"\\n"+
+      "📂 目录： "+db.directories.length+"\\n\\n"+
+      "🔐 指定群： "+(group()?"✅ 已绑定":"❌ 未绑定")+"\\n"+
+      "📦 资源仓库： "+(repo()?"✅ 已绑定":"❌ 未绑定"),
+      adminMenu());
+
+  if(t==="📦 资源仓库" && admin)
+    return send(TOKEN,uid,
+      "📦 资源仓库设置\\n\\n"+
+      "推荐：把主机器人加入资源频道并设为管理员，\\n"+
+      "然后从频道转发任意一条消息给主机器人。\\n\\n"+
+      "当前： "+(repo()?"✅ "+repo().title:"❌ 未绑定"));
+
+  if(t==="🔐 指定群" && admin)
+    return send(TOKEN,uid,
+      "🔐 指定群设置\\n\\n"+
+      "把主机器人加入目标群，然后在群里发送：\\n"+
+      "/绑定指定群\\n\\n"+
+      "当前： "+(group()?"✅ "+group().title:"❌ 未绑定"));
+
+  if(t==="🔍 仓库扫描" && admin) {
+    const r=repo();
+    if(!r) return send(TOKEN,uid,"🔍 仓库扫描\\n\\n❌ 尚未绑定资源仓库。\\n\\n先点击「📦 资源仓库」完成绑定。",adminMenu());
+    try {
+      const chat=await main("getChat",{chat_id:r.chatId});
+      const me=await main("getMe");
+      const member=await main("getChatMember",{chat_id:r.chatId,user_id:me.id});
+      return send(TOKEN,uid,
+        "🔍 仓库状态\\n\\n"+
+        "📦 "+(chat.title||chat.username||r.chatId)+"\\n"+
+        "🆔 "+r.chatId+"\\n"+
+        "🤖 机器人权限： "+member.status+"\\n"+
+        "📚 已索引： "+db.resources.length+" 条\\n\\n"+
+        "🟢 实时扫描：已开启\\n"+
+        "频道后续新消息会自动进入资源索引。",
+        adminMenu());
+    } catch(e) {
+      return send(TOKEN,uid,
+        "🔍 仓库状态\\n\\n❌ 无法读取仓库。\\n\\n"+
+        "请确认主机器人已经加入频道并具有管理员权限。\\n"+
+        "原因："+e.message,adminMenu());
+    }
+  }
+
   if(t==="📂 资源目录") {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
     return send(TOKEN,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
