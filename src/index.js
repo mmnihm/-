@@ -303,6 +303,7 @@ async function mainLoop() {
         db.mainOffset = u.update_id + 1;
         if (u.channel_post) addResource(u.channel_post);
         if (u.edited_channel_post) addResource(u.edited_channel_post);
+        if (u.message && REPOSITORY_CHAT_ID && String(u.message.chat?.id) === String(REPOSITORY_CHAT_ID)) addResource(u.message);
         if (u.callback_query?.data === 'check_clone') {
           const ok = await isMember(TOKEN, u.from.id);
           await main('answerCallbackQuery', {callback_query_id:u.id, text:ok?'验证成功':'请先加入指定群', show_alert:true});
