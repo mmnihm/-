@@ -527,12 +527,12 @@ async function handleChild(bot, msg) {
   const userId = msg.from?.id;
   if (!userId || msg.chat.type !== 'private') return;
   const text = msg.text || '';
-  if (text === '/start') return send(bot.token, chatId, '👋 欢迎使用资源机器人\n\n请选择功能：', userMenu(false, true));
-  // The owner controls this child bot. If the owner leaves the required group,
-  // the child bot is suspended for everyone until the owner rejoins.
+  // Check the child-bot owner only when the bot receives a user request.
+  // No background polling is needed.
   if (!(await enforceChildOwner(bot, true))) {
     return send(bot.token, chatId, '⏸️ 该专属机器人目前已暂停使用。\n\n机器人所属用户不在指定群内。');
   }
+  if (text === '/start') return send(bot.token, chatId, '👋 欢迎使用资源机器人\n\n请选择功能：', userMenu(false, true));
   if (!(await isMember(bot.token, userId))) {
     return send(bot.token, chatId, '🔐 暂无访问权限，请先加入指定群。');
   }
@@ -578,18 +578,7 @@ async function startChild(bot) {
 async function childLoop(bot) {
   const token = decrypt(bot.token);
   let offset = bot.offset || 0;
-  let lastOwnerCheck = 0;
   while (true) {
-    if (requiredGroupId() && Date.now() - lastOwnerCheck >= 60000) {
-      lastOwnerCheck = Date.now();
-      const allowed = await enforceChildOwner(bot, true);
-      if (!allowed) {
-        console.log(`child @${bot.username || bot.botId} suspended: owner not in required group`);
-        bot.running = false;
-        saveDb();
-        return;
-      }
-    }
     try {
       const updates = await tg(token, 'getUpdates', {
         offset, timeout:25, allowed_updates:['message','callback_query']
