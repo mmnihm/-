@@ -1,4 +1,4 @@
 framework: node
-install: npm install
+install: npm install && npm install teleproto
 start: node index.js
 port: 3000
