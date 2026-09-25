@@ -83,7 +83,7 @@ async function sendResource(env, token, chatId, id){
 }
 
 async function broadcast(env, token, adminChat, text){
-  const users=await env.DB.prepare("SELECT user_id FROM main_users AND status='active'").all();
+  const users=await env.DB.prepare("SELECT user_id FROM main_users WHERE status='active'").all();
   let okc=0,fail=0;
   await send(token,adminChat,"📢 正在发送广播\n\n总数："+users.results.length+"\n已处理：0");
   for(const u of users.results){
@@ -177,8 +177,15 @@ async function route(env, request){
   return json({error:"not found"},404);
 }
 async function mainUpdate(env,u){
-  if(u.callback_query?.data==="check_clone"){const okm=await member(env,env.BOT_TOKEN,u.from.id);await tg(env.BOT_TOKEN,"answerCallbackQuery",{callback_query_id:u.id,text:okm?"验证成功":"请先加入指定群",show_alert:true});if(okm) await send(env.BOT_TOKEN,u.from.id,"✅ 群组验证通过\n\n现在可以创建你的专属机器人。",menu(false));return;}
-  if(u.callback_query?.data?.startsWith("res:")){if(!(await member(env,env.BOT_TOKEN,u.from.id)))return;return sendResource(env,env.BOT_TOKEN,u.from.id,Number(u.callback_query.data.slice(4)));}
+  if(u.callback_query){const q=u.callback_query,d=q.data||'',uid=q.from.id,chat=q.message?.chat?.id;await tg(env.BOT_TOKEN,'answerCallbackQuery',{callback_query_id:q.id});
+    if(d==='check_clone'){const okm=await member(env,env.BOT_TOKEN,uid);if(okm)await send(env.BOT_TOKEN,uid,'✅ 群组验证通过\n\n现在可以创建你的专属机器人。',menu(false));return;}
+    if(d==='home')return send(env.BOT_TOKEN,chat,'🏠 返回首页',menu(await isAdmin(env,uid)));
+    if(d==='broadcast_no'){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return send(env.BOT_TOKEN,chat,'❌ 广播已取消。',menu(true));}
+    if(d==='broadcast_yes'&&await isAdmin(env,uid)){const s=await env.DB.prepare("SELECT payload FROM clone_sessions WHERE scope='main' AND user_id=? AND step='broadcast'").bind(uid).first();if(!s)return send(env.BOT_TOKEN,chat,'❌ 广播已失效。');await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return broadcast(env,env.BOT_TOKEN,chat,s.payload);}
+    if(d.startsWith('res:')){if(!(await member(env,env.BOT_TOKEN,uid)))return;return sendResource(env,env.BOT_TOKEN,uid,Number(d.slice(4)));}
+    if(d.startsWith('folder:')){const id=Number(d.split(':')[1]);const rs=await env.DB.prepare("SELECT id,filename,file_id,file_type,file_size,folder_id,created_at FROM resources WHERE status='active' AND folder_id=? ORDER BY created_at DESC LIMIT 8").bind(id).all();return send(env.BOT_TOKEN,chat,'📁 分类资源',inline([...await resourceButtons(env,rs),[{text:'🏠 返回首页',callback_data:'home'}]]));}
+    return;
+  }
   if(u.message) await mainHandle(env,u.message);
 }
 async function childUpdate(env,bot,u){
