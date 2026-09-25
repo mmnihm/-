@@ -2,10 +2,7 @@ import { TelegramClient } from 'teleproto';
 import { StringSession } from 'teleproto/sessions';
 
 function requireConfig(apiId, apiHash) {
-  if (!apiId || !apiHash) {
-    throw new Error('Missing MT_API_ID / MT_API_HASH');
-  }
-  return { apiId: Number(apiId), apiHash };
+  return { apiId: Number(apiId || 0), apiHash: apiHash || '' };
 }
 
 export class HistoryScanner {
@@ -48,6 +45,7 @@ export class HistoryScanner {
   }
 
   async beginLogin(waitFor, adminId = null) {
+    if (!this.apiId || !this.apiHash) throw new Error('Missing MT_API_ID / MT_API_HASH');
     if (this.auth) throw new Error('登录流程已经在进行中');
     const session = new StringSession('');
     const client = new TelegramClient(session, this.apiId, this.apiHash, {
