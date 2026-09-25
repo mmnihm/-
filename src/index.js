@@ -50,8 +50,37 @@ async function tg(token, method, body = {}) {
   return j.result;
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
-const send = (token, chat_id, text, extra = {}) => tg(token, "sendMessage", {chat_id, text, ...extra});
-const sendHtml = (token, chat_id, text, extra = {}) => tg(token, "sendMessage", {chat_id, text, parse_mode:"HTML", ...extra});
+function prettyText(text) {
+  let s = String(text ?? "")
+    .replace(/\\\\n/g, "\\n")
+    .replace(/\\r/g, "")
+    .replace(/\\n{3,}/g, "\\n\\n")
+    .trim();
+
+  if (!s) return s;
+
+  const lines = s.split("\\n");
+  if (
+    lines.length >= 2 &&
+    !lines[0].startsWith("━━━━━━━━") &&
+    !lines[0].startsWith("╭") &&
+    !lines[0].startsWith("<")
+  ) {
+    return lines[0] + "\\n━━━━━━━━━━━━━━\\n" + lines.slice(1).join("\\n");
+  }
+  return s;
+}
+
+const send = (token, chat_id, text, extra = {}) =>
+  tg(token, "sendMessage", {chat_id, text:prettyText(text), ...extra});
+
+const sendHtml = (token, chat_id, text, extra = {}) =>
+  tg(token, "sendMessage", {
+    chat_id,
+    text:String(text ?? "").replace(/\\\\n/g, "\\n"),
+    parse_mode:"HTML",
+    ...extra
+  });
 
 function emptyDb() {
   return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}}};
