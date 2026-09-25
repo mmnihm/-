@@ -155,7 +155,7 @@ async function childHandle(env, bot, msg){
   }
   if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
   if(msg.text==="📂 资源目录"){const f=await resources(env,"folders");return send(bot.token,chat,"📂 资源目录\\n\\n请选择分类：",inline((f.results||[]).map(x=>[{text:"📁 "+x.name,callback_data:"folder:"+x.id}])));}
-  if(msg.text==="🔎 搜索资源"){await env.DB.prepare("INSERT OR REPLACE INTO clone_sessions(user_id,step,payload) VALUES(?, ?, '')").bind(uid,"search:"+bot.bot_id).run();return send(bot.token,chat,"🔎 请输入资源名称或关键词：");}
+  if(msg.text==="🔎 搜索资源"){await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES(?,?,?,'') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind("child:"+bot.bot_id,uid,"search").run();return send(bot.token,chat,"🔎 请输入资源名称或关键词：");}
   if(msg.text==="🎲 随机获取"){const l=await resources(env,"random");for(const r of l.results||[]) await sendResource(env,bot.token,chat,r.id);return;}
   if(msg.text==="🆕 最新资源"){const l=await resources(env,"latest");return send(bot.token,chat,"🆕 最新资源",inline(await resourceButtons(env,l)));}
 }
