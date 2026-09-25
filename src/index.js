@@ -83,7 +83,7 @@ async function sendResource(env, token, chatId, id){
 }
 
 async function broadcast(env, token, adminChat, text){
-  const users=await env.DB.prepare("SELECT user_id FROM bot_users WHERE bot_instance_id IS NULL AND status='active'").all();
+  const users=await env.DB.prepare("SELECT user_id FROM main_users AND status='active'").all();
   let okc=0,fail=0;
   await send(token,adminChat,"📢 正在发送广播\n\n总数："+users.results.length+"\n已处理：0");
   for(const u of users.results){
