@@ -356,21 +356,25 @@ async function deliver(token,chatId,userId,items) {
   if(fail > 0) {
     const total = valid.length;
     if(ok === 0) {
+      const isChatNotFound = /chat not found/i.test(lastError);
       return send(token,chatId,
-        "❌ 资源发送失败\\n\\n"+
-        "📦 已找到资源："+total+" 条\\n"+
+        "❌ <b>资源暂时无法发送</b>\\n\\n"+
+        "📦 找到资源："+total+" 条\\n"+
         "📤 成功发送：0 条\\n"+
         "⚠️ 发送失败："+fail+" 条\\n\\n"+
-        "请确认机器人已经加入「资源仓库」，并且可以读取/复制仓库消息。\\n"+
-        "Telegram 返回：\\n"+lastError
-      );
+        (isChatNotFound
+          ? "🔧 <b>需要管理员处理</b>\\n\\n请把当前机器人加入「资源仓库」。如果仓库是频道，请将机器人添加为频道管理员。\\n\\n"+
+            "历史扫描账号能看到资源，只代表扫描账号能读取历史消息；用户获取资源时，机器人本身也必须能够访问仓库消息。"
+          : "🔧 <b>资源仓库读取失败</b>\\n\\n请确认机器人仍在资源仓库中，并有读取消息的权限。\\n\\n"+
+            "Telegram：<code>"+String(lastError).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>")
+      , {parse_mode:"HTML"});
     }
     return send(token,chatId,
-      "⚠️ 资源获取完成\\n\\n"+
+      "⚠️ <b>资源获取完成</b>\\n\\n"+
       "📤 成功发送："+ok+" 条\\n"+
       "⚠️ 发送失败："+fail+" 条\\n\\n"+
-      "部分历史消息无法由机器人复制。"
-    );
+      "部分历史消息无法复制，请稍后再试。"
+    , {parse_mode:"HTML"});
   }
 
   return true;
