@@ -165,7 +165,7 @@ const historyScanner = new HistoryScanner({
       await send(TOKEN, event.adminId, prompts[event.phase] || '请输入验证信息：');
     }
     if (event.status === 'connected') {
-      await send(TOKEN, event.adminId, '✅ 历史扫描账号已连接。\\n\\n现在可以点击「🔍 历史扫描」。');
+      await send(TOKEN, event.adminId, '✅ 历史扫描账号已连接。\n\n现在可以点击「🔍 历史扫描」。');
     }
     if (event.status === 'auth_error') {
       await send(TOKEN, event.adminId, '⚠️ 扫描账号登录遇到问题：' + event.error);
@@ -213,11 +213,11 @@ async function handleMain(msg) {
 
   if (admin && (text === '/绑定扫描账号' || text === '🔗 绑定扫描账号')) {
     if (!process.env.MT_API_ID || !process.env.MT_API_HASH) {
-      return send(TOKEN, chatId, '⚠️ 还没有配置 MT_API_ID / MT_API_HASH。\\n\\n请先在服务器环境变量中填写 Telegram API ID 和 API Hash。');
+      return send(TOKEN, chatId, '⚠️ 还没有配置 MT_API_ID / MT_API_HASH。\n\n请先在服务器环境变量中填写 Telegram API ID 和 API Hash。');
     }
     if (historyScanner.client) return send(TOKEN, chatId, '✅ 扫描账号已经登录，无需重复绑定。');
     if (historyScanner.auth) return send(TOKEN, chatId, '⏳ 扫描账号登录流程已经在进行中，请按提示继续。');
-    send(TOKEN, chatId, '🔐 开始绑定扫描账号。\\n\\n这个账号必须已经加入你的资源仓库，并且能够正常查看历史消息。\\n\\n不要把扫描账号的登录验证码、两步验证密码发给其他人。');
+    send(TOKEN, chatId, '🔐 开始绑定扫描账号。\n\n这个账号必须已经加入你的资源仓库，并且能够正常查看历史消息。\n\n不要把扫描账号的登录验证码、两步验证密码发给其他人。');
     historyScanner.beginLogin(null, userId).catch(async error => {
       console.error('scanner auth:', error.message);
       await send(TOKEN, userId, '❌ 扫描账号登录失败：' + error.message);
@@ -246,7 +246,7 @@ async function handleMain(msg) {
       return send(TOKEN, chatId, '⚠️ 请先配置 MT_API_ID / MT_API_HASH。');
     }
     if (!historyScanner.client) {
-      return send(TOKEN, chatId, '🔐 还没有绑定扫描账号。\\n\\n请先发送 /绑定扫描账号。');
+      return send(TOKEN, chatId, '🔐 还没有绑定扫描账号。\n\n请先发送 /绑定扫描账号。');
     }
     if (!REPOSITORY_CHAT_ID) {
       return send(TOKEN, chatId, '⚠️ 尚未配置 REPOSITORY_CHAT_ID。当前版本的历史扫描会扫描这个仓库。');
@@ -255,7 +255,7 @@ async function handleMain(msg) {
       return send(TOKEN, chatId, '⏳ 历史扫描已经在运行中。');
     }
     sessions.set(userId, {step:'historyScanLimit'});
-    return send(TOKEN, chatId, '🔍 准备真实扫描 Telegram 历史消息。\\n\\n扫描账号：已连接\\n仓库：' + REPOSITORY_CHAT_ID + '\\n\\n请输入扫描消息数量：\\n例如：5000\\n输入 0 = 扫描到 Telegram 历史尽头（受 MAX_HISTORY_SCAN 限制）。\\n\\n发送 /cancel 取消。');
+    return send(TOKEN, chatId, '🔍 准备真实扫描 Telegram 历史消息。\n\n扫描账号：已连接\n仓库：' + REPOSITORY_CHAT_ID + '\n\n请输入扫描消息数量：\n例如：5000\n输入 0 = 扫描到 Telegram 历史尽头（受 MAX_HISTORY_SCAN 限制）。\n\n发送 /cancel 取消。');
   }
 
   if (admin && sessions.get(userId)?.step === 'historyScanLimit') {
@@ -269,7 +269,7 @@ async function handleMain(msg) {
     }
     const maxMessages = requested === 0 ? Number(process.env.MAX_HISTORY_SCAN || 50000) : Math.min(requested, Number(process.env.MAX_HISTORY_SCAN || 50000));
     sessions.delete(userId);
-    await send(TOKEN, chatId, '🔍 开始真实历史扫描……\\n\\n最大扫描：' + maxMessages + ' 条\\n不会下载文件，只读取 Telegram 历史消息并建立资源索引。');
+    await send(TOKEN, chatId, '🔍 开始真实历史扫描……\n\n最大扫描：' + maxMessages + ' 条\n不会下载文件，只读取 Telegram 历史消息并建立资源索引。');
     try {
       const stats = await historyScanner.scan({
         chatId: REPOSITORY_CHAT_ID,
@@ -282,7 +282,7 @@ async function handleMain(msg) {
           if (statsSafeCounter()) saveDb();
         }
       });
-      await send(TOKEN, chatId, '✅ 历史扫描完成\\n\\n🔍 实际读取：' + stats.scanned + '\\n📦 发现资源：' + stats.resources + '\\n⏭️ 跳过：' + stats.skipped + '\\n❌ 错误：' + stats.errors + '\\n\\n📚 当前索引：' + db.resources.length);
+      await send(TOKEN, chatId, '✅ 历史扫描完成\n\n🔍 实际读取：' + stats.scanned + '\n📦 发现资源：' + stats.resources + '\n⏭️ 跳过：' + stats.skipped + '\n❌ 错误：' + stats.errors + '\n\n📚 当前索引：' + db.resources.length);
     } catch (error) {
       await send(TOKEN, chatId, '❌ 历史扫描失败：' + error.message);
     }
