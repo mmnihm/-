@@ -13,11 +13,14 @@ const REQUIRED_GROUP_URL = process.env.REQUIRED_GROUP_URL || '';
 const REPOSITORY_CHAT_ID = process.env.REPOSITORY_CHAT_ID || '';
 const DATA_FILE = process.env.DATA_FILE || './data/database.json';
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
+// Built-in encryption secret: STORAGE_KEY is optional now.
+// Keep this value unchanged so encrypted child-bot tokens survive restarts/redeploys.
+const STORAGE_SECRET = process.env.STORAGE_KEY || 'mmnihm_storage_0F9I5qu41sqOmc97nZk2inHcQ05MADd5SOoZac4HTiE';
 const API = t => `https://api.telegram.org/bot${t}`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function keyBytes() {
-  return crypto.createHash('sha256').update(process.env.STORAGE_KEY || TOKEN).digest();
+function keyBytes(secret = STORAGE_SECRET) {
+  return crypto.createHash('sha256').update(secret).digest();
 }
 function encrypt(value) {
   const iv = crypto.randomBytes(12);
@@ -27,9 +30,21 @@ function encrypt(value) {
 }
 function decrypt(value) {
   const [iv, tag, data] = value.split('.');
-  const d = crypto.createDecipheriv('aes-256-gcm', keyBytes(), Buffer.from(iv, 'base64url'));
-  d.setAuthTag(Buffer.from(tag, 'base64url'));
-  return Buffer.concat([d.update(Buffer.from(data, 'base64url')), d.final()]).toString('utf8');
+  const raw = Buffer.from(data, 'base64url');
+  const ivBuf = Buffer.from(iv, 'base64url');
+  const tagBuf = Buffer.from(tag, 'base64url');
+  const tryDecrypt = secret => {
+    const d = crypto.createDecipheriv('aes-256-gcm', keyBytes(secret), ivBuf);
+    d.setAuthTag(tagBuf);
+    return Buffer.concat([d.update(raw), d.final()]).toString('utf8');
+  };
+  try {
+    return tryDecrypt(STORAGE_SECRET);
+  } catch {
+    // Backward compatibility for older deployments that used BOT_TOKEN as the key.
+    if (!process.env.STORAGE_KEY && TOKEN !== STORAGE_SECRET) return tryDecrypt(TOKEN);
+    throw new Error('Stored secret cannot be decrypted. Keep the built-in STORAGE_SECRET unchanged.');
+  }
 }
 
 function emptyDb() {
