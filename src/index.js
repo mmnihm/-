@@ -302,17 +302,32 @@ function adminMenu() {
     ["⚙️ 平台设置"]
   ],resize_keyboard:true}};
 }
-
+function scanMenu() {
+  return {reply_markup:{keyboard:[
+    ["🔍 开始历史扫描","🔐 扫描授权"],
+    ["📦 资源仓库","📊 数据统计"],
+    ["⚙️ 平台设置"]
+  ],resize_keyboard:true}};
+}
+function platformMenu() {
+  return {reply_markup:{keyboard:[
+    ["📦 资源仓库","🔐 指定群"],
+    ["🔍 仓库扫描","📊 数据统计"],
+    ["🤖 克隆机器人","📢 广播消息"],
+    ["⬅️ 返回管理"]
+  ],resize_keyboard:true}};
+}
 function configText() {
-  const g = group(), r = repo();
+  const g = group(), r = repo(), scan = db.settings.historyScan || {};
   return [
-    "⚙️ 当前平台配置",
+    "⚙️ <b>平台当前状态</b>",
     "",
-    "🔐 指定群：" + (g ? g.title + " (" + g.chatId + ")" : "❌ 未绑定"),
-    "📦 资源仓库：" + (r ? r.title + " (" + r.chatId + ")" : "❌ 未绑定"),
+    "🔐 <b>指定群</b>：" + (g ? "✅ " + g.title : "❌ 未绑定"),
+    "📦 <b>资源仓库</b>：" + (r ? "✅ " + r.title : "❌ 未绑定"),
+    "🔎 <b>历史扫描</b>：" + (scan.status==="completed" ? "✅ 已完成" : scan.status==="running" ? "⏳ 扫描中" : scan.status==="error" ? "⚠️ 上次失败" : "未执行"),
     "",
-    "🤖 子机器人：" + db.children.length,
     "👤 用户：" + db.users.length,
+    "🤖 子机器人：" + db.children.length,
     "📚 资源：" + db.resources.length
   ].join("\n");
 }
@@ -515,7 +530,7 @@ async function mainMessage(msg) {
     return;
   }
 
-  if(t==="/start") return send(TOKEN,uid,"👋 主机器人已启动。\n\n请选择功能：",admin?adminMenu():userMenu());
+  if(t==="/start") return send(TOKEN,uid,"👋 <b>欢迎使用资源平台</b>\n\n📚 资源目录 · 搜索 · 随机 · 最新\n👇 请选择你要使用的功能",{parse_mode:"HTML",...(admin?adminMenu():userMenu())});
   if(t==="/admin") {
     if(!admin) return send(TOKEN,uid,"⛔ 无管理员权限。");
     return send(TOKEN,uid,"👑 管理员控制台\n\n"+configText()+"\n\n绑定操作请把主机器人加入目标群/仓库后，在对应群里发送：\n/绑定指定群\n/绑定仓库",adminMenu());
@@ -610,7 +625,7 @@ async function mainMessage(msg) {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
     return send(TOKEN,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
   }
-  if(t==="🔎 搜索资源") { states.set(key,{step:"search"}); return send(TOKEN,uid,"🔎 请输入关键词："); }
+  if(t==="🔎 搜索资源") { states.set(key,{step:"search"}); return send(TOKEN,uid,"🔎 <b>搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"}); }
   if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10());
   if(t==="🆕 最新资源") return deliver(TOKEN,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search") { states.delete(key); return deliver(TOKEN,uid,uid,search(t)); }
@@ -623,28 +638,28 @@ async function mainMessage(msg) {
   }
   if((t==="⚙️ 平台设置" || t==="⚙️ 平台管理")&&admin) {
     return send(TOKEN,uid,
-      "⚙️ 平台设置\\n\\n"+
-      "这里集中管理平台核心配置。\\n\\n"+
-      "📦 资源仓库：设置历史资源来源\\n"+
-      "🔐 指定群：设置访问资格群\\n"+
-      "🔍 仓库扫描：读取已有历史消息\\n"+
-      "📊 数据统计：查看当前运行数据\\n\\n"+
+      "⚙️ <b>平台管理</b>\\n\\n"+
+      "📦 资源仓库 · 管理资源来源\\n"+
+      "🔐 指定群 · 管理访问资格\\n"+
+      "🔍 仓库扫描 · 建立历史索引\\n"+
+      "📊 数据统计 · 查看平台数据\\n\\n"+
       configText(),
-      adminMenu()
+      {parse_mode:"HTML",...platformMenu()}
     );
   }
+  if(t==="⬅️ 返回管理"&&admin) return send(TOKEN,uid,"👑 <b>管理员控制台</b>\\n\\n请选择需要管理的项目。",{parse_mode:"HTML",...adminMenu()});
 }
 
 async function childMessage(child,msg,token) {
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
-  if((t.split(" ")[0].split("@")[0])==="/start") return send(token,uid,"👋 欢迎使用资源机器人\n\n请选择功能：",{reply_markup:{keyboard:[
+  if((t.split(" ")[0].split("@")[0])==="/start") return send(token,uid,"👋 <b>欢迎使用资源机器人</b>\n\n📚 资源目录 · 搜索 · 随机 · 最新\n👇 请选择功能：",{parse_mode:"HTML",reply_markup:{keyboard:
     ["📂 资源目录","🔎 搜索资源"],
     ["🎲 随机获取","🆕 最新资源"]
   ],resize_keyboard:true}});
   // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。\n  if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
   if(t==="📂 资源目录") return send(token,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
-  if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 请输入关键词：");}
+  if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 <b>搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});}
   if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10());
   if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search"){states.delete(key);return deliverFromHistory(token,uid,uid,search(t));}
