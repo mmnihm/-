@@ -160,19 +160,20 @@ async function childHandle(env, bot, msg){
   if(msg.text==="🆕 最新资源"){const l=await resources(env,"latest");return send(bot.token,chat,"🆕 最新资源",inline(await resourceButtons(env,l)));}
 }
 
-async function route(env, request){
-  if(request.method!=="POST") return new Response("Telegram Clone Platform OK");
-  const path=new URL(request.url).pathname;
-  let body;try{body=await request.json()}catch{return json({error:"bad json"},400);}
-  if(path==="/webhook/main") {await mainUpdate(env,body);return ok({});}
+async function route(env,request){
+  const url=new URL(request.url),path=url.pathname;
+  if(request.method==="GET"){
+    if(path==="/setup"){await tg(env.BOT_TOKEN,"setWebhook",{url:(env.PUBLIC_BASE_URL||url.origin)+"/webhook/main",secret_token:env.WEBHOOK_SECRET||undefined});return json({ok:true,message:"main webhook registered"})}
+    return new Response("Telegram Clone Platform OK");
+  }
+  if(env.WEBHOOK_SECRET&&request.headers.get("X-Telegram-Bot-Api-Secret-Token")!==env.WEBHOOK_SECRET)return json({error:"unauthorized"},401);
+  let body;try{body=await request.json()}catch{return json({error:"bad json"},400)}
+  if(path==="/webhook/main"){await mainUpdate(env,body);return ok({})}
   if(path.startsWith("/webhook/child/")){
-    const id=path.split("/").pop();
-    const row=await env.DB.prepare("SELECT bot_id,username,token_ciphertext,status FROM bot_instances WHERE bot_id=? AND status='active'").bind(id).first();
-    if(!row) return json({error:"not found"},404);
-    let token; try{token=await decryptToken(env,row.token_ciphertext)}catch{return json({error:"token unavailable"},500);}
-    const bot={...row,token};
-    if(!bot) return json({error:"not found"},404);
-    await childUpdate(env,bot,body);return ok({});
+    const id=path.split("/").pop(),row=await env.DB.prepare("SELECT bot_id,username,token_ciphertext,status FROM bot_instances WHERE bot_id=? AND status='active'").bind(id).first();
+    if(!row)return json({error:"not found"},404);
+    let token;try{token=await decryptToken(env,row.token_ciphertext)}catch{return json({error:"token unavailable"},500)}
+    await childUpdate(env,{...row,token},body);return ok({});
   }
   return json({error:"not found"},404);
 }
