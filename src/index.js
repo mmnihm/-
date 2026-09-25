@@ -148,7 +148,7 @@ async function childHandle(env, bot, msg){
   await env.DB.prepare("INSERT INTO bot_users(bot_instance_id,user_id,last_seen,status) VALUES(?,?,datetime('now'),'active') ON CONFLICT(bot_instance_id,user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(bot.bot_id,uid).run();
   const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).first();
   if(msg.text==="/start") return send(bot.token,chat,"👋 欢迎使用资源库\\n\\n请选择功能：",childMenu());
-  if(s?.step===("search:"+bot.bot_id) && msg.text){
+  if(s?.step==="search" && msg.text){
     await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();
     if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
     const l=await resources(env,"search",msg.text); return send(bot.token,chat,"🔎 搜索结果："+(l.results?.length||0),inline(await resourceButtons(env,l)));
