@@ -190,7 +190,14 @@ async function mainUpdate(env,u){
   if(u.message) await mainHandle(env,u.message);
 }
 async function childUpdate(env,bot,u){
-  if(u.callback_query?.data?.startsWith("res:")){if(!(await member(env,bot.token,u.from.id)))return;await sendResource(env,bot.token,u.from.id,Number(u.callback_query.data.slice(4)));return;}
+  if(u.callback_query){
+    const q=u.callback_query,d=q.data||'',uid=q.from.id,chat=q.message?.chat?.id;
+    await tg(bot.token,"answerCallbackQuery",{callback_query_id:q.id});
+    if(d==="home")return send(bot.token,chat,"🏠 返回首页",childMenu());
+    if(d.startsWith("res:")){if(!(await member(env,bot.token,uid)))return;return sendResource(env,bot.token,chat,Number(d.slice(4)));}
+    if(d.startsWith("folder:")){const id=Number(d.split(":")[1]);const rs=await env.DB.prepare("SELECT id,filename,file_id,file_type,file_size,folder_id,created_at FROM resources WHERE status='active' AND folder_id=? ORDER BY created_at DESC LIMIT 8").bind(id).all();return send(bot.token,chat,"📁 分类资源",inline([...await resourceButtons(env,rs),[{text:"🏠 返回首页",callback_data:"home"}]]));}
+    return;
+  }
   if(u.message) await childHandle(env,bot,u.message);
 }
 async function registerChildWebhook(env,bot){
