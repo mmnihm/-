@@ -45,7 +45,7 @@ export class HistoryScanner {
     return true;
   }
 
-  async beginLogin(waitFor) {
+  async beginLogin(waitFor, adminId = null) {
     if (this.auth) throw new Error('登录流程已经在进行中');
     const session = new StringSession('');
     const client = new TelegramClient(session, this.apiId, this.apiHash, {
@@ -54,7 +54,7 @@ export class HistoryScanner {
       floodSleepThreshold: 60,
     });
     const auth = {
-      adminId: null,
+      adminId,
       phase: 'phone',
       resolve: null,
       reject: null,
