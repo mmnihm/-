@@ -661,12 +661,13 @@ async function mainMessage(msg) {
 async function childMessage(child,msg,token) {
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
-  if((t.split(" ")[0].split("@")[0])==="/start") return send(token,uid,
-    "👋 <b>欢迎使用资源机器人</b>\n\n📚 资源目录 · 搜索 · 随机 · 最新\n👇 请选择功能：",
-    {parse_mode:"HTML",reply_markup:{keyboard:[
-      ["📂 资源目录","🔎 搜索资源"],
-      ["🎲 随机获取","🆕 最新资源"]
-    ],resize_keyboard:true}});
+  if((t.split(" ")[0].split("@")[0])==="/start" || t==="🏠 开始") return sendHtml(token,uid,
+    "<b>👋 欢迎使用资源机器人</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n\n👇 <i>请选择下方功能</i>",
+    {reply_markup:{keyboard:[
+      ["🏠 开始","📂 资源目录"],
+      ["🔎 搜索资源","🎲 随机获取"],
+      ["🆕 最新资源"]
+    ],resize_keyboard:true,input_field_placeholder:"请选择功能"}});
   // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。
   if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
   if(t==="📂 资源目录") return send(token,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
