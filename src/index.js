@@ -220,7 +220,7 @@ async function checkMemberCached(token, userId, force = false) {
   const now = Date.now();
   const cached = membershipCache.get(key);
   if (!force && cached && now - cached.at < MEMBERSHIP_CACHE_MS) return cached.ok;
-  const ok = await isMember(token, userId);
+  const ok = await isMember(TOKEN, userId);
   membershipCache.set(key, { ok, at: now });
   return ok;
 }
@@ -781,7 +781,7 @@ async function childLoop(bot) {
         if (u.callback_query) {
           const cq = u.callback_query;
           const ok = await enforceChildOwner(bot, false) &&
-            await checkMemberCached(token, cq.from.id, true);
+            await checkMemberCached(TOKEN, cq.from.id, true);
           if (cq.data?.startsWith('dir:') && ok) {
             const parts = cq.data.split(':');
             const dirId = parts[1];
