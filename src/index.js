@@ -276,15 +276,33 @@ async function pollMain() {
 }
 
 async function childLoop(child) {
-  const token=decrypt(child.token);
-  await tg(token,"deleteWebhook",{drop_pending_updates:false});
-  console.log("🤖 CHILD READY:","@"+child.username);
+  let token;
+  try {
+    token = decrypt(child.token);
+    const me = await tg(token, "getMe");
+    child.username = me.username || child.username || "";
+    child.botId = me.id;
+    saveDb();
+    await tg(token, "deleteWebhook", {drop_pending_updates:false});
+    console.log("🤖 CHILD CONNECTED:", "@" + (me.username || me.first_name), "id=" + me.id);
+  } catch (e) {
+    console.error("❌ CHILD START FAILED:", child.username ? "@" + child.username : "(unknown)", e.message);
+    return;
+  }
+
   while(true){
     try{
-      const updates=await tg(token,"getUpdates",{offset:child.offset,timeout:25,allowed_updates:["message"]});
-      for(const u of updates){child.offset=u.update_id+1;if(u.message) await childMessage(child,u.message,token);}
+      const updates=await tg(token,"getUpdates",{offset:Number(child.offset||0),timeout:25,allowed_updates:["message"]});
+      if (updates.length) console.log("📩 CHILD UPDATE:", "@" + (child.username || child.botId), "count=" + updates.length);
+      for(const u of updates){
+        child.offset=u.update_id+1;
+        if(u.message) await childMessage(child,u.message,token);
+      }
       saveDb();
-    }catch(e){console.error("CHILD @"+child.username+":",e.message);await sleep(3000);}
+    }catch(e){
+      console.error("❌ CHILD @" + (child.username || child.botId) + ":",e.message);
+      await sleep(3000);
+    }
   }
 }
 function startChild(child){childLoop(child).catch(e=>console.error("CHILD FATAL:",e));}
