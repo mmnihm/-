@@ -1,11 +1,14 @@
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS admins (user_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS repositories (id INTEGER PRIMARY KEY AUTOINCREMENT,chat_id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,type TEXT,status TEXT NOT NULL DEFAULT 'active',last_scan_time TEXT);
 CREATE TABLE IF NOT EXISTS bot_instances (id INTEGER PRIMARY KEY AUTOINCREMENT,owner_id TEXT NOT NULL,bot_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,token_ciphertext TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS bot_users (id INTEGER PRIMARY KEY AUTOINCREMENT,bot_instance_id INTEGER,user_id TEXT NOT NULL,last_seen TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',UNIQUE(bot_instance_id,user_id),FOREIGN KEY(bot_instance_id) REFERENCES bot_instances(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS bot_users (id INTEGER PRIMARY KEY AUTOINCREMENT,bot_instance_id INTEGER NOT NULL,user_id TEXT NOT NULL,last_seen TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',UNIQUE(bot_instance_id,user_id),FOREIGN KEY(bot_instance_id) REFERENCES bot_instances(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS main_users (user_id TEXT PRIMARY KEY,last_seen TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active');
 CREATE TABLE IF NOT EXISTS folders (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL DEFAULT (datetime('now')));
-CREATE TABLE IF NOT EXISTS resources (id INTEGER PRIMARY KEY AUTOINCREMENT,folder_id INTEGER,filename TEXT NOT NULL,file_id TEXT,file_unique_id TEXT,message_id TEXT,chat_id TEXT,file_type TEXT,file_size INTEGER,created_at TEXT NOT NULL DEFAULT (datetime('now')),status TEXT NOT NULL DEFAULT 'active',FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL);
+CREATE TABLE IF NOT EXISTS resources (id INTEGER PRIMARY KEY AUTOINCREMENT,repository_id INTEGER,folder_id INTEGER,filename TEXT NOT NULL,file_id TEXT,file_unique_id TEXT,message_id TEXT,chat_id TEXT,file_type TEXT,file_size INTEGER,created_at TEXT NOT NULL DEFAULT (datetime('now')),status TEXT NOT NULL DEFAULT 'active',FOREIGN KEY(repository_id) REFERENCES repositories(id) ON DELETE SET NULL,FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL,UNIQUE(chat_id,message_id));
 CREATE INDEX IF NOT EXISTS idx_resources_name ON resources(filename);
 CREATE INDEX IF NOT EXISTS idx_resources_created ON resources(created_at);
-CREATE TABLE IF NOT EXISTS clone_sessions (user_id TEXT PRIMARY KEY,step TEXT NOT NULL,payload TEXT);
+CREATE INDEX IF NOT EXISTS idx_resources_folder ON resources(folder_id);
+CREATE TABLE IF NOT EXISTS clone_sessions (scope TEXT NOT NULL,user_id TEXT NOT NULL,step TEXT NOT NULL,payload TEXT,PRIMARY KEY(scope,user_id));
 CREATE TABLE IF NOT EXISTS broadcast_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT,status TEXT NOT NULL,total INTEGER DEFAULT 0,processed INTEGER DEFAULT 0,success INTEGER DEFAULT 0,failed INTEGER DEFAULT 0,created_at TEXT NOT NULL DEFAULT (datetime('now')),updated_at TEXT NOT NULL DEFAULT (datetime('now')));
