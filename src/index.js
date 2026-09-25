@@ -654,11 +654,25 @@ async function mainMessage(msg) {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
     return sendHtml(TOKEN,uid,directoryText(),backMenu(admin));
   }
-  if(t==="🔎 搜索资源") { states.set(key,{step:"search"}); return sendHtml(TOKEN,uid,"<b>🔎 搜索资源</b>\n\n请输入 <b>关键词</b>，例如：作者名、标题或关键词。\n\n━━━━━━━━━━━━━━\n↩️ 发送 <code>/cancel</code> 可取消搜索。"); }
+  if(t==="🔎 搜索资源") {
+    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
+    states.set(key,{step:"search"});
+    return sendHtml(TOKEN,uid,
+      "<b>🔎 搜索资源</b>\\n\\n"+
+      "请输入关键词，例如：作者名、标题或关键词。\\n\\n"+
+      "💡 支持模糊搜索，最多返回 10 条。\\n"+
+      "↩️ 发送 <code>/cancel</code> 可退出搜索。",
+      {reply_markup:{keyboard:[["❌ 取消搜索"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"请输入搜索关键词"}}
+    );
+  }
   if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10());
   if(t==="🆕 最新资源") return deliver(TOKEN,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search") {
-    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"↩️ 已退出搜索。",userMenu()); }
+    if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
+      states.delete(key);
+      if(t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
+      return send(TOKEN,uid,"↩️ 已退出搜索。",admin?adminMenu():userMenu());
+    }
     states.delete(key);
     const results=search(t);
     if(!results.length) return sendHtml(TOKEN,uid,
