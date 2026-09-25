@@ -15,7 +15,7 @@ function boundRepository() { return db.settings?.repository || null; }
 function requiredGroupId() { return boundGroup()?.chatId || ''; }
 function requiredGroupUrl() { return boundGroup()?.url || ''; }
 function repositoryChatId() { return boundRepository()?.chatId || ''; }
-const DATA_FILE = process.env.DATA_FILE || '/tmp/mmnihm/database.json';
+const DATA_FILE = process.env.DATA_FILE || './database.json';
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
 // Built-in encryption secret: STORAGE_KEY is optional now.
 // Keep this value unchanged so encrypted child-bot tokens survive restarts/redeploys.
@@ -65,13 +65,14 @@ function loadDb() {
     return { ...emptyDb(), ...db };
   } catch { return emptyDb(); }
 }
-try { fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true }); } catch (err) { console.error('Data directory initialization failed:', err); }
+try { const dir = path.dirname(DATA_FILE); if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true }); } catch (err) { console.error('Data directory initialization failed:', err.message); }
 const db = loadDb();
 let saveTimer;
 function saveDb() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+    const dir = path.dirname(DATA_FILE);
+    if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true });
     const tmp = DATA_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
     fs.renameSync(tmp, DATA_FILE);
