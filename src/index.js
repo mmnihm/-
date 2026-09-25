@@ -54,7 +54,8 @@ function emptyDb() {
   return {
     users: [], children: [], resources: [], mainOffset: 0,
     scanner: { session: '', connectedAt: 0 },
-    settings: { requiredGroup: null, repository: null }
+    settings: { requiredGroup: null, repository: null },
+    directories: []
   };
 }
 function loadDb() {
@@ -231,7 +232,12 @@ function userMenu(admin = false, child = false) {
     ['🎲 随机获取','🆕 最新资源']
   ];
   if (!child) rows.unshift(['🤖 克隆我的机器人']);
-  if (admin && !child) rows.push(['📢 广播消息'], ['🔍 历史扫描'], ['⚙️ 平台管理']);
+  if (admin && !child) rows.push(
+    ['📁 创建目录','📤 发送资源'],
+    ['📢 广播消息'],
+    ['🔍 历史扫描'],
+    ['⚙️ 平台管理']
+  );
   return keyboard(rows);
 }
 
@@ -245,6 +251,73 @@ async function isMember(token, userId) {
   } catch { return false; }
 }
 
+function directoryById(id) {
+  return db.directories.find(x => String(x.id) === String(id)) || null;
+}
+function directoryResources(directoryId) {
+  return db.resources.filter(x => String(x.directoryId || '') === String(directoryId));
+}
+function directoryListText(child = false) {
+  if (!db.directories.length) return '📂 暂无资源目录。';
+  return '📂 资源目录\\n\\n' + db.directories.map((d, i) => {
+    const count = directoryResources(d.id).length;
+    return `${i + 1}. ${d.name}（${count} 个资源）`;
+  }).join('\\n') + '\\n\\n请选择目录名称查看其中资源。';
+}
+async function sendDirectoryToRepository(directory) {
+  const repo = repositoryChatId();
+  if (!repo) throw new Error('repository not bound');
+  const text = '📁 资源目录\\n\\n' + directory.name + '\\n\\n' +
+    '目录编号：' + directory.id + '\\n' +
+    '后续资源将归入此目录。';
+  const sent = await main('sendMessage', {chat_id: repo, text});
+  directory.repositoryMessageId = sent.message_id;
+  return sent;
+}
+async function addRepositoryResource(msg, directoryId = null) {
+  const item = resourceFromMessage(msg);
+  if (!item) return null;
+  item.directoryId = directoryId ? String(directoryId) : null;
+  const i = db.resources.findIndex(x => x.messageId === item.messageId && x.chatId === item.chatId);
+  if (i >= 0) db.resources[i] = {...db.resources[i], ...item};
+  else db.resources.unshift(item);
+  if (db.resources.length > MAX_RESOURCES) db.resources.length = MAX_RESOURCES;
+  saveDb();
+  return item;
+}
+async function copyIncomingResourceToRepository(msg, directoryId) {
+  const repo = repositoryChatId();
+  if (!repo) throw new Error('repository not bound');
+  const directory = directoryById(directoryId);
+  if (!directory) throw new Error('directory not found');
+  const sourceChatId = msg.chat.id;
+  const sourceMessageId = msg.message_id;
+  const caption = msg.caption || '';
+  const prefix = '📁 ' + directory.name;
+  const finalCaption = (prefix + (caption ? '\\n\\n' + caption : '')).slice(0, 1024);
+  const copied = await main('copyMessage', {
+    chat_id: repo,
+    from_chat_id: sourceChatId,
+    message_id: sourceMessageId,
+    caption: finalCaption
+  });
+  const synthetic = {
+    ...msg,
+    chat: { ...(msg.chat || {}), id: repo },
+    message_id: copied.message_id,
+    caption: finalCaption
+  };
+  const item = resourceFromMessage(synthetic);
+  if (item) {
+    item.directoryId = String(directory.id);
+    const i = db.resources.findIndex(x => x.messageId === item.messageId && x.chatId === item.chatId);
+    if (i >= 0) db.resources[i] = item;
+    else db.resources.unshift(item);
+    if (db.resources.length > MAX_RESOURCES) db.resources.length = MAX_RESOURCES;
+    saveDb();
+  }
+  return copied;
+}
 function resourceFromMessage(msg) {
   if (!msg) return null;
   const media = msg.document || msg.video || msg.audio || msg.animation || msg.photo?.at(-1);
@@ -262,6 +335,11 @@ function resourceFromMessage(msg) {
 function addResource(msg) {
   const item = resourceFromMessage(msg);
   if (!item || !repositoryChatId() || String(item.chatId) !== String(repositoryChatId())) return;
+  const marker = item.caption.match(/(?:^|\\n)📁\\s*(.+?)(?:\\n|$)/);
+  if (marker) {
+    const dir = db.directories.find(d => d.name === marker[1].trim());
+    if (dir) item.directoryId = String(dir.id);
+  }
   const i = db.resources.findIndex(x => x.messageId === item.messageId && x.chatId === item.chatId);
   if (i >= 0) db.resources[i] = item;
   else db.resources.unshift(item);
@@ -470,6 +548,67 @@ async function handleMain(msg) {
     return send(TOKEN, chatId, '🛑 已请求停止扫描，当前消息处理完成后会停止。');
   }
 
+  if (text === '📁 创建目录' && admin) {
+    if (!repositoryChatId()) return send(TOKEN, chatId, '⚠️ 请先绑定资源仓库。');
+    sessions.set(userId, {step:'createDirectory'});
+    return send(TOKEN, chatId, '📁 创建目录\\n\\n请输入目录名称。\\n\\n发送 /cancel 取消。');
+  }
+
+  if (text === '📤 发送资源' && admin) {
+    if (!repositoryChatId()) return send(TOKEN, chatId, '⚠️ 请先绑定资源仓库。');
+    if (!db.directories.length) return send(TOKEN, chatId, '📂 还没有目录，请先创建目录。');
+    sessions.set(userId, {step:'sendResourceDirectory'});
+    return send(TOKEN, chatId, '📤 发送资源\\n\\n请选择目录：\\n\\n' +
+      db.directories.map((d,i)=>`${i+1}. ${d.name}`).join('\\n') +
+      '\\n\\n请发送目录编号或目录名称。\\n发送 /cancel 取消。');
+  }
+
+  const adminSession = sessions.get(userId);
+  if (adminSession?.step === 'createDirectory' && admin) {
+    if (text === '/cancel') { sessions.delete(userId); return send(TOKEN, chatId, '❌ 已取消。', userMenu(true)); }
+    const name = text.trim();
+    if (!name || name.length > 80) return send(TOKEN, chatId, '⚠️ 目录名称不能为空且不能超过 80 个字符。');
+    if (db.directories.some(d => d.name === name)) return send(TOKEN, chatId, '⚠️ 这个目录已经存在，请换一个名称。');
+    const directory = {id: crypto.randomUUID(), name, createdAt: Date.now(), repositoryMessageId: null};
+    db.directories.push(directory);
+    saveDb();
+    try {
+      await sendDirectoryToRepository(directory);
+      saveDb();
+      sessions.delete(userId);
+      return send(TOKEN, chatId, '✅ 目录创建成功。\\n\\n📁 ' + name + '\\n📦 已同步到资源仓库。', userMenu(true));
+    } catch (e) {
+      db.directories = db.directories.filter(d => d.id !== directory.id);
+      saveDb();
+      return send(TOKEN, chatId, '❌ 创建目录失败：' + e.message);
+    }
+  }
+
+  if (adminSession?.step === 'sendResourceDirectory' && admin) {
+    if (text === '/cancel') { sessions.delete(userId); return send(TOKEN, chatId, '❌ 已取消。', userMenu(true)); }
+    const value = text.trim();
+    const directory = db.directories[Number(value) - 1] || db.directories.find(d => d.name === value);
+    if (!directory) return send(TOKEN, chatId, '⚠️ 找不到这个目录，请输入目录编号或名称。');
+    sessions.set(userId, {step:'sendResource', directoryId:directory.id});
+    return send(TOKEN, chatId, '📤 当前目录：' + directory.name + '\\n\\n现在直接把文件/视频/图片发送给我。\\n我会自动转发到资源仓库并归入这个目录。\\n\\n发送 /done 完成，/cancel 取消。');
+  }
+
+  if (adminSession?.step === 'sendResource' && admin) {
+    if (text === '/cancel') { sessions.delete(userId); return send(TOKEN, chatId, '❌ 已取消。', userMenu(true)); }
+    if (text === '/done') { sessions.delete(userId); return send(TOKEN, chatId, '✅ 资源发送完成。', userMenu(true)); }
+    if (msg.media_group_id) {
+      return send(TOKEN, chatId, '⚠️ 暂不支持相册批量上传，请逐个发送。');
+    }
+    const hasMedia = msg.document || msg.video || msg.audio || msg.animation || msg.photo;
+    if (!hasMedia) return send(TOKEN, chatId, '📎 请直接发送文件、视频、图片或音频。');
+    try {
+      await copyIncomingResourceToRepository(msg, adminSession.directoryId);
+      return send(TOKEN, chatId, '✅ 已发送到资源仓库并归入「' + directoryById(adminSession.directoryId).name + '」。');
+    } catch (e) {
+      return send(TOKEN, chatId, '❌ 发送资源失败：' + e.message);
+    }
+  }
+
   if (text === '📢 广播消息' && admin) {
     sessions.set(userId, {step:'broadcast'});
     return send(TOKEN, chatId, '📢 请输入广播内容。\n\n发送 /cancel 取消。');
@@ -524,8 +663,8 @@ async function handleMain(msg) {
   if (['📂 资源目录','🔎 搜索资源','🎲 随机获取','🆕 最新资源'].includes(text)) {
     if (!(await checkMemberCached(TOKEN, userId))) return send(TOKEN, chatId, '🔐 暂无访问权限，请先加入指定群。');
     if (text === '📂 资源目录') {
-      const list = latestResources(10);
-      return send(TOKEN, chatId, list.length ? '📂 最新资源\n\n' + list.map((x,i)=>`${i+1}. ${x.title}`).join('\n') : '📭 暂无资源。');
+      sessions.set(userId, {step:'directorySelect'});
+      return send(TOKEN, chatId, directoryListText());
     }
     if (text === '🔎 搜索资源') {
       sessions.set(userId, {step:'search'});
@@ -533,6 +672,16 @@ async function handleMain(msg) {
     }
     if (text === '🎲 随机获取') return deliverResources(TOKEN, chatId, randomResources(10), userId);
     return deliverResources(TOKEN, chatId, latestResources(10), userId);
+  }
+
+  if (session?.step === 'directorySelect') {
+    const value = text.trim();
+    const directory = db.directories[Number(value) - 1] || db.directories.find(d => d.name === value);
+    if (!directory) return send(TOKEN, chatId, '⚠️ 找不到这个目录，请输入目录编号或名称。');
+    sessions.delete(userId);
+    const items = directoryResources(directory.id).slice(0, 20);
+    if (!items.length) return send(TOKEN, chatId, '📁 ' + directory.name + '\\n\\n📭 这个目录暂时没有资源。');
+    return send(TOKEN, chatId, '📁 ' + directory.name + '\\n\\n' + items.map((x,i)=>`${i+1}. ${x.title}`).join('\\n') + '\\n\\n发送资源编号即可获取对应资源。');
   }
 
   if (session?.step === 'search') {
@@ -560,8 +709,8 @@ async function handleChild(bot, msg) {
   }
   if (['📂 资源目录','🔎 搜索资源','🎲 随机获取','🆕 最新资源'].includes(text)) {
     if (text === '📂 资源目录') {
-      const list = latestResources(10);
-      return send(bot.token, chatId, list.length ? '📂 最新资源\n\n' + list.map((x,i)=>`${i+1}. ${x.title}`).join('\n') : '📭 暂无资源。');
+      sessions.set(`c:${bot.botId}:${userId}`, {step:'directorySelect'});
+      return send(bot.token, chatId, directoryListText(true));
     }
     if (text === '🔎 搜索资源') {
       sessions.set(`c:${bot.botId}:${userId}`, {step:'search'});
@@ -571,6 +720,16 @@ async function handleChild(bot, msg) {
     return deliverResources(bot.token, chatId, latestResources(10), userId, bot);
   }
   const key = `c:${bot.botId}:${userId}`;
+  if (sessions.get(key)?.step === 'directorySelect') {
+    const value = text.trim();
+    const directory = db.directories[Number(value) - 1] || db.directories.find(d => d.name === value);
+    if (!directory) return send(bot.token, chatId, '⚠️ 找不到这个目录，请输入目录编号或名称。');
+    sessions.delete(key);
+    const items = directoryResources(directory.id).slice(0, 20);
+    if (!items.length) return send(bot.token, chatId, '📁 ' + directory.name + '\\n\\n📭 这个目录暂时没有资源。');
+    return send(bot.token, chatId, '📁 ' + directory.name + '\\n\\n' + items.map((x,i)=>`${i+1}. ${x.title}`).join('\\n') + '\\n\\n发送资源编号即可获取对应资源。');
+  }
+
   if (sessions.get(key)?.step === 'search') {
     sessions.delete(key);
     return deliverResources(bot.token, chatId, searchResources(text), userId, bot);
