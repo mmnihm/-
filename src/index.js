@@ -2,6 +2,24 @@ const json = (x, status=200) => new Response(JSON.stringify(x), {status, headers
 const ok = x => json({ok:true,...x});
 const API = token => "https://api.telegram.org/bot" + token;
 
+async function cryptoKey(env){
+  if(!env.TOKEN_ENCRYPTION_KEY) throw new Error("Missing TOKEN_ENCRYPTION_KEY");
+  const raw=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(env.TOKEN_ENCRYPTION_KEY));
+  return crypto.subtle.importKey("raw",raw,{name:"AES-GCM"},false,["encrypt","decrypt"]);
+}
+async function decryptToken(env,value){
+  const key=await cryptoKey(env);
+  const [a,b]=value.split(".");
+  const dec=s=>Uint8Array.from(atob(s),x=>x.charCodeAt(0));
+  const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv:dec(a)},key,dec(b));
+  return new TextDecoder().decode(plain);
+}
+async function encryptToken(env,token){
+  const key=await cryptoKey(env), iv=crypto.getRandomValues(new Uint8Array(12));
+  const data=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(token));
+  const b=bytes=>btoa(String.fromCharCode(...new Uint8Array(b)));
+  return b(iv)+"."+b(data);
+}
 async function tg(token, method, body={}) {
   const r = await fetch(API(token)+"/"+method,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
   const d = await r.json();
@@ -116,7 +134,9 @@ async function mainHandle(env, msg){
     try{
       const child=await tg(msg.text.trim(),"getMe");
       if(!child?.id || !child?.username) throw new Error("invalid");
-      await env.DB.prepare("INSERT INTO bot_instances(owner_id,bot_id,username,token_ciphertext,status,created_at,updated_at) VALUES(?,?,?,?, 'active',datetime('now'),datetime('now')) ON CONFLICT(bot_id) DO UPDATE SET owner_id=excluded.owner_id,username=excluded.username,token_ciphertext=excluded.token_ciphertext,status='active',updated_at=datetime('now'))").bind(uid,child.id,child.username,msg.text.trim()).run();
+      const encrypted=await encryptToken(env,msg.text.trim());
+      await env.DB.prepare("INSERT INTO bot_instances(owner_id,bot_id,username,token_ciphertext,status,created_at,updated_at) VALUES(?,?,?,?, 'active',datetime('now'),datetime('now')) ON CONFLICT(bot_id) DO UPDATE SET owner_id=excluded.owner_id,username=excluded.username,token_ciphertext=excluded.token_ciphertext,status='active',updated_at=datetime('now')").bind(uid,child.id,child.username,encrypted).run();
+      await registerChildWebhook(env,{id:child.id,token:msg.text.trim()});
       return send(token,chat,"✅ 子机器人绑定成功\n\n🤖 @"+child.username+"\n\n子机器人不会显示广播功能。");
     }catch{return send(token,chat,"❌ Token 无效，请从 BotFather 复制完整 Token 后重试。");}
   }
@@ -141,7 +161,10 @@ async function route(env, request){
   if(path==="/webhook/main") {await mainUpdate(env,body);return ok({});}
   if(path.startsWith("/webhook/child/")){
     const id=path.split("/").pop();
-    const bot=await env.DB.prepare("SELECT bot_id,username,token_ciphertext AS token,status FROM bot_instances WHERE bot_id=? AND status='active'").bind(id).first();
+    const row=await env.DB.prepare("SELECT bot_id,username,token_ciphertext,status FROM bot_instances WHERE bot_id=? AND status='active'").bind(id).first();
+    if(!row) return json({error:"not found"},404);
+    let token; try{token=await decryptToken(env,row.token_ciphertext)}catch{return json({error:"token unavailable"},500);}
+    const bot={...row,token};
     if(!bot) return json({error:"not found"},404);
     await childUpdate(env,bot,body);return ok({});
   }
