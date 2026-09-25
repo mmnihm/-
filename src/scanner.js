@@ -20,6 +20,8 @@ export class HistoryScanner {
     this.client = null;
     this.auth = null;
     this.running = false;
+    this.scanAdminId = null;
+    this.lastAdminId = null;
     this.sessionValue = session || '';
   }
 
@@ -155,6 +157,7 @@ export class HistoryScanner {
     if (!this.client) throw new Error('请先绑定扫描账号');
     const entity = await this.getRepositoryEntity(chatId);
     this.running = true;
+    this.scanAdminId = arguments[0]?.adminId || null;
 
     const stats = {
       scanned: 0,
@@ -192,13 +195,14 @@ export class HistoryScanner {
         }
 
         if (stats.scanned % 100 === 0) {
-          this.emit('scan_progress', { ...stats });
+          this.emit('scan_progress', { ...stats, adminId: this.scanAdminId });
         }
       }
     } finally {
       stats.finishedAt = Date.now();
       stats.stopped = !this.running;
       this.running = false;
+      this.scanAdminId = null;
       this.emit('scan_finished', { ...stats });
     }
     return stats;
