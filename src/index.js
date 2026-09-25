@@ -8,9 +8,12 @@ const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error('Missing BOT_TOKEN');
 
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-const REQUIRED_GROUP_ID = process.env.REQUIRED_GROUP_ID || '';
-const REQUIRED_GROUP_URL = process.env.REQUIRED_GROUP_URL || '';
-const REPOSITORY_CHAT_ID = process.env.REPOSITORY_CHAT_ID || '';
+// Group/repository bindings are persisted in database.json and managed by admin commands.
+function boundGroup() { return db.settings?.requiredGroup || null; }
+function boundRepository() { return db.settings?.repository || null; }
+function requiredGroupId() { return boundGroup()?.chatId || ''; }
+function requiredGroupUrl() { return boundGroup()?.url || ''; }
+function repositoryChatId() { return boundRepository()?.chatId || ''; }
 const DATA_FILE = process.env.DATA_FILE || './data/database.json';
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
 // Built-in encryption secret: STORAGE_KEY is optional now.
@@ -48,7 +51,11 @@ function decrypt(value) {
 }
 
 function emptyDb() {
-  return { users: [], children: [], resources: [], mainOffset: 0, scanner: { session: '', connectedAt: 0 } };
+  return {
+    users: [], children: [], resources: [], mainOffset: 0,
+    scanner: { session: '', connectedAt: 0 },
+    settings: { requiredGroup: null, repository: null }
+  };
 }
 function loadDb() {
   try {
@@ -69,6 +76,89 @@ function saveDb() {
 }
 function rememberUser(id) {
   if (!db.users.includes(id)) { db.users.push(id); saveDb(); }
+}
+function isAdmin(userId) {
+  return ADMIN_IDS.includes(String(userId));
+}
+async function buildChatBinding(chat, kind) {
+  const binding = {
+    chatId: String(chat.id),
+    title: chat.title || chat.username || String(chat.id),
+    username: chat.username || '',
+    type: chat.type || ''
+  };
+  if (kind === 'requiredGroup') {
+    if (chat.username) {
+      binding.url = 'https://t.me/' + chat.username;
+    } else {
+      try { binding.url = await main('exportChatInviteLink', {chat_id: chat.id}); }
+      catch { binding.url = ''; }
+    }
+  }
+  return binding;
+}
+function configText() {
+  const group = boundGroup();
+  const repo = boundRepository();
+  return [
+    '⚙️ 当前绑定配置', '',
+    '🔐 指定群：' + (group ? group.title + ' (' + group.type + ')' : '未绑定'),
+    '📦 资源仓库：' + (repo ? repo.title + ' (' + repo.type + ')' : '未绑定'),
+    '🆔 指定群 ID：' + (group?.chatId || '未绑定'),
+    '🆔 仓库 ID：' + (repo?.chatId || '未绑定'),
+    group?.url ? '🔗 指定群链接：' + group.url : ''
+  ].filter(Boolean).join('\n');
+}
+async function handleBindingCommand(msg) {
+  const userId = msg.from?.id;
+  const chat = msg.chat;
+  const text = msg.text || '';
+  if (!userId || !isAdmin(userId)) return false;
+  if (!['group', 'supergroup'].includes(chat?.type)) return false;
+
+  const bindGroup = ['/绑定指定群', '绑定指定群', '🔐 绑定指定群'].includes(text);
+  const bindRepo = ['/绑定仓库', '绑定仓库', '📦 绑定仓库'].includes(text);
+  const unbindGroup = ['/解绑指定群', '解绑指定群', '🔓 解绑指定群'].includes(text);
+  const unbindRepo = ['/解绑仓库', '解绑仓库', '🔓 解绑仓库'].includes(text);
+  if (!(bindGroup || bindRepo || unbindGroup || unbindRepo)) return false;
+
+  let member;
+  try {
+    member = await main('getChatMember', {chat_id: chat.id, user_id: userId});
+  } catch {
+    await send(TOKEN, userId, '⚠️ 无法验证你在当前群的管理员权限。');
+    return true;
+  }
+  if (!['creator', 'administrator'].includes(member.status)) {
+    await send(TOKEN, userId, '⚠️ 只有当前群管理员可以执行绑定/解绑操作。');
+    return true;
+  }
+
+  if (bindGroup) {
+    db.settings.requiredGroup = await buildChatBinding(chat, 'requiredGroup');
+    saveDb();
+    await send(TOKEN, userId, '✅ 指定群绑定成功\n\n' + configText());
+    return true;
+  }
+  if (bindRepo) {
+    db.settings.repository = await buildChatBinding(chat, 'repository');
+    saveDb();
+    await send(TOKEN, userId, '✅ 资源仓库绑定成功\n\n' + configText());
+    return true;
+  }
+  if (unbindGroup) {
+    db.settings.requiredGroup = null;
+    saveDb();
+    await send(TOKEN, userId, '✅ 已解除指定群绑定。');
+    return true;
+  }
+  if (unbindRepo) {
+    db.settings.repository = null;
+    saveDb();
+    await send(TOKEN, userId, '✅ 已解除资源仓库绑定。');
+    return true;
+  }
+  return true;
 }
 
 async function tg(token, method, body = {}) {
@@ -99,9 +189,10 @@ function userMenu(admin = false, child = false) {
 }
 
 async function isMember(token, userId) {
-  if (!REQUIRED_GROUP_ID) return true;
+  const groupId = requiredGroupId();
+  if (!groupId) return true;
   try {
-    const m = await tg(token, 'getChatMember', {chat_id: REQUIRED_GROUP_ID, user_id: userId});
+    const m = await tg(token, 'getChatMember', {chat_id: groupId, user_id: userId});
     return ['creator','administrator','member'].includes(m.status) ||
       (m.status === 'restricted' && m.is_member === true);
   } catch { return false; }
@@ -123,7 +214,7 @@ function resourceFromMessage(msg) {
 }
 function addResource(msg) {
   const item = resourceFromMessage(msg);
-  if (!item || !REPOSITORY_CHAT_ID || String(item.chatId) !== String(REPOSITORY_CHAT_ID)) return;
+  if (!item || !repositoryChatId() || String(item.chatId) !== String(repositoryChatId())) return;
   const i = db.resources.findIndex(x => x.messageId === item.messageId && x.chatId === item.chatId);
   if (i >= 0) db.resources[i] = item;
   else db.resources.unshift(item);
@@ -135,7 +226,7 @@ async function copyResource(token, toChatId, item) {
 }
 
 async function deliverResources(token, chatId, items) {
-  if (!REPOSITORY_CHAT_ID) return send(token, chatId, '⚠️ 尚未配置 REPOSITORY_CHAT_ID。');
+  if (!repositoryChatId()) return send(token, chatId, '⚠️ 尚未配置 repositoryChatId()。');
   if (!items.length) return send(token, chatId, '📭 暂无资源。');
   let ok = 0;
   for (const item of items) {
@@ -224,7 +315,9 @@ async function broadcast(adminChatId, text) {
 async function handleMain(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from?.id;
-  if (!userId || msg.chat.type !== 'private') return;
+  if (!userId) return;
+  if (await handleBindingCommand(msg)) return;
+  if (msg.chat.type !== 'private') return;
   rememberUser(userId);
   broadcastUsers.add(userId);
   const admin = ADMIN_IDS.includes(String(userId));
@@ -262,6 +355,10 @@ async function handleMain(msg) {
     }
   }
 
+  if (admin && (text === '/查看配置' || text === '查看配置' || text === '⚙️ 查看配置')) {
+    return send(TOKEN, chatId, configText(), userMenu(true));
+  }
+
   if (admin && (text === '/历史扫描' || text === '🔍 历史扫描')) {
     if (!process.env.MT_API_ID || !process.env.MT_API_HASH) {
       return send(TOKEN, chatId, '⚠️ 请先配置 MT_API_ID / MT_API_HASH。');
@@ -269,14 +366,14 @@ async function handleMain(msg) {
     if (!historyScanner.client) {
       return send(TOKEN, chatId, '🔐 还没有绑定扫描账号。\n\n请先发送 /绑定扫描账号。');
     }
-    if (!REPOSITORY_CHAT_ID) {
-      return send(TOKEN, chatId, '⚠️ 尚未配置 REPOSITORY_CHAT_ID。当前版本的历史扫描会扫描这个仓库。');
+    if (!repositoryChatId()) {
+      return send(TOKEN, chatId, '⚠️ 尚未配置 repositoryChatId()。当前版本的历史扫描会扫描这个仓库。');
     }
     if (historyScanner.running) {
       return send(TOKEN, chatId, '⏳ 历史扫描已经在运行中。');
     }
     sessions.set(userId, {step:'historyScanLimit'});
-    return send(TOKEN, chatId, '🔍 准备真实扫描 Telegram 历史消息。\n\n扫描账号：已连接\n仓库：' + REPOSITORY_CHAT_ID + '\n\n请输入扫描消息数量：\n例如：5000\n输入 0 = 扫描到 Telegram 历史尽头（受 MAX_HISTORY_SCAN 限制）。\n\n发送 /cancel 取消。');
+    return send(TOKEN, chatId, '🔍 准备真实扫描 Telegram 历史消息。\n\n扫描账号：已连接\n仓库：' + repositoryChatId() + '\n\n请输入扫描消息数量：\n例如：5000\n输入 0 = 扫描到 Telegram 历史尽头（受 MAX_HISTORY_SCAN 限制）。\n\n发送 /cancel 取消。');
   }
 
   if (admin && sessions.get(userId)?.step === 'historyScanLimit') {
@@ -293,7 +390,7 @@ async function handleMain(msg) {
     await send(TOKEN, chatId, '🔍 开始真实历史扫描……\n\n最大扫描：' + maxMessages + ' 条\n不会下载文件，只读取 Telegram 历史消息并建立资源索引。');
     try {
       const stats = await historyScanner.scan({
-        chatId: REPOSITORY_CHAT_ID,
+        chatId: repositoryChatId(),
         maxMessages,
         adminId: userId,
         onResource: async (item) => {
@@ -331,7 +428,7 @@ async function handleMain(msg) {
   if (text === '🤖 克隆我的机器人') {
     if (!(await isMember(TOKEN, userId))) {
       const rows = [];
-      if (REQUIRED_GROUP_URL) rows.push([{text:'🚪 加入指定群', url:REQUIRED_GROUP_URL}]);
+      if (requiredGroupUrl()) rows.push([{text:'🚪 加入指定群', url:requiredGroupUrl()}]);
       rows.push([{text:'🔄 检查权限', callback_data:'check_clone'}]);
       return send(TOKEN, chatId, '🔐 请先加入指定群后再克隆机器人。', {reply_markup:{inline_keyboard:rows}});
     }
@@ -455,7 +552,7 @@ async function mainLoop() {
         db.mainOffset = u.update_id + 1;
         if (u.channel_post) addResource(u.channel_post);
         if (u.edited_channel_post) addResource(u.edited_channel_post);
-        if (u.message && REPOSITORY_CHAT_ID && String(u.message.chat?.id) === String(REPOSITORY_CHAT_ID)) addResource(u.message);
+        if (u.message && repositoryChatId() && String(u.message.chat?.id) === String(repositoryChatId())) addResource(u.message);
         if (u.callback_query?.data === 'check_clone') {
           const ok = await isMember(TOKEN, u.from.id);
           await main('answerCallbackQuery', {callback_query_id:u.id, text:ok?'验证成功':'请先加入指定群', show_alert:true});
