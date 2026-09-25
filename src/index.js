@@ -333,11 +333,47 @@ function random10() { return [...db.resources].sort(()=>Math.random()-.5).slice(
 async function deliver(token,chatId,userId,items) {
   if(!(await allowed(token,userId))) return send(token,chatId,"🔐 请先加入指定群。");
   if(!items.length) return send(token,chatId,"📭 暂无相关资源。");
-  for(const x of items) {
-    try { await tg(token,"copyMessage",{chat_id:chatId,from_chat_id:x.chatId,message_id:x.messageId}); }
-    catch(e) { console.error("COPY:",e.message); }
+
+  const valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
+  let ok = 0, fail = 0, lastError = "";
+
+  for(const x of valid) {
+    try {
+      await tg(token,"copyMessage",{
+        chat_id:chatId,
+        from_chat_id:x.chatId,
+        message_id:Number(x.messageId)
+      });
+      ok++;
+    } catch(e) {
+      fail++;
+      lastError = e.message || String(e);
+      console.error("COPY:", lastError, "chat=", x.chatId, "message=", x.messageId);
+    }
     await sleep(80);
   }
+
+  if(fail > 0) {
+    const total = valid.length;
+    if(ok === 0) {
+      return send(token,chatId,
+        "❌ 资源发送失败\\n\\n"+
+        "📦 已找到资源："+total+" 条\\n"+
+        "📤 成功发送：0 条\\n"+
+        "⚠️ 发送失败："+fail+" 条\\n\\n"+
+        "请确认机器人已经加入「资源仓库」，并且可以读取/复制仓库消息。\\n"+
+        "Telegram 返回：\\n"+lastError
+      );
+    }
+    return send(token,chatId,
+      "⚠️ 资源获取完成\\n\\n"+
+      "📤 成功发送："+ok+" 条\\n"+
+      "⚠️ 发送失败："+fail+" 条\\n\\n"+
+      "部分历史消息无法由机器人复制。"
+    );
+  }
+
+  return true;
 }
 
 const states=new Map();
