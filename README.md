@@ -23,7 +23,7 @@
 - REQUIRED_GROUP_ID：用户必须加入的群/超级群 ID
 - REQUIRED_GROUP_URL：指定群邀请链接
 - REPOSITORY_CHAT_ID：资源仓库群/频道 ID
-- STORAGE_KEY：建议设置一串随机长字符串，用于加密子机器人 Token
+- STORAGE_KEY：可选。现在项目内置固定加密密钥，正常部署无需填写；如果你主动设置此环境变量，它会覆盖内置密钥，且以后必须保持不变。
 - DATA_FILE：数据文件路径，默认 ./data/database.json
 - MAX_RESOURCES：最多保存多少条资源索引，默认 5000
 
@@ -66,7 +66,7 @@ npm start
 - 登录完成后使用「🔍 历史扫描」或 `/历史扫描`。
 - 扫描数量可以指定；输入 0 时按 `MAX_HISTORY_SCAN` 上限扫描。
 - 可发送「🛑 停止扫描」或 `/停止扫描` 停止正在进行的扫描。
-- 扫描账号的 MTProto Session 会使用现有的 `STORAGE_KEY` 加密后保存，不写入代码。
+- 扫描账号的 MTProto Session 会使用项目内置的固定加密密钥（也可由 `STORAGE_KEY` 覆盖）加密后保存。
 - 扫描账号必须自己已经加入资源仓库，并且能够正常查看历史消息。
 
 ### MTProto 环境变量
