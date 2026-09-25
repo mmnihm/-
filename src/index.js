@@ -330,8 +330,8 @@ function search(q) {
 }
 function random10() { return [...db.resources].sort(()=>Math.random()-.5).slice(0,10); }
 
-async function deliver(token,chatId,userId,items) {
-  if(!(await allowed(token,userId))) return send(token,chatId,"🔐 请先加入指定群。");
+async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
+  if(!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 请先加入指定群。");
   if(!items.length) return send(token,chatId,"📭 暂无相关资源。");
 
   const valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
@@ -339,7 +339,7 @@ async function deliver(token,chatId,userId,items) {
 
   for(const x of valid) {
     try {
-      await tg(token,"copyMessage",{
+      await tg(sourceToken,"copyMessage",{
         chat_id:chatId,
         from_chat_id:x.chatId,
         message_id:Number(x.messageId)
@@ -578,9 +578,9 @@ async function childMessage(child,msg,token) {
   // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。\n  if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
   if(t==="📂 资源目录") return send(token,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
   if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 请输入关键词：");}
-  if(t==="🎲 随机获取") return deliver(token,uid,uid,random10());
-  if(t==="🆕 最新资源") return deliver(token,uid,uid,db.resources.slice(0,10));
-  if(s?.step==="search"){states.delete(key);return deliver(token,uid,uid,search(t));}
+  if(t==="🎲 随机获取") return deliver(token,uid,uid,random10(),TOKEN);
+  if(t==="🆕 最新资源") return deliver(token,uid,uid,db.resources.slice(0,10),TOKEN);
+  if(s?.step==="search"){states.delete(key);return deliver(token,uid,uid,search(t),TOKEN);}
 }
 
 async function pollMain() {
