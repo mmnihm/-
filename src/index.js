@@ -3,10 +3,24 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HistoryScanner } from './scanner.js';
+console.log('====================================');
+console.log('🚀 Telegram Clone Platform starting...');
+console.log('📦 Node.js:', process.version);
+console.log('🕐 Time:', new Date().toISOString());
+console.log('====================================');
+
+const { HistoryScanner } = await import('./scanner.js').catch(error => {
+  console.error('❌ Failed to load scanner.js:', error);
+  process.exit(1);
+});
 
 const TOKEN = process.env.BOT_TOKEN;
-if (!TOKEN) throw new Error('Missing BOT_TOKEN');
+console.log('🔧 BOT_TOKEN:', TOKEN ? '已读取' : '❌ 未配置');
+if (!TOKEN) {
+  console.error('❌ FATAL STARTUP ERROR: Missing BOT_TOKEN');
+  process.exit(1);
+}
+console.log('✅ Environment loaded');
 
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 // Group/repository bindings are persisted in database.json and managed by admin commands.
@@ -15,7 +29,7 @@ function boundRepository() { return db.settings?.repository || null; }
 function requiredGroupId() { return boundGroup()?.chatId || ''; }
 function requiredGroupUrl() { return boundGroup()?.url || ''; }
 function repositoryChatId() { return boundRepository()?.chatId || ''; }
-const DATA_FILE = './database.json';
+const DATA_FILE = process.env.DATA_FILE || './data/database.json';
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
 // Built-in encryption secret: STORAGE_KEY is optional now.
 // Keep this value unchanged so encrypted child-bot tokens survive restarts/redeploys.
@@ -862,12 +876,22 @@ async function mainLoop() {
 }
 
 async function boot() {
+  console.log('🚀 Starting bot boot...');
+  console.log('🔌 Connecting to Telegram...');
   const me = await main('getMe');
-  console.log(`Main bot started: @${me.username}`);
+  console.log(`✅ Main bot connected: @${me.username}`);
   for (const child of db.children) {
     try { await startChild(child); } catch (e) { console.error('child boot:', e.message); }
   }
-  console.log(`Loaded ${db.children.length} child bots and ${db.resources.length} resources`);
-  mainLoop().catch(e => { console.error('fatal:', e); process.exit(1); });
+  console.log(`📊 Loaded ${db.children.length} child bots and ${db.resources.length} resources`);
+  console.log('🔄 Starting main polling loop...');
+  mainLoop().catch(e => {
+    console.error('❌ FATAL MAIN LOOP:', e);
+    process.exit(1);
+  });
 }
-boot();
+
+boot().catch(error => {
+  console.error('❌ FATAL STARTUP ERROR:', error);
+  process.exit(1);
+});
