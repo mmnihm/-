@@ -1,5 +1,5 @@
 import { TelegramClient } from 'teleproto';
-import { StringSession } from 'teleproto/sessions';
+import { StringSession } from 'teleproto/sessions/StringSession.js';
 
 function requireConfig(apiId, apiHash) {
   return { apiId: Number(apiId || 0), apiHash: apiHash || '' };
