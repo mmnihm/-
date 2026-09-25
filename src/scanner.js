@@ -152,12 +152,12 @@ export class HistoryScanner {
     };
   }
 
-  async scan({ chatId, maxMessages = 50000, offsetId = 0, onResource }) {
+  async scan({ chatId, maxMessages = 50000, offsetId = 0, onResource, adminId = null }) {
     if (this.running) throw new Error('历史扫描已经在运行');
     if (!this.client) throw new Error('请先绑定扫描账号');
     const entity = await this.getRepositoryEntity(chatId);
     this.running = true;
-    this.scanAdminId = arguments[0]?.adminId || null;
+    this.scanAdminId = adminId;
 
     const stats = {
       scanned: 0,
