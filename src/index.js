@@ -2,8 +2,6 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { TelegramClient } from "teleproto";
-import { StringSession } from "teleproto/sessions";
 
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = process.env.BOT_TOKEN || "";
@@ -76,6 +74,8 @@ if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0
 
 let historyClient = null;
 let historyConnecting = null;
+let TelegramClientClass = null;
+let StringSessionClass = null;
 const historyInputs = new Map();
 
 function askHistoryInput(uid, step, prompt) {
@@ -85,13 +85,23 @@ function askHistoryInput(uid, step, prompt) {
   });
 }
 
+async function loadTeleproto() {
+  if (TelegramClientClass && StringSessionClass) return;
+  const mod = await import("teleproto");
+  const sessions = await import("teleproto/sessions");
+  TelegramClientClass = mod.TelegramClient;
+  StringSessionClass = sessions.StringSession;
+  if (!TelegramClientClass || !StringSessionClass) throw new Error("teleproto 模块加载失败");
+}
+
 async function createHistoryClient() {
+  await loadTeleproto();
   const auth = db.settings.historyAuth || {};
   const apiId = Number(auth.apiId || TG_API_ID || 0);
   const apiHash = auth.apiHash ? decrypt(auth.apiHash) : TG_API_HASH;
   const session = auth.session ? decrypt(auth.session) : (process.env.TG_SESSION || "");
   if (!apiId || !apiHash) throw new Error("未配置 TG_API_ID / TG_API_HASH");
-  const client = new TelegramClient(new StringSession(session), apiId, apiHash, {connectionRetries:5});
+  const client = new TelegramClientClass(new StringSessionClass(session), apiId, apiHash, {connectionRetries:5, autoReconnect:true});
   return {client, apiId, apiHash};
 }
 
@@ -147,7 +157,7 @@ async function findHistoryEntity(client) {
   if (r.username) {
     try { return await client.getEntity(r.username); } catch {}
   }
-  const dialogs = await client.getDialogs({limit:undefined});
+  const dialogs = await client.getDialogs({limit:1000});
   for (const d of dialogs) {
     if (String(d.id) === String(r.chatId)) return d.entity;
   }
@@ -184,7 +194,7 @@ async function scanHistory(uid) {
     const client = await ensureHistoryClient(uid);
     const entity = await findHistoryEntity(client);
     let scanned = 0, indexed = 0;
-    for await (const message of client.iterMessages(entity,{limit:undefined})) {
+    for await (const message of client.iterMessages(entity,{limit:100})) {
       scanned++;
       if (indexHistoryMessage(message,r.chatId)) indexed++;
       if (scanned % 100 === 0) {
