@@ -305,10 +305,17 @@ async function pollMain() {
     try{
       const updates=await main("getUpdates",{offset:db.offset,timeout:25,allowed_updates:["message","channel_post","edited_channel_post"]});
       for(const u of updates){
-        db.offset=u.update_id+1;
-        if(u.channel_post) indexResource(u.channel_post);
-        if(u.edited_channel_post) indexResource(u.edited_channel_post);
+        console.log("📩 MAIN UPDATE:", u.update_id, u.channel_post ? "channel_post" : u.edited_channel_post ? "edited_channel_post" : u.message ? "message" : "other");
+        if(u.channel_post) {
+          console.log("📦 CHANNEL POST:", String(u.channel_post.chat?.id), u.channel_post.chat?.title || u.channel_post.chat?.username || "");
+          indexResource(u.channel_post);
+        }
+        if(u.edited_channel_post) {
+          console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));
+          indexResource(u.edited_channel_post);
+        }
         if(u.message) await mainMessage(u.message);
+        db.offset=u.update_id+1;
       }
       saveDb();
     }catch(e){console.error("MAIN POLLING:",e.message);await sleep(3000);}
