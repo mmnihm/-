@@ -80,6 +80,39 @@ function rememberUser(id) {
 function isAdmin(userId) {
   return ADMIN_IDS.includes(String(userId));
 }
+
+async function ownerHasRequiredGroup(bot) {
+  if (!requiredGroupId()) return false;
+  return isMember(bot.token, bot.ownerId);
+}
+
+async function enforceChildOwner(bot, notify = false) {
+  const allowed = await ownerHasRequiredGroup(bot);
+  if (allowed) {
+    if (bot.enabled === false) {
+      bot.enabled = true;
+      bot.suspendedReason = '';
+      saveDb();
+    }
+    return true;
+  }
+
+  bot.enabled = false;
+  bot.running = false;
+  bot.suspendedReason = 'owner_not_in_required_group';
+  saveDb();
+
+  if (notify) {
+    try {
+      await send(bot.token, bot.ownerId,
+        '🔐 你的专属机器人已暂停使用。\n\n' +
+        '原因：你的账号已不在指定群。\n' +
+        '重新加入指定群后，机器人会自动恢复使用。'
+      );
+    } catch {}
+  }
+  return false;
+}
 async function buildChatBinding(chat, kind) {
   const binding = {
     chatId: String(chat.id),
@@ -446,7 +479,17 @@ async function handleMain(msg) {
         sessions.delete(userId);
         return send(TOKEN, chatId, '⚠️ 这个机器人已经绑定过了。', userMenu(admin));
       }
-      db.children.push({botId:me.id, username:me.username || '', ownerId:userId, token:encrypt(text), createdAt:Date.now(), offset:0});
+      db.children.push({
+        botId:me.id,
+        username:me.username || '',
+        ownerId:userId,
+        token:encrypt(text),
+        createdAt:Date.now(),
+        offset:0,
+        enabled:true,
+        running:false,
+        suspendedReason:''
+      });
       saveDb();
       sessions.delete(userId);
       await startChild(db.children.at(-1));
@@ -485,6 +528,11 @@ async function handleChild(bot, msg) {
   if (!userId || msg.chat.type !== 'private') return;
   const text = msg.text || '';
   if (text === '/start') return send(bot.token, chatId, '👋 欢迎使用资源机器人\n\n请选择功能：', userMenu(false, true));
+  // The owner controls this child bot. If the owner leaves the required group,
+  // the child bot is suspended for everyone until the owner rejoins.
+  if (!(await enforceChildOwner(bot, true))) {
+    return send(bot.token, chatId, '⏸️ 该专属机器人目前已暂停使用。\n\n机器人所属用户不在指定群内。');
+  }
   if (!(await isMember(bot.token, userId))) {
     return send(bot.token, chatId, '🔐 暂无访问权限，请先加入指定群。');
   }
@@ -510,7 +558,16 @@ async function handleChild(bot, msg) {
 async function startChild(bot) {
   try {
     const token = decrypt(bot.token);
+    bot.token = bot.token; // keep encrypted token in persistent storage
+    if (requiredGroupId()) {
+      const allowed = await enforceChildOwner(bot);
+      if (!allowed) {
+        bot.running = false;
+        return;
+      }
+    }
     await tg(token, 'deleteWebhook', {drop_pending_updates:false});
+    bot.enabled = true;
     bot.running = true;
     childLoop(bot).catch(e => console.error('child loop:', e.message));
   } catch (e) {
@@ -521,7 +578,18 @@ async function startChild(bot) {
 async function childLoop(bot) {
   const token = decrypt(bot.token);
   let offset = bot.offset || 0;
+  let lastOwnerCheck = 0;
   while (true) {
+    if (requiredGroupId() && Date.now() - lastOwnerCheck >= 60000) {
+      lastOwnerCheck = Date.now();
+      const allowed = await enforceChildOwner(bot, true);
+      if (!allowed) {
+        console.log(`child @${bot.username || bot.botId} suspended: owner not in required group`);
+        bot.running = false;
+        saveDb();
+        return;
+      }
+    }
     try {
       const updates = await tg(token, 'getUpdates', {
         offset, timeout:25, allowed_updates:['message','callback_query']
