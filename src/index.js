@@ -255,13 +255,9 @@ function userMenu() {
 }
 function adminMenu() {
   return {reply_markup:{keyboard:[
-    ["📂 资源目录","🔎 搜索资源"],
-    ["🎲 随机获取","🆕 最新资源"],
     ["📊 数据统计","🔍 仓库扫描"],
-    ["🤖 克隆机器人","📢 广播消息"],
     ["📦 资源仓库","🔐 指定群"],
-    ["📂 资源目录","🔎 搜索资源"],
-    ["🎲 随机获取","🆕 最新资源"],
+    ["🤖 克隆机器人","📢 广播消息"],
     ["⚙️ 平台设置"]
   ],resize_keyboard:true}};
 }
@@ -488,7 +484,18 @@ async function mainMessage(msg) {
     for(const id of db.users){ try{await send(TOKEN,id,t);ok++;}catch{fail++;} await sleep(50); }
     return send(TOKEN,uid,`✅ 广播完成\n\n成功：${ok}\n失败：${fail}`,adminMenu());
   }
-  if(t==="⚙️ 平台管理"&&admin) return send(TOKEN,uid,configText(),adminMenu());
+  if((t==="⚙️ 平台设置" || t==="⚙️ 平台管理")&&admin) {
+    return send(TOKEN,uid,
+      "⚙️ 平台设置\\n\\n"+
+      "这里集中管理平台核心配置。\\n\\n"+
+      "📦 资源仓库：设置历史资源来源\\n"+
+      "🔐 指定群：设置访问资格群\\n"+
+      "🔍 仓库扫描：读取已有历史消息\\n"+
+      "📊 数据统计：查看当前运行数据\\n\\n"+
+      configText(),
+      adminMenu()
+    );
+  }
 }
 
 async function childMessage(child,msg,token) {
