@@ -30,6 +30,7 @@ const send = (token, chat_id, text, extra={}) => tg(token,"sendMessage",{chat_id
 const kb = rows => ({reply_markup:{keyboard:rows,resize_keyboard:true}});
 const inline = rows => ({reply_markup:{inline_keyboard:rows}});
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
+async function clearSession(env,scope,uid){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope=? AND user_id=?").bind(scope,String(uid)).run();}
 
 async function setting(env,key, fallback="") {
   const r=await env.DB.prepare("SELECT value FROM platform_settings WHERE key=?").bind(key).first();
