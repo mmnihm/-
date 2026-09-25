@@ -104,9 +104,29 @@ async function mainHandle(env, msg){
   if(msg.text==="📢 广播消息" && admin){await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES('main',?, 'broadcast', '') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind(uid).run();return send(token,chat,"📢 请输入广播文字。\n\n发送 /cancel 取消。");}
   const s=await env.DB.prepare("SELECT step,payload FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).first();
   if(admin&&s?.step==="repo"&&msg.text){try{const x=await tg(token,"getChat",{chat_id:msg.text.trim()});await env.DB.prepare("INSERT INTO repositories(chat_id,title,type,status) VALUES(?,?,?,'active') ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title,type=excluded.type,status='active'").bind(String(x.id),x.title||x.username||String(x.id),x.type).run();await clearSession(env,"main",uid);return send(token,chat,"✅ 仓库绑定成功。",menu(true))}catch{return send(token,chat,"❌ 主机器人无法访问这个 Chat ID，请检查是否已加入仓库并有权限。")}}
+  if(admin&&s?.step==="await_file"){
+    if(msg.text==="/cancel"){await clearSession(env,"main",uid);return send(token,chat,"❌ 已取消。",menu(true));}
+    const parts=(s.payload||"").split("|"),rid=Number(parts[0]),fid=Number(parts[1]);
+    const repo=await env.DB.prepare("SELECT id,chat_id FROM repositories WHERE id=? AND status='active'").bind(rid).first();
+    if(!repo)return send(token,chat,"❌ 仓库不存在。");
+    let file=null,type=null;
+    if(msg.document){file=msg.document;type="document";}
+    else if(msg.video){file=msg.video;type="video";}
+    else if(msg.photo?.length){file=msg.photo[msg.photo.length-1];type="photo";}
+    else if(msg.audio){file=msg.audio;type="audio";}
+    else if(msg.voice){file=msg.voice;type="voice";}
+    if(!file)return send(token,chat,"❌ 请发送文件、视频、图片或音频。");
+    try{
+      const copied=await tg(token,"copyMessage",{chat_id:repo.chat_id,from_chat_id:chat,message_id:msg.message_id});
+      await env.DB.prepare("INSERT OR IGNORE INTO resources(repository_id,folder_id,filename,file_id,file_unique_id,message_id,chat_id,file_type,file_size,created_at,status) VALUES(?,?,?,?,?,?,?,?,?,datetime('now'),'active')")
+        .bind(repo.id,fid,file.file_name||("telegram-"+msg.message_id),file.file_id,file.file_unique_id,String(copied.message_id),String(repo.chat_id),type,file.file_size||null).run();
+      await clearSession(env,"main",uid);
+      return send(token,chat,"✅ 资源上传并建立索引成功。",menu(true));
+    }catch(e){return send(token,chat,"❌ 上传失败，请确认机器人在仓库中有发送/复制所需权限。");}
+  }
   if(admin&&s?.step==="folder"&&msg.text){if(msg.text==="/cancel"){await clearSession(env,"main",uid);return send(token,chat,"❌ 已取消。",menu(true))}await env.DB.prepare("INSERT OR IGNORE INTO folders(name) VALUES(?)").bind(msg.text.trim()).run();await clearSession(env,"main",uid);return send(token,chat,"✅ 文件夹创建成功。",menu(true))}
   if(admin&&["list"].includes((msg.text||"").toLowerCase())&&s?.step==="admin"){const x=await env.DB.prepare("SELECT user_id FROM admins ORDER BY user_id").all();return send(token,chat,"👤 管理员列表\\n\\n"+(x.results||[]).map(v=>v.user_id).join("\\n"))}
-  if(admin&&s?.step==="admin"&&msg.text){const v=msg.text.trim();if(/^[+-]\\d+$/.test(v)){if(v[0]==="+")await env.DB.prepare("INSERT OR IGNORE INTO admins(user_id) VALUES(?)").bind(v.slice(1)).run();else await env.DB.prepare("DELETE FROM admins WHERE user_id=?").bind(v.slice(1)).run();return send(token,chat,"✅ 管理员设置已更新。",menu(true))}}
+  if(admin&&s?.step==="admin"&&msg.text){const v=msg.text.trim();if(/^[+-]\d+$/.test(v)){if(v[0]==="+")await env.DB.prepare("INSERT OR IGNORE INTO admins(user_id) VALUES(?)").bind(v.slice(1)).run();else await env.DB.prepare("DELETE FROM admins WHERE user_id=?").bind(v.slice(1)).run();return send(token,chat,"✅ 管理员设置已更新。",menu(true))}}
   if(s?.step==="broadcast" && admin && msg.text && msg.text!=="/cancel"){await env.DB.prepare("UPDATE clone_sessions SET step='broadcast_preview',payload=? WHERE scope='main' AND user_id=?").bind(msg.text,uid).run();return send(token,chat,"📢 广播预览\\n\\n"+msg.text+"\\n\\n确认发送？",inline([[{text:"✅ 确认发送",callback_data:"broadcast_yes"},{text:"❌ 取消",callback_data:"broadcast_no"}]]));}
   if(s?.step==="broadcast" && msg.text==="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return send(token,chat,"❌ 已取消。",menu(true));}
   if(msg.text==="🤖 克隆我的机器人"){
@@ -129,6 +149,12 @@ async function mainHandle(env, msg){
   if(msg.text==="📦 绑定仓库"&&admin){await sessionMain(env,uid,"repo","");return send(token,chat,"📦 请发送仓库 Chat ID。\\n\\n先把主机器人加入私有群/频道并授予必要权限。\\n/cancel 取消。")}
   if(msg.text==="📁 新建文件夹"&&admin){await sessionMain(env,uid,"folder","");return send(token,chat,"📁 请输入新文件夹名称。\\n/cancel 取消。")}
   if(msg.text==="👤 管理员设置"&&admin){await sessionMain(env,uid,"admin","");return send(token,chat,"👤 管理员设置\\n\\n发送 +数字 添加管理员\\n发送 -数字 删除管理员\\n发送 list 查看管理员\\n/cancel 取消。");}
+  if(msg.text==="📤 上传资源"&&admin){
+    const repo=await env.DB.prepare("SELECT id,chat_id,title FROM repositories WHERE status='active' ORDER BY id LIMIT 10").all();
+    if(!repo.results?.length) return send(token,chat,"❌ 还没有绑定仓库。请先绑定仓库。");
+    await sessionMain(env,uid,"upload_repo","");
+    return send(token,chat,"📦 请选择仓库：",inline((repo.results||[]).map(x=>[{text:"📦 "+x.title,callback_data:"upload_repo:"+x.id}])));
+  }
   if(msg.text==="🔄 扫描仓库"&&admin)return send(token,chat,"🔄 仓库扫描说明\\n\\n当前 Telegram Bot API 无法保证读取私有仓库的完整历史消息，因此这里不会伪造“全量扫描成功”。\\n\\n现有资源可继续通过上传流程建立索引；完整历史恢复需要 MTProto/user-account 扫描层。");
   if(s?.step==="search" && msg.text){
     await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();
@@ -194,7 +220,9 @@ async function mainUpdate(env,u){
     if(d==='broadcast_no'){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return send(env.BOT_TOKEN,chat,'❌ 广播已取消。',menu(true));}
     if(d==='broadcast_yes'&&await isAdmin(env,uid)){const s=await env.DB.prepare("SELECT payload FROM clone_sessions WHERE scope='main' AND user_id=? AND step='broadcast_preview'").bind(uid).first();if(!s)return send(env.BOT_TOKEN,chat,'❌ 广播已失效。');await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return broadcast(env,env.BOT_TOKEN,chat,s.payload);}
     if(d.startsWith('res:')){if(!(await member(env,env.BOT_TOKEN,uid)))return;return sendResource(env,env.BOT_TOKEN,uid,Number(d.slice(4)));}
-    if(d.startsWith('folder:')){const id=Number(d.split(':')[1]);const rs=await env.DB.prepare("SELECT id,filename,file_id,file_type,file_size,folder_id,created_at FROM resources WHERE status='active' AND folder_id=? ORDER BY created_at DESC LIMIT 8").bind(id).all();return send(env.BOT_TOKEN,chat,'📁 分类资源',inline([...await resourceButtons(env,rs),[{text:'🏠 返回首页',callback_data:'home'}]]));}
+    if(d.startsWith('upload_repo:')&&await isAdmin(env,uid)){const rid=Number(d.slice(11));const folders=await env.DB.prepare("SELECT id,name FROM folders ORDER BY name").all();await sessionMain(env,uid,"upload_file",String(rid));return send(env.BOT_TOKEN,chat,"📁 请选择文件夹：",inline((folders.results||[]).map(x=>[{text:"📁 "+x.name,callback_data:"upload_folder:"+x.id}])));}
+    if(d.startsWith('upload_folder:')&&await isAdmin(env,uid)){const fid=Number(d.slice(13));const s=await env.DB.prepare("SELECT payload FROM clone_sessions WHERE scope='main' AND user_id=? AND step='upload_file'").bind(uid).first();if(!s)return send(env.BOT_TOKEN,chat,"❌ 上传流程已失效。");await sessionMain(env,uid,"await_file",s.payload+"|"+fid);return send(env.BOT_TOKEN,chat,"📤 请直接发送文件。发送 /cancel 取消。");}
+    if(d.startsWith('folder:')){if(!(await member(env,env.BOT_TOKEN,uid)))return;const id=Number(d.split(':')[1]);const rs=await env.DB.prepare("SELECT id,filename,file_id,file_type,file_size,folder_id,created_at FROM resources WHERE status='active' AND folder_id=? ORDER BY created_at DESC LIMIT 8").bind(id).all();return send(env.BOT_TOKEN,chat,'📁 分类资源',inline([...await resourceButtons(env,rs),[{text:'🏠 返回首页',callback_data:'home'}]]));}
     return;
   }
   if(u.message) await mainHandle(env,u.message);
