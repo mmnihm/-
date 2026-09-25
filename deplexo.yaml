@@ -1,0 +1,4 @@
+framework: node
+install: npm install
+start: node src/index.js
+port: 3000
