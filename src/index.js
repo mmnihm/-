@@ -226,7 +226,7 @@ async function copyResource(token, toChatId, item) {
 }
 
 async function deliverResources(token, chatId, items) {
-  if (!repositoryChatId()) return send(token, chatId, '⚠️ 尚未配置 repositoryChatId()。');
+  if (!repositoryChatId()) return send(token, chatId, '⚠️ 尚未绑定资源仓库。');
   if (!items.length) return send(token, chatId, '📭 暂无资源。');
   let ok = 0;
   for (const item of items) {
@@ -367,7 +367,7 @@ async function handleMain(msg) {
       return send(TOKEN, chatId, '🔐 还没有绑定扫描账号。\n\n请先发送 /绑定扫描账号。');
     }
     if (!repositoryChatId()) {
-      return send(TOKEN, chatId, '⚠️ 尚未配置 repositoryChatId()。当前版本的历史扫描会扫描这个仓库。');
+      return send(TOKEN, chatId, '⚠️ 尚未配置 repositoryChatId()。历史扫描需要先绑定资源仓库。');
     }
     if (historyScanner.running) {
       return send(TOKEN, chatId, '⏳ 历史扫描已经在运行中。');
