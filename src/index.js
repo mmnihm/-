@@ -2,6 +2,7 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HistoryScanner } from './scanner.js';
 
 const TOKEN = process.env.BOT_TOKEN;
@@ -14,7 +15,8 @@ function boundRepository() { return db.settings?.repository || null; }
 function requiredGroupId() { return boundGroup()?.chatId || ''; }
 function requiredGroupUrl() { return boundGroup()?.url || ''; }
 function repositoryChatId() { return boundRepository()?.chatId || ''; }
-const DATA_FILE = process.env.DATA_FILE || './data/database.json';
+const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DATA_FILE = process.env.DATA_FILE || path.join(APP_DIR, 'data', 'database.json');
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
 // Built-in encryption secret: STORAGE_KEY is optional now.
 // Keep this value unchanged so encrypted child-bot tokens survive restarts/redeploys.
@@ -64,6 +66,7 @@ function loadDb() {
     return { ...emptyDb(), ...db };
   } catch { return emptyDb(); }
 }
+fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
 const db = loadDb();
 let saveTimer;
 function saveDb() {
