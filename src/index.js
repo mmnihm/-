@@ -98,7 +98,8 @@ async function allowed(token, userId) {
 function userMenu() {
   return {reply_markup:{keyboard:[
     ["📂 资源目录","🔎 搜索资源"],
-    ["🎲 随机获取","🆕 最新资源"]
+    ["🎲 随机获取","🆕 最新资源"],
+    ["🤖 克隆机器人"]
   ],resize_keyboard:true}};
 }
 function adminMenu() {
@@ -212,12 +213,11 @@ async function mainMessage(msg) {
   if(t==="📦 绑定资源仓库" && admin)
     return send(TOKEN,uid,"📦 绑定资源仓库\n\n1. 把主机器人加入资源仓库群/频道。\n2. 机器人需要能读取消息。\n3. 在仓库里发送：\n\n/绑定仓库\n\n绑定后，新资源会自动建立索引。");
 
-  if(t==="🤖 克隆机器人" && admin) {
-    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 你不在指定群，暂时不能创建子机器人。");
+  if(t==="🤖 克隆机器人") {
     states.set(key,{step:"token"});
-    return send(TOKEN,uid,"🤖 创建子机器人\n\n请把 BotFather 创建的 Bot Token 发给我。\n\n发送 /cancel 可取消。");
+    return send(TOKEN,uid,"🤖 创建子机器人\n\n请把你在 BotFather 创建的 Bot Token 发给我。\n\n发送 /cancel 可取消。\n\n⚠️ Token 只用于启动你的子机器人，请勿把 Token 发给其他人。");
   }
-  if(s?.step==="token"&&admin) {
+  if(s?.step==="token") {
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消。",adminMenu()); }
     try {
       const me=await tg(t,"getMe");
