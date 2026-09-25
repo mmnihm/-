@@ -51,6 +51,7 @@ async function tg(token, method, body = {}) {
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
 const send = (token, chat_id, text, extra = {}) => tg(token, "sendMessage", {chat_id, text, ...extra});
+const sendHtml = (token, chat_id, text, extra = {}) => tg(token, "sendMessage", {chat_id, text, parse_mode:"HTML", ...extra});
 
 function emptyDb() {
   return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}}};
@@ -207,14 +208,14 @@ async function scanHistory(uid) {
     db.resources=db.resources.slice(0,MAX_RESOURCES);
     db.settings.historyScan={status:"completed",scanned,indexed,startedAt:db.settings.historyScan.startedAt,finishedAt:Date.now(),error:""};
     saveDb();
-    return send(TOKEN,uid,`✅ 历史频道扫描完成\\n\\n📦 仓库：${r.title}\\n🔎 扫描消息：${scanned}\\n📚 新增/更新索引：${indexed}\\n📊 当前资源库：${db.resources.length}`,adminMenu());
+    return sendHtml(TOKEN,uid,`<b>✅ 历史扫描完成</b>\\n\\n📦 <b>资源仓库</b>：${r.title}\\n🔎 <b>扫描消息</b>：${scanned} 条\\n📚 <b>新增/更新</b>：${indexed} 条\\n📊 <b>当前资源</b>：${db.resources.length} 条\\n\\n<i>历史消息已建立索引，现在可以直接搜索资源。</i>`,adminMenu());
   } catch(e) {
     db.settings.historyScan.status="error";
     db.settings.historyScan.error=e.message;
     db.settings.historyScan.finishedAt=Date.now();
     saveDb();
     console.error("❌ HISTORY SCAN:",e);
-    return send(TOKEN,uid,"❌ 历史扫描失败：\\n\\n"+e.message+"\\n\\n如果扫描账号已经加入仓库，这通常不是入群问题，而是连接、权限或历史消息读取错误。",adminMenu());
+    return sendHtml(TOKEN,uid,"<b>❌ 历史扫描失败</b>\\n\\n"+e.message+"\\n\\n<i>如果扫描账号已经加入仓库，请重点检查 Telegram 登录状态、频道权限和历史消息读取权限。</i>",adminMenu());
   }
 }
 
