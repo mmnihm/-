@@ -15,8 +15,7 @@ function boundRepository() { return db.settings?.repository || null; }
 function requiredGroupId() { return boundGroup()?.chatId || ''; }
 function requiredGroupUrl() { return boundGroup()?.url || ''; }
 function repositoryChatId() { return boundRepository()?.chatId || ''; }
-const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DATA_FILE = process.env.DATA_FILE || path.join(APP_DIR, 'data', 'database.json');
+const DATA_FILE = process.env.DATA_FILE || '/tmp/mmnihm/database.json';
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
 // Built-in encryption secret: STORAGE_KEY is optional now.
 // Keep this value unchanged so encrypted child-bot tokens survive restarts/redeploys.
@@ -66,7 +65,7 @@ function loadDb() {
     return { ...emptyDb(), ...db };
   } catch { return emptyDb(); }
 }
-fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+try { fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true }); } catch (err) { console.error('Data directory initialization failed:', err); }
 const db = loadDb();
 let saveTimer;
 function saveDb() {
