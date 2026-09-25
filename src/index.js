@@ -101,7 +101,11 @@ async function mainHandle(env, msg){
   if(msg.chat.type==="private") await env.DB.prepare("INSERT INTO main_users(user_id,last_seen,status) VALUES(?,datetime('now'),'active') ON CONFLICT(user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(uid).run();
   if(msg.text==="/start") return send(token,chat,"👋 欢迎使用机器人平台\n\n请选择功能：",menu(admin));
   if(msg.text==="📢 广播消息" && admin){await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES('main',?, 'broadcast', '') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind(uid).run();return send(token,chat,"📢 请输入广播文字。\n\n发送 /cancel 取消。");}
-  const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).first();
+  const s=await env.DB.prepare("SELECT step,payload FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).first();
+  if(admin&&s?.step==="repo"&&msg.text){try{const x=await tg(token,"getChat",{chat_id:msg.text.trim()});await env.DB.prepare("INSERT INTO repositories(chat_id,title,type,status) VALUES(?,?,?,'active') ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title,type=excluded.type,status='active'").bind(String(x.id),x.title||x.username||String(x.id),x.type).run();await clearSession(env,"main",uid);return send(token,chat,"✅ 仓库绑定成功。",menu(true))}catch{return send(token,chat,"❌ 主机器人无法访问这个 Chat ID，请检查是否已加入仓库并有权限。")}}
+  if(admin&&s?.step==="folder"&&msg.text){if(msg.text==="/cancel"){await clearSession(env,"main",uid);return send(token,chat,"❌ 已取消。",menu(true))}await env.DB.prepare("INSERT OR IGNORE INTO folders(name) VALUES(?)").bind(msg.text.trim()).run();await clearSession(env,"main",uid);return send(token,chat,"✅ 文件夹创建成功。",menu(true))}
+  if(admin&&["list"].includes((msg.text||"").toLowerCase())&&s?.step==="admin"){const x=await env.DB.prepare("SELECT user_id FROM admins ORDER BY user_id").all();return send(token,chat,"👤 管理员列表\\n\\n"+(x.results||[]).map(v=>v.user_id).join("\\n"))}
+  if(admin&&s?.step==="admin"&&msg.text){const v=msg.text.trim();if(/^[+-]\\d+$/.test(v)){if(v[0]==="+")await env.DB.prepare("INSERT OR IGNORE INTO admins(user_id) VALUES(?)").bind(v.slice(1)).run();else await env.DB.prepare("DELETE FROM admins WHERE user_id=?").bind(v.slice(1)).run();return send(token,chat,"✅ 管理员设置已更新。",menu(true))}}
   if(s?.step==="broadcast" && admin && msg.text && msg.text!=="/cancel"){await env.DB.prepare("UPDATE clone_sessions SET step='broadcast_preview',payload=? WHERE scope='main' AND user_id=?").bind(msg.text,uid).run();return send(token,chat,"📢 广播预览\\n\\n"+msg.text+"\\n\\n确认发送？",inline([[{text:"✅ 确认发送",callback_data:"broadcast_yes"},{text:"❌ 取消",callback_data:"broadcast_no"}]]));}
   if(s?.step==="broadcast" && msg.text==="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return send(token,chat,"❌ 已取消。",menu(true));}
   if(msg.text==="🤖 克隆我的机器人"){
@@ -123,7 +127,7 @@ async function mainHandle(env, msg){
   if(msg.text==="⚙️ 平台管理" && admin) return send(token,chat,"⚙️ 平台管理",kb([["📦 绑定仓库","📁 新建文件夹"],["📤 上传资源","👤 管理员设置"],["🔄 扫描仓库"],["🏠 返回首页"]]));
   if(msg.text==="📦 绑定仓库"&&admin){await sessionMain(env,uid,"repo","");return send(token,chat,"📦 请发送仓库 Chat ID。\\n\\n先把主机器人加入私有群/频道并授予必要权限。\\n/cancel 取消。")}
   if(msg.text==="📁 新建文件夹"&&admin){await sessionMain(env,uid,"folder","");return send(token,chat,"📁 请输入新文件夹名称。\\n/cancel 取消。")}
-  if(msg.text==="👤 管理员设置"&&admin)return send(token,chat,"👤 管理员设置\\n\\n发送 +数字 添加管理员\\n发送 -数字 删除管理员\\n发送 list 查看管理员\\n/cancel 取消。");
+  if(msg.text==="👤 管理员设置"&&admin){await sessionMain(env,uid,"admin","");return send(token,chat,"👤 管理员设置\\n\\n发送 +数字 添加管理员\\n发送 -数字 删除管理员\\n发送 list 查看管理员\\n/cancel 取消。");}
   if(msg.text==="🔄 扫描仓库"&&admin)return send(token,chat,"🔄 仓库扫描说明\\n\\n当前 Telegram Bot API 无法保证读取私有仓库的完整历史消息，因此这里不会伪造“全量扫描成功”。\\n\\n现有资源可继续通过上传流程建立索引；完整历史恢复需要 MTProto/user-account 扫描层。");
   if(s?.step==="search" && msg.text){
     await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();
