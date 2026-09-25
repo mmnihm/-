@@ -1,3 +1,9 @@
 name = "telegram-clone-platform"
 main = "src/index.js"
 compatibility_date = "2026-09-24"
+
+# 创建 D1 后，把 database_id 替换为你的真实 ID。
+[[d1_databases]]
+binding = "DB"
+database_name = "telegram-clone-platform-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
