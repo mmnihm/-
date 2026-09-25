@@ -224,8 +224,21 @@ async function mainMessage(msg) {
       if(db.children.some(x=>x.botId===me.id)) throw new Error("already");
       const child={botId:me.id,username:me.username||"",ownerId:uid,token:encrypt(t),offset:0};
       db.children.push(child); saveDb(); states.delete(key); startChild(child);
-      return send(TOKEN,uid,`✅ 子机器人创建成功\n\n🤖 @${me.username||me.first_name}\n\n已自动启动。`,adminMenu());
-    } catch { return send(TOKEN,uid,"❌ Token 无效或该机器人已经绑定，请重新发送。"); }
+      const botLink=me.username ? "https://t.me/"+me.username : "";
+      return send(TOKEN,uid,
+        "✅ 子机器人创建成功\\n\\n" +
+        "🤖 @" + (me.username||me.first_name) + "\\n" +
+        "🟢 已自动启动\\n\\n" +
+        "点击下面按钮进入你的子机器人。",
+        {reply_markup:{inline_keyboard:[[{
+          text:"🚀 进入我的子机器人",
+          ...(botLink ? {url:botLink} : {})
+        }]]}}
+      );
+    } catch(e) {
+      console.error("❌ CLONE:",e.message);
+      return send(TOKEN,uid,"❌ 创建失败：Token 无效、机器人已绑定，或 Telegram 暂时无法连接。\\n\\n请重新发送 Token，或发送 /cancel 取消。");
+    }
   }
 
   if(t==="📂 资源目录") {
