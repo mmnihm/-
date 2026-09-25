@@ -51,6 +51,23 @@ async function tg(token, method, body = {}) {
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
 
+async function ensureStartCommand(token) {
+  try {
+    const commands = await tg(token, "getMyCommands");
+    const list = Array.isArray(commands) ? commands : [];
+    if (!list.some(x => x.command === "start")) {
+      await tg(token, "setMyCommands", {
+        commands: [
+          {command:"start", description:"🏠 开始使用"},
+          ...list.filter(x => x.command !== "start")
+        ]
+      });
+    }
+  } catch (e) {
+    console.error("COMMAND MENU:", e.message);
+  }
+}
+
 async function tgUploadBuffer(token, method, chatId, buffer, fileName, caption="") {
   const form = new FormData();
   form.append("chat_id", String(chatId));
@@ -701,6 +718,7 @@ async function childLoop(child) {
     saveDb();
     await tg(token, "deleteWebhook", {drop_pending_updates:false});
     console.log("🤖 CHILD CONNECTED:", "@" + (me.username || me.first_name), "id=" + me.id);
+    await ensureStartCommand(token);
   } catch (e) {
     console.error("❌ CHILD START FAILED:", child.username ? "@" + child.username : "(unknown)", e.message);
     return;
@@ -727,6 +745,7 @@ async function boot(){
   fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true});
   saveDb();
   const me=await main("getMe");
+  await ensureStartCommand(TOKEN);
   console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name));
   console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
   console.log("⚙️ "+configText().replaceAll("\n"," | "));
