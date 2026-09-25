@@ -99,19 +99,19 @@ async function mainHandle(env, msg){
   const admin=await isAdmin(env,uid);
   if(msg.chat.type==="private") await env.DB.prepare("INSERT INTO bot_users(bot_instance_id,user_id,last_seen,status) VALUES(NULL,?,datetime('now'),'active') ON CONFLICT(bot_instance_id,user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(uid).run();
   if(msg.text==="/start") return send(token,chat,"👋 欢迎使用机器人平台\n\n请选择功能：",menu(admin));
-  if(msg.text==="📢 广播消息" && admin){await env.DB.prepare("INSERT OR REPLACE INTO clone_sessions(user_id,step,payload) VALUES(?, 'broadcast', '')").bind(uid).run();return send(token,chat,"📢 请输入广播文字。\n\n发送 /cancel 取消。");}
-  const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE user_id=?").bind(uid).first();
-  if(s?.step==="broadcast" && admin && msg.text && msg.text!=="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE user_id=?").bind(uid).run();return broadcast(env,token,chat,msg.text);}
-  if(s?.step==="broadcast" && msg.text==="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE user_id=?").bind(uid).run();return send(token,chat,"❌ 已取消。",menu(true));}
+  if(msg.text==="📢 广播消息" && admin){await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES('main',?, 'broadcast', '') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind(uid).run();return send(token,chat,"📢 请输入广播文字。\n\n发送 /cancel 取消。");}
+  const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).first();
+  if(s?.step==="broadcast" && admin && msg.text && msg.text!=="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return broadcast(env,token,chat,msg.text);}
+  if(s?.step==="broadcast" && msg.text==="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return send(token,chat,"❌ 已取消。",menu(true));}
   if(msg.text==="🤖 克隆我的机器人"){
     if(!(await member(env,token,uid))) return send(token,chat,"🔐 暂无克隆权限\n\n请先加入指定群后再使用克隆功能。",inline([...(env.REQUIRED_GROUP_URL?[[{text:"🚪 加入指定群",url:env.REQUIRED_GROUP_URL}]]:[]),[{text:"🔄 检查权限",callback_data:"check_clone"}]]));
-    await env.DB.prepare("INSERT OR REPLACE INTO clone_sessions(user_id,step,payload) VALUES(?, 'token', '')").bind(uid).run();
+    await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES('main',?, 'token', '') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind(uid).run();
     return send(token,chat,"🤖 创建你的专属机器人\n\n1️⃣ 在 BotFather 创建机器人\n2️⃣ 复制 Bot Token\n3️⃣ 把 Token 直接发送给我完成绑定\n\n⚠️ 不要把 Token 发到群里，也不要提交到 GitHub。\n\n📢 子机器人不会有广播功能。");
   }
   if(["📂 资源目录","🔎 搜索资源","🎲 随机获取","🆕 最新资源"].includes(msg.text)){
     if(!(await member(env,token,uid))) return send(token,chat,"🔐 暂无访问权限\n\n请先加入指定群。");
     if(msg.text==="📂 资源目录"){const f=await resources(env,"folders");return send(token,chat,"📂 资源目录\n\n请选择分类：",inline((f.results||[]).map(x=>[{text:"📁 "+x.name,callback_data:"folder:"+x.id}])));}
-    if(msg.text==="🔎 搜索资源"){await env.DB.prepare("INSERT OR REPLACE INTO clone_sessions(user_id,step,payload) VALUES(?, 'search', '')").bind(uid).run();return send(token,chat,"🔎 请输入资源名称或关键词：");}
+    if(msg.text==="🔎 搜索资源"){await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES('main',?, 'search', '') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind(uid).run();return send(token,chat,"🔎 请输入资源名称或关键词：");}
     const list=await resources(env,msg.text==="🎲 随机获取"?"random":"latest");
     if(msg.text==="🎲 随机获取"){
       for(const r of list.results||[]) await sendResource(env,token,chat,r.id);
@@ -121,12 +121,12 @@ async function mainHandle(env, msg){
   }
   if(msg.text==="⚙️ 平台管理" && admin) return send(token,chat,"⚙️ 平台管理\n\n当前版本已接入：指定群、子机器人、中央资源索引。\n\n资源仓库扫描/上传需要绑定资源来源后使用。");
   if(s?.step==="search" && msg.text){
-    await env.DB.prepare("DELETE FROM clone_sessions WHERE user_id=?").bind(uid).run();
+    await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();
     const list=await resources(env,"search",msg.text);
     return send(token,chat,"🔎 搜索结果："+(list.results?.length||0),inline(await resourceButtons(env,list)));
   }
   if(s?.step==="token" && msg.text){
-    await env.DB.prepare("DELETE FROM clone_sessions WHERE user_id=?").bind(uid).run();
+    await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();
     if(!(await member(env,token,uid))) return send(token,chat,"🔐 群组权限已失效，请重新加入指定群。");
     let bot;
     try{bot=await tg(msg.chat.type==="private"?token:env.BOT_TOKEN,"getMe");}catch{}
@@ -146,10 +146,10 @@ async function childHandle(env, bot, msg){
   const uid=msg.from?.id, chat=msg.chat?.id;
   if(!uid) return;
   await env.DB.prepare("INSERT INTO bot_users(bot_instance_id,user_id,last_seen,status) VALUES(?,?,datetime('now'),'active') ON CONFLICT(bot_instance_id,user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(bot.bot_id,uid).run();
-  const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE user_id=?").bind(uid).first();
+  const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).first();
   if(msg.text==="/start") return send(bot.token,chat,"👋 欢迎使用资源库\\n\\n请选择功能：",childMenu());
   if(s?.step===("search:"+bot.bot_id) && msg.text){
-    await env.DB.prepare("DELETE FROM clone_sessions WHERE user_id=?").bind(uid).run();
+    await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();
     if(!(await member(env,bot.token,uid))) return send(bot.token,chat,"🔐 暂无访问权限\\n\\n请先加入指定群。");
     const l=await resources(env,"search",msg.text); return send(bot.token,chat,"🔎 搜索结果："+(l.results?.length||0),inline(await resourceButtons(env,l)));
   }
