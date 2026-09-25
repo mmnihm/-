@@ -88,7 +88,7 @@ function askHistoryInput(uid, step, prompt) {
 async function loadTeleproto() {
   if (TelegramClientClass && StringSessionClass) return;
   const mod = await import("teleproto");
-  const sessions = await import("teleproto/sessions");
+  const sessions = await import("teleproto/sessions/index.js");
   TelegramClientClass = mod.TelegramClient;
   StringSessionClass = sessions.StringSession;
   if (!TelegramClientClass || !StringSessionClass) throw new Error("teleproto 模块加载失败");
@@ -194,7 +194,7 @@ async function scanHistory(uid) {
     const client = await ensureHistoryClient(uid);
     const entity = await findHistoryEntity(client);
     let scanned = 0, indexed = 0;
-    for await (const message of client.iterMessages(entity,{limit:100})) {
+    for await (const message of client.iterMessages(entity,{limit:undefined})) {
       scanned++;
       if (indexHistoryMessage(message,r.chatId)) indexed++;
       if (scanned % 100 === 0) {
@@ -214,7 +214,7 @@ async function scanHistory(uid) {
     db.settings.historyScan.finishedAt=Date.now();
     saveDb();
     console.error("❌ HISTORY SCAN:",e);
-    return send(TOKEN,uid,"❌ 历史扫描失败：\\n\\n"+e.message+"\\n\\n请检查 MTProto 账号是否已加入资源仓库。",adminMenu());
+    return send(TOKEN,uid,"❌ 历史扫描失败：\\n\\n"+e.message+"\\n\\n如果扫描账号已经加入仓库，这通常不是入群问题，而是连接、权限或历史消息读取错误。",adminMenu());
   }
 }
 
