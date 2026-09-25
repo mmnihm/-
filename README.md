@@ -1,31 +1,46 @@
 # Telegram Clone Platform
 
-Cloudflare Worker + D1 的多机器人资源平台。
+Cloudflare Worker + D1 多机器人资源平台。
 
-## 已实现
-- 主机器人：克隆入口、资源入口、平台管理、广播
-- 子机器人：独立 Bot 身份、独立用户记录、共享中央资源索引
-- 指定群实时会员检查
-- 子机器人 Token 绑定时通过 Telegram getMe 校验
-- 子机器人 Token 加密后存 D1
-- 子机器人 Webhook 路由
-- 用户端不显示广播
-- D1 资源索引、文件夹、机器人和用户数据结构
+## 当前功能
+- 主机器人：资源目录、搜索、随机、最新、克隆、管理员广播
+- 子机器人：独立用户和 Bot 身份，共享中央资源索引
+- 子机器人不显示广播
+- 指定群实时会员检查；离群后资源/克隆功能失效
+- 子机器人 Token 后端 AES-GCM 加密保存
+- 主/子机器人 Webhook
+- 文件夹、资源索引、仓库绑定、管理员上传入库
+- 目录分类点击和资源按钮
+- 广播预览、确认、取消
+- 广播逐个失败不中断
 
-## 必填配置
-- BOT_TOKEN：主机器人 Token
-- ADMIN_IDS：主机器人管理员 Numeric Telegram ID，多个逗号分隔
-- REQUIRED_GROUP_ID：指定群/频道 Chat ID
-- REQUIRED_GROUP_URL：指定群入口链接
-- PUBLIC_BASE_URL：Worker 公网地址，例如 https://xxx.workers.dev
-- TOKEN_ENCRYPTION_KEY：用于加密子机器人 Token 的随机长字符串
-- WEBHOOK_SECRET：Telegram Webhook secret token
+## 环境变量
+BOT_TOKEN=主机器人 Token
+ADMIN_IDS=主机器人管理员 Numeric ID，多个用逗号
+REQUIRED_GROUP_ID=必须加入的群/频道 Chat ID
+REQUIRED_GROUP_URL=指定群邀请/公开链接
+PUBLIC_BASE_URL=Worker 公网地址
+TOKEN_ENCRYPTION_KEY=随机长密钥
+WEBHOOK_SECRET=Webhook secret
 
-## D1
-执行 schema.sql 初始化数据库，然后在 wrangler.toml 中填写真实 database_id。
+## 部署
+1. 创建 Cloudflare Worker。
+2. 创建 D1 数据库。
+3. 将 database_id 写入 wrangler.toml。
+4. 执行 schema.sql。
+5. 设置上面的 Worker Secrets/Variables。
+6. 打开 https://你的Worker地址/setup 一次，自动注册主机器人 Webhook。
+7. 用户通过主机器人创建子机器人并发送 Token，系统会自动注册子机器人 Webhook。
 
-## 重要限制
-普通 Telegram Bot API 无法让一个未加入私有资源仓库的子机器人直接复制该私有仓库历史消息。因此本版本把“中央资源索引”和“资源发送层”分开：资源记录必须具有可由当前 Bot 合法发送的 file_id/来源。完整历史仓库扫描与跨 Bot 恢复需要额外的 MTProto/user-account 层，不能仅靠 Bot API 保证。
+## 仓库和上传
+主机器人加入资源仓库并有必要权限。
+管理员进入「⚙️ 平台管理」后绑定仓库。
+上传资源时，机器人会把管理员发送的文件复制到绑定仓库并建立索引。
+
+## Telegram 限制
+Telegram Bot API 的 file_id 是按 Bot 隔离的，不能可靠地把主 Bot 的 file_id 直接交给子 Bot 使用。因此“子机器人不加入私有仓库、又由子 Bot 自己直接发送中央仓库文件”无法仅靠 Bot API 完成。当前项目已经把中央资源索引与 Bot 身份分开；若要求每个子 Bot 都直接发送私有仓库大文件，需要额外的共享存储/分发层，或让子 Bot 具备资源来源访问权限。
+
+普通 Bot API 也不能保证读取任意私有仓库的完整历史消息。完整历史恢复需要额外的 MTProto/user-account 层。
 
 ## 安全
-不要把 BOT_TOKEN 或子机器人 Token 提交到 GitHub。曾经泄露过的 Token 应立即在 BotFather 中轮换。
+不要把任何 Token 提交到 GitHub。曾经公开发送过的 Token 应立即在 BotFather 轮换。
