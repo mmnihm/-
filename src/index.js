@@ -50,6 +50,17 @@ async function tg(token, method, body = {}) {
   return j.result;
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
+
+async function tgUploadBuffer(token, method, chatId, buffer, fileName, caption="") {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append(method === "sendVideo" ? "video" : "document", new Blob([buffer]), fileName || "resource");
+  if (caption) form.append("caption", String(caption).slice(0,1024));
+  const r = await fetch(api(token, method), {method:"POST", body:form});
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.description || method + " failed");
+  return j.result;
+}
 function prettyText(text) {
   let s = String(text ?? "")
     .replace(/\\\\n/g, "\\n")
@@ -330,6 +341,62 @@ function search(q) {
 }
 function random10() { return [...db.resources].sort(()=>Math.random()-.5).slice(0,10); }
 
+async function deliverFromHistory(token,chatId,userId,items) {
+  if (!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 请先加入指定群。");
+  if (!items.length) return send(token,chatId,"📭 暂无相关资源。");
+
+  try {
+    const client = await ensureHistoryClient(userId);
+    const entity = await findHistoryEntity(client);
+    let ok = 0, fail = 0;
+
+    await send(token,chatId,"⏳ <b>正在准备资源</b>\\n\\n📦 本次获取："+items.length+" 条\\n📤 正在发送，请稍候……",{parse_mode:"HTML"});
+
+    for (const item of items) {
+      try {
+        const found = await client.getMessages(entity,{ids:[Number(item.messageId)]});
+        const message = Array.isArray(found) ? found[0] : found;
+        if (!message || !message.media) throw new Error("历史消息或媒体不存在");
+
+        const buffer = await client.downloadMedia(message,{});
+        if (!buffer || !buffer.length) throw new Error("媒体下载失败");
+
+        const file = message.file || {};
+        const mime = String(file.mimeType || "");
+        const name = String(file.name || item.title || "resource");
+        const method = mime.startsWith("video") ? "sendVideo" : "sendDocument";
+        await tgUploadBuffer(token,method,chatId,buffer,name,item.caption || "");
+        ok++;
+      } catch (e) {
+        fail++;
+        console.error("HISTORY SEND:",e.message,"message=",item.messageId);
+      }
+      await sleep(150);
+    }
+
+    if (ok > 0) {
+      return send(token,chatId,
+        "✅ <b>资源获取完成</b>\\n\\n"+
+        "📤 成功发送："+ok+" 条\\n"+
+        "⚠️ 失败："+fail+" 条",
+        {parse_mode:"HTML"});
+    }
+    return send(token,chatId,
+      "❌ <b>资源发送失败</b>\\n\\n"+
+      "📦 尝试获取："+items.length+" 条\\n"+
+      "📤 成功发送：0 条\\n"+
+      "⚠️ 失败："+fail+" 条\\n\\n"+
+      "请检查扫描账号是否仍然可以访问资源仓库。",
+      {parse_mode:"HTML"});
+  } catch (e) {
+    console.error("HISTORY DELIVERY:",e);
+    return send(token,chatId,
+      "❌ <b>资源获取失败</b>\\n\\n"+
+      "原因："+String(e.message || e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),
+      {parse_mode:"HTML"});
+  }
+}
+
 async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
   if(!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 请先加入指定群。");
   if(!items.length) return send(token,chatId,"📭 暂无相关资源。");
@@ -578,9 +645,9 @@ async function childMessage(child,msg,token) {
   // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。\n  if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
   if(t==="📂 资源目录") return send(token,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
   if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 请输入关键词：");}
-  if(t==="🎲 随机获取") return deliver(token,uid,uid,random10(),TOKEN);
-  if(t==="🆕 最新资源") return deliver(token,uid,uid,db.resources.slice(0,10),TOKEN);
-  if(s?.step==="search"){states.delete(key);return deliver(token,uid,uid,search(t),TOKEN);}
+  if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10());
+  if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
+  if(s?.step==="search"){states.delete(key);return deliverFromHistory(token,uid,uid,search(t));}
 }
 
 async function pollMain() {
