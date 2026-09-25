@@ -24,7 +24,7 @@ export class HistoryScanner {
   }
 
   emit(status, extra = {}) {
-    this.onStatus({ status, ...extra });
+    this.onStatus({ status, adminId: this.auth?.adminId || this.lastAdminId || null, ...extra });
   }
 
   async connectSaved() {
@@ -61,6 +61,7 @@ export class HistoryScanner {
       waitFor,
     };
     this.auth = auth;
+    this.lastAdminId = adminId;
 
     const waitInput = async (phase) => {
       auth.phase = phase;
