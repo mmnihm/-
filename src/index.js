@@ -2,6 +2,8 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { TelegramClient } from "teleproto";
+import { StringSession } from "teleproto/sessions";
 
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = process.env.BOT_TOKEN || "";
@@ -9,6 +11,8 @@ const ADMIN_IDS = new Set((process.env.ADMIN_IDS || "").split(",").map(x => x.tr
 const DATA_FILE = process.env.DATA_FILE || "/data/database.json";
 const SECRET = process.env.STORAGE_KEY || "telegram-clone-platform-v2";
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
+const TG_API_ID = Number(process.env.TG_API_ID || 0);
+const TG_API_HASH = process.env.TG_API_HASH || "";
 
 console.log("🚀 Telegram Clone Platform v2 starting...");
 console.log("📦 Node:", process.version);
@@ -51,7 +55,7 @@ const main = (method, body = {}) => tg(TOKEN, method, body);
 const send = (token, chat_id, text, extra = {}) => tg(token, "sendMessage", {chat_id, text, ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}}};
 }
 function loadDb() {
   try { return {...emptyDb(), ...JSON.parse(fs.readFileSync(DATA_FILE, "utf8"))}; }
@@ -66,6 +70,143 @@ function saveDb() {
   } catch (e) { console.error("❌ SAVE:", e.message); }
 }
 const db = loadDb();
+if (!db.settings) db.settings = {requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}};
+if (!("historyAuth" in db.settings)) db.settings.historyAuth = null;
+if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""};
+
+let historyClient = null;
+let historyConnecting = null;
+const historyInputs = new Map();
+
+function askHistoryInput(uid, step, prompt) {
+  return new Promise(resolve => {
+    historyInputs.set(String(uid), {step, resolve});
+    send(TOKEN, uid, prompt).catch(() => {});
+  });
+}
+
+async function createHistoryClient() {
+  const auth = db.settings.historyAuth || {};
+  const apiId = Number(auth.apiId || TG_API_ID || 0);
+  const apiHash = auth.apiHash ? decrypt(auth.apiHash) : TG_API_HASH;
+  const session = auth.session ? decrypt(auth.session) : (process.env.TG_SESSION || "");
+  if (!apiId || !apiHash) throw new Error("未配置 TG_API_ID / TG_API_HASH");
+  const client = new TelegramClient(new StringSession(session), apiId, apiHash, {connectionRetries:5});
+  return {client, apiId, apiHash};
+}
+
+async function ensureHistoryClient(uid) {
+  if (historyClient) return historyClient;
+  if (historyConnecting) return historyConnecting;
+  historyConnecting = (async () => {
+    const auth = db.settings.historyAuth || {};
+    const hasApi = Boolean(auth.apiId || TG_API_ID) && Boolean(auth.apiHash || TG_API_HASH);
+    if (!hasApi) {
+      const apiIdText = await askHistoryInput(uid, "api_id", "🔐 历史扫描首次授权\n\n请发送你的 Telegram API ID。\n\n获取位置：my.telegram.org → API development tools");
+      const apiId = Number(String(apiIdText).trim());
+      if (!Number.isInteger(apiId) || apiId <= 0) throw new Error("API ID 格式不正确");
+      const apiHash = await askHistoryInput(uid, "api_hash", "现在发送 Telegram API HASH。\n\n⚠️ 不要把 Bot Token 发到这里。");
+      if (!String(apiHash).trim()) throw new Error("API HASH 不能为空");
+      db.settings.historyAuth = {apiId, apiHash:encrypt(String(apiHash).trim()), session:null, phone:null};
+      saveDb();
+    }
+
+    const current = db.settings.historyAuth || {};
+    const {client, apiId, apiHash} = await createHistoryClient();
+    let authorized = false;
+    try {
+      await client.connect();
+      await client.getMe();
+      authorized = true;
+    } catch {}
+
+    if (!authorized) {
+      const phone = current.phone || await askHistoryInput(uid, "phone", "📱 请输入用于历史扫描的 Telegram 手机号（含国家区号，例如 +886...）。");
+      db.settings.historyAuth = {...current, apiId, apiHash:encrypt(apiHash), phone:String(phone).trim()};
+      saveDb();
+      await client.start({
+        phoneNumber: () => Promise.resolve(db.settings.historyAuth.phone),
+        phoneCode: () => askHistoryInput(uid, "phone_code", "📩 Telegram 已发送登录验证码。\n\n请输入验证码："),
+        password: () => askHistoryInput(uid, "password", "🔑 你的 Telegram 账号启用了两步验证。\n\n请输入 2FA 密码："),
+        onError: e => console.error("MTProto AUTH:", e.message)
+      });
+      db.settings.historyAuth.session = encrypt(client.session.save());
+      saveDb();
+    }
+    historyClient = client;
+    console.log("✅ MTProto history client ready");
+    return historyClient;
+  })();
+  try { return await historyConnecting; }
+  finally { historyConnecting = null; }
+}
+
+async function findHistoryEntity(client) {
+  const r = repo();
+  if (!r) throw new Error("尚未绑定资源仓库");
+  if (r.username) {
+    try { return await client.getEntity(r.username); } catch {}
+  }
+  const dialogs = await client.getDialogs({limit:undefined});
+  for (const d of dialogs) {
+    if (String(d.id) === String(r.chatId)) return d.entity;
+  }
+  throw new Error("MTProto 账号找不到该仓库。请先用这个账号加入仓库，并在 Telegram 客户端里打开过该频道/群。");
+}
+
+function indexHistoryMessage(message, chatId) {
+  const id = Number(message?.id || 0);
+  if (!id) return false;
+  const text = String(message?.message || message?.text || "").trim();
+  const fileName = message?.file?.name || message?.document?.attributes?.find?.(x => x.fileName)?.fileName || "";
+  const hasMedia = Boolean(message?.media || message?.file);
+  if (!text && !hasMedia) return false;
+  const item = {
+    chatId:String(chatId),
+    messageId:id,
+    title:String(fileName || text || ("历史资源 #" + id)).slice(0,200),
+    caption:text.slice(0,500),
+    date:message?.date ? Math.floor(new Date(message.date).getTime()/1000) : Math.floor(Date.now()/1000),
+    directoryId:null
+  };
+  const i=db.resources.findIndex(x=>x.chatId===item.chatId&&x.messageId===item.messageId);
+  if(i>=0) db.resources[i]=item; else db.resources.unshift(item);
+  return true;
+}
+
+async function scanHistory(uid) {
+  if (db.settings.historyScan.status === "running") return send(TOKEN,uid,"🔍 历史扫描已经在进行中，请稍候。");
+  const r = repo();
+  if (!r) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。先绑定「📦 资源仓库」。",adminMenu());
+  db.settings.historyScan={status:"running",scanned:0,indexed:0,startedAt:Date.now(),finishedAt:null,error:""};
+  saveDb();
+  try {
+    const client = await ensureHistoryClient(uid);
+    const entity = await findHistoryEntity(client);
+    let scanned = 0, indexed = 0;
+    for await (const message of client.iterMessages(entity,{limit:undefined})) {
+      scanned++;
+      if (indexHistoryMessage(message,r.chatId)) indexed++;
+      if (scanned % 100 === 0) {
+        db.settings.historyScan.scanned=scanned;
+        db.settings.historyScan.indexed=indexed;
+        saveDb();
+        console.log("🔎 HISTORY SCAN:", scanned, "indexed=", indexed);
+      }
+    }
+    db.resources=db.resources.slice(0,MAX_RESOURCES);
+    db.settings.historyScan={status:"completed",scanned,indexed,startedAt:db.settings.historyScan.startedAt,finishedAt:Date.now(),error:""};
+    saveDb();
+    return send(TOKEN,uid,`✅ 历史频道扫描完成\\n\\n📦 仓库：${r.title}\\n🔎 扫描消息：${scanned}\\n📚 新增/更新索引：${indexed}\\n📊 当前资源库：${db.resources.length}`,adminMenu());
+  } catch(e) {
+    db.settings.historyScan.status="error";
+    db.settings.historyScan.error=e.message;
+    db.settings.historyScan.finishedAt=Date.now();
+    saveDb();
+    console.error("❌ HISTORY SCAN:",e);
+    return send(TOKEN,uid,"❌ 历史扫描失败：\\n\\n"+e.message+"\\n\\n请检查 MTProto 账号是否已加入资源仓库。",adminMenu());
+  }
+}
 
 const isAdmin = id => ADMIN_IDS.has(String(id));
 const group = () => db.settings.requiredGroup;
@@ -223,6 +364,13 @@ async function mainMessage(msg) {
   const admin=isAdmin(uid);
   const key="m:"+uid;
   const s=states.get(key);
+  const pendingHistory = historyInputs.get(String(uid));
+  if (pendingHistory) {
+    if (t === "/cancel") { historyInputs.delete(String(uid)); return send(TOKEN,uid,"❌ 已取消历史扫描授权。",adminMenu()); }
+    historyInputs.delete(String(uid));
+    pendingHistory.resolve(t);
+    return;
+  }
 
   if(t==="/start") return send(TOKEN,uid,"👋 主机器人已启动。\n\n请选择功能：",admin?adminMenu():userMenu());
   if(t==="/admin") {
@@ -292,6 +440,26 @@ async function mainMessage(msg) {
       "把主机器人加入目标群，然后在群里发送：\\n"+
       "/绑定指定群\\n\\n"+
       "当前： "+(group()?"✅ "+group().title:"❌ 未绑定"));
+
+  if(t==="🔍 仓库扫描" && admin) {
+    const scan=db.settings.historyScan;
+    const auth=db.settings.historyAuth;
+    return send(TOKEN,uid,
+      "🔍 仓库扫描\\n\\n"+
+      "📦 当前仓库： "+(repo()?repo().title:"❌ 未绑定")+"\\n"+
+      "📚 当前索引： "+db.resources.length+" 条\\n"+
+      "🕘 历史扫描： "+(scan.status==="completed"?"✅ 已完成":scan.status==="running"?"⏳ 扫描中":scan.status==="error"?"⚠️ 上次失败":"未执行")+"\\n"+
+      (scan.scanned?`\\n最近一次：扫描 ${scan.scanned} 条，索引 ${scan.indexed} 条`:"")+"\\n\\n"+
+      (auth?.session?"🔐 扫描账号：已授权":"🔐 扫描账号：首次使用需授权")+"\\n\\n"+
+      "点击「🔍 开始历史扫描」即可把频道已有历史消息全部建立索引。",
+      {reply_markup:{keyboard:[["🔍 开始历史扫描","🔐 扫描授权"],["📦 资源仓库","📊 数据统计"],["⚙️ 平台设置"]],resize_keyboard:true}});
+  }
+
+  if(t==="🔍 开始历史扫描" && admin) return scanHistory(uid);
+  if(t==="🔐 扫描授权" && admin) {
+    try { await ensureHistoryClient(uid); return send(TOKEN,uid,"✅ MTProto 扫描账号已授权。现在可以点击「🔍 开始历史扫描」。",adminMenu()); }
+    catch(e) { return send(TOKEN,uid,"❌ 扫描授权失败：\\n\\n"+e.message,adminMenu()); }
+  }
 
   if(t==="🔍 仓库扫描" && admin) {
     const r=repo();
