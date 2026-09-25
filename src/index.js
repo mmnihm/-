@@ -262,7 +262,12 @@ function directoryListText(child = false) {
   return '📂 资源目录\\n\\n' + db.directories.map((d, i) => {
     const count = directoryResources(d.id).length;
     return `${i + 1}. ${d.name}（${count} 个资源）`;
-  }).join('\\n') + '\\n\\n请选择目录名称查看其中资源。';
+  }).join('\\n') + '\\n\\n请选择下面的目录按钮。';
+}
+function directoryKeyboard(prefix = 'dir') {
+  return { reply_markup: { inline_keyboard: db.directories.map((d, i) => [
+    { text: `📁 ${d.name}（${directoryResources(d.id).length}）`.slice(0,64), callback_data: `${prefix}:${d.id}` }
+  ]) } };
 }
 async function sendDirectoryToRepository(directory) {
   const repo = repositoryChatId();
@@ -664,7 +669,7 @@ async function handleMain(msg) {
     if (!(await checkMemberCached(TOKEN, userId))) return send(TOKEN, chatId, '🔐 暂无访问权限，请先加入指定群。');
     if (text === '📂 资源目录') {
       sessions.set(userId, {step:'directorySelect'});
-      return send(TOKEN, chatId, directoryListText());
+      return send(TOKEN, chatId, directoryListText(), directoryKeyboard('maindir'));
     }
     if (text === '🔎 搜索资源') {
       sessions.set(userId, {step:'search'});
@@ -712,7 +717,7 @@ async function handleChild(bot, msg) {
   if (['📂 资源目录','🔎 搜索资源','🎲 随机获取','🆕 最新资源'].includes(text)) {
     if (text === '📂 资源目录') {
       sessions.set(`c:${bot.botId}:${userId}`, {step:'directorySelect'});
-      return send(bot.token, chatId, directoryListText(true));
+      return send(bot.token, chatId, directoryListText(true), directoryKeyboard('dir'));
     }
     if (text === '🔎 搜索资源') {
       sessions.set(`c:${bot.botId}:${userId}`, {step:'search'});
@@ -775,15 +780,25 @@ async function childLoop(bot) {
           const cq = u.callback_query;
           const ok = await enforceChildOwner(bot, false) &&
             await checkMemberCached(token, cq.from.id, true);
-          if (cq.data?.startsWith('dirres:') && ok) {
-            const [, dirId, idxRaw] = cq.data.split(':');
-            const items = directoryResources(dirId).slice(0, 20);
-            const idx = Number(idxRaw);
-            if (items[idx]) {
-              await tg(token, 'answerCallbackQuery', {callback_query_id:cq.id, text:'正在发送…'});
-              await deliverResources(token, cq.message.chat.id, [items[idx]], cq.from.id, bot);
+          if (cq.data?.startsWith('dir:') && ok) {
+            const parts = cq.data.split(':');
+            const dirId = parts[1];
+            const idxRaw = parts[2];
+            if (idxRaw == null) {
+              const items = directoryResources(dirId).slice(0,20);
+              await tg(token, 'answerCallbackQuery', {callback_query_id:cq.id, text:'已打开目录'});
+              await send(token, cq.message.chat.id, '📁 ' + (directoryById(dirId)?.name || '目录') + '\\n\\n请选择资源：', {
+                reply_markup: { inline_keyboard: items.map((x,i)=>[{text:`${i+1}. ${x.title}`.slice(0,64), callback_data:`dir:${dirId}:${i}`}]) }
+              });
             } else {
-              await tg(token, 'answerCallbackQuery', {callback_query_id:cq.id, text:'资源不存在', show_alert:true});
+              const items = directoryResources(dirId).slice(0,20);
+              const idx = Number(idxRaw);
+              if (items[idx]) {
+                await tg(token, 'answerCallbackQuery', {callback_query_id:cq.id, text:'正在发送…'});
+                await deliverResources(token, cq.message.chat.id, [items[idx]], cq.from.id, bot);
+              } else {
+                await tg(token, 'answerCallbackQuery', {callback_query_id:cq.id, text:'资源不存在', show_alert:true});
+              }
             }
           } else {
             await tg(token, 'answerCallbackQuery', {
