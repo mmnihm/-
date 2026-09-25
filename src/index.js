@@ -97,11 +97,11 @@ async function mainHandle(env, msg){
   const token=env.BOT_TOKEN, uid=msg.from?.id, chat=msg.chat?.id;
   if(!uid) return;
   const admin=await isAdmin(env,uid);
-  if(msg.chat.type==="private") await env.DB.prepare("INSERT INTO bot_users(bot_instance_id,user_id,last_seen,status) VALUES(NULL,?,datetime('now'),'active') ON CONFLICT(bot_instance_id,user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(uid).run();
+  if(msg.chat.type==="private") await env.DB.prepare("INSERT INTO main_users(user_id,last_seen,status) VALUES(?,datetime('now'),'active') ON CONFLICT(user_id) DO UPDATE SET last_seen=datetime('now'),status='active'").bind(uid).run();
   if(msg.text==="/start") return send(token,chat,"👋 欢迎使用机器人平台\n\n请选择功能：",menu(admin));
   if(msg.text==="📢 广播消息" && admin){await env.DB.prepare("INSERT INTO clone_sessions(scope,user_id,step,payload) VALUES('main',?, 'broadcast', '') ON CONFLICT(scope,user_id) DO UPDATE SET step=excluded.step,payload=excluded.payload").bind(uid).run();return send(token,chat,"📢 请输入广播文字。\n\n发送 /cancel 取消。");}
   const s=await env.DB.prepare("SELECT step FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).first();
-  if(s?.step==="broadcast" && admin && msg.text && msg.text!=="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return broadcast(env,token,chat,msg.text);}
+  if(s?.step==="broadcast" && admin && msg.text && msg.text!=="/cancel"){await env.DB.prepare("UPDATE clone_sessions SET step='broadcast_preview',payload=? WHERE scope='main' AND user_id=?").bind(msg.text,uid).run();return send(token,chat,"📢 广播预览\\n\\n"+msg.text+"\\n\\n确认发送？",inline([[{text:"✅ 确认发送",callback_data:"broadcast_yes"},{text:"❌ 取消",callback_data:"broadcast_no"}]]));}
   if(s?.step==="broadcast" && msg.text==="/cancel"){await env.DB.prepare("DELETE FROM clone_sessions WHERE scope='main' AND user_id=?").bind(uid).run();return send(token,chat,"❌ 已取消。",menu(true));}
   if(msg.text==="🤖 克隆我的机器人"){
     if(!(await member(env,token,uid))) return send(token,chat,"🔐 暂无克隆权限\n\n请先加入指定群后再使用克隆功能。",inline([...(env.REQUIRED_GROUP_URL?[[{text:"🚪 加入指定群",url:env.REQUIRED_GROUP_URL}]]:[]),[{text:"🔄 检查权限",callback_data:"check_clone"}]]));
