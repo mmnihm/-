@@ -334,8 +334,9 @@ function backMenu(admin=false) {
 }
 function adminMenu() {
   return {reply_markup:{keyboard:[
-    ["📦 资源管理","⚙️ 平台设置"],
-    ["📊 数据与运营","🤖 机器人管理"],
+    ["📤 上传资源","📦 资源管理"],
+    ["⚙️ 平台设置","📊 数据与运营"],
+    ["🤖 机器人管理"],
     ["🏠 返回首页"]
   ],resize_keyboard:true,input_field_placeholder:"选择管理分类"}};
 }
@@ -1145,7 +1146,7 @@ async function mainMessage(msg) {
         }
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName});
-      return;
+      return send(TOKEN,uid,"📥 已收到资源，正在存入资源库。");
     } catch(e) {
       return send(TOKEN,uid,"❌ 上传失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
