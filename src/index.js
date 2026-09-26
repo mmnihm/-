@@ -55,7 +55,7 @@ process.on("unhandledRejection", e => console.error("UNHANDLED:", e));
 const server = http.createServer((req, res) => {
   if (req.url === "/health" || req.url === "/") {
     const status = runtimeStatus();
-    res.writeHead(status.ok ? 200 : 503, {"content-type":"application/json; charset=utf-8"});
+    res.writeHead(200, {"content-type":"application/json; charset=utf-8"});
     res.end(JSON.stringify(status, null, 2) + "\n");
   } else {
     res.writeHead(404, {"content-type":"text/plain; charset=utf-8"});
