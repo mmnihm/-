@@ -477,40 +477,30 @@ async function finalizeUpload(uid, state) {
   let stored = 0;
   let failed = 0;
 
-  // 整批并发转存：本次收到多少条，就把多少条作为同一批立即提交到仓库。
-  // 不再人为切成 10 个一组，也不在单条资源之间等待。
-  const results=await Promise.allSettled(items.map(async pending=>{
-    const copied = await tg(TOKEN,"copyMessage",{
-      chat_id:r.chatId,
-      from_chat_id:uid,
-      message_id:Number(pending.messageId)
-    });
-    if (!copied?.message_id) throw new Error("仓库转存失败");
-
-    const resourceMsg = {
-      ...pending.msg,
-      chat:{...(pending.msg?.chat || {}),id:r.chatId},
-      message_id:Number(copied.message_id)
-    };
-    indexResource(resourceMsg);
-    const item = db.resources.find(x =>
-      String(x.chatId)===String(r.chatId) &&
-      Number(x.messageId)===Number(copied.message_id)
-    );
-    if (!item) throw new Error("资源索引写入失败");
-    item.directoryId=d.id;
-    item.repositoryMessageId=Number(copied.message_id);
-    item.sourceUserId=String(uid);
-    item.indexedAt=Date.now();
-    return true;
-  }));
-
-  for (let n=0;n<results.length;n++) {
-    if (results[n].status==="fulfilled") {
-      stored++;
-    } else {
-      failed++;
-      console.error("UPLOAD FINALIZE:",String(results[n].reason?.message||results[n].reason),"message=",items[n]?.messageId);
+  // Telegram 批量复制：一次请求最多 100 条，并保留原有媒体组。
+  const sortedItems=[...items].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+  for(let offset=0; offset<sortedItems.length; offset+=100) {
+    const batch=sortedItems.slice(offset,offset+100);
+    const ids=batch.map(x=>Number(x.messageId));
+    try {
+      const copiedIds=await tg(TOKEN,"copyMessages",{chat_id:r.chatId,from_chat_id:uid,message_ids:ids});
+      if(!Array.isArray(copiedIds) || copiedIds.length!==batch.length) throw new Error("批量转存结果数量不一致");
+      for(let n=0;n<batch.length;n++) {
+        const copiedId=Number(copiedIds[n]?.message_id ?? copiedIds[n]);
+        if(!Number.isFinite(copiedId)) throw new Error("批量转存消息ID无效");
+        const resourceMsg={...batch[n].msg,chat:{...(batch[n].msg?.chat||{}),id:r.chatId},message_id:copiedId};
+        indexResource(resourceMsg);
+        const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+        if(!item) throw new Error("资源索引写入失败");
+        item.directoryId=d.id;
+        item.repositoryMessageId=copiedId;
+        item.sourceUserId=String(uid);
+        item.indexedAt=Date.now();
+        stored++;
+      }
+    } catch(e) {
+      failed+=batch.length;
+      console.error("UPLOAD BATCH FINALIZE:",e.message,"count=",batch.length);
     }
   }
 
