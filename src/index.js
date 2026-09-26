@@ -341,17 +341,7 @@ function directoryKeyboard() { const rows=[]; for(const d of db.directories){ co
 function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).slice(0,50); }
 function directoryText() {
   const dirs = Array.isArray(db.directories) ? db.directories : [];
-  const counts = new Map();
-  for (const r of db.resources) {
-    const d = dirs.find(x => String(x.id) === String(r.directoryId));
-    const name = d?.name || "未分类";
-    counts.set(name, (counts.get(name) || 0) + 1);
-  }
-  const lines = ["📂 <b>资源目录</b>", "", "选择分类浏览资源。", ""];
-  if (!counts.size) return lines.join("\n") + "📭 暂无已建立的分类。\n\n📚 当前资源：" + db.resources.length + " 条";
-  for (const [name,count] of counts) lines.push("📁 <b>" + name + "</b>： " + count + " 条");
-  lines.push("", "━━━━━━━━━━━━━━", "📚 总资源：" + db.resources.length + " 条");
-  return lines.join("\n");
+  return ["📂 <b>资源目录</b>","","请选择下面的文件夹：","","📚 总资源："+db.resources.length+" 条"].join("\n");
 }
 function configText() {
   const g = group(), r = repo(), scan = db.settings.historyScan || {};
