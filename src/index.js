@@ -814,7 +814,7 @@ async function mainMessage(msg) {
       "然后从频道转发任意一条消息给主机器人。\\n\\n"+
       "当前： "+(repo()?"✅ "+repo().title:"❌ 未绑定"));
 
-  if(t==="🔐 指定群" && admin)
+  if(t==="🔐 指定群管理" && admin)
     return send(TOKEN,uid,
       "🔐 指定群设置\\n\\n"+
       "把主机器人加入目标群，然后在群里发送：\\n"+
