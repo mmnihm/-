@@ -732,6 +732,39 @@ async function mainMessage(msg) {
     db.settings.admins.splice(idx,1); saveDb(); states.delete(key);
     return send(TOKEN,uid,`✅ 已删除管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
   }
+  if(t==="📤 上传资源"&&admin) {
+    if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
+    states.set(key,{step:"upload_folder"});
+    return send(TOKEN,uid,"📤 <b>上传资源</b>\\n\\n请发送文件夹名称。\\n\\n例如：<code>电影</code>、<code>短剧</code>、<code>教程</code>。\\n\\n新名称会自动创建文件夹。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+  }
+  if(s?.step==="upload_folder"&&admin) {
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
+    const folder=t.trim().slice(0,80);
+    if(!folder) return send(TOKEN,uid,"⚠️ 文件夹名称不能为空。");
+    const d=ensureDirectory(folder);
+    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name});
+    return send(TOKEN,uid,"📁 文件夹：<b>"+d.name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</b>\\n\\n现在请直接发送要上传的文件、图片、视频、音频或其他资源。\\n\\n机器人会自动转发到资源仓库并保存到这个文件夹。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+  }
+  if(s?.step==="upload_file"&&admin) {
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已结束上传。",adminMenu()); }
+    if(!repo()) { states.delete(key); return send(TOKEN,uid,"❌ 资源仓库未绑定。",adminMenu()); }
+    const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
+    if(!media && !msg.text) return send(TOKEN,uid,"⚠️ 请发送文件、图片、视频、音频或带文字的资源。");
+    try {
+      const copied=await tg(TOKEN,"copyMessage",{chat_id:repo().chatId,from_chat_id:uid,message_id:msg.message_id});
+      if(!copied || !copied.message_id) throw new Error("仓库转存失败");
+      const resourceMsg={...copied,chat:{...(copied.chat||{}),id:repo().chatId}};
+      indexResource(resourceMsg);
+      const item=db.resources.find(r=>String(r.chatId)===String(repo().chatId)&&Number(r.messageId)===Number(copied.message_id));
+      if(item) item.directoryId=s.directoryId;
+      saveDb();
+      states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName});
+      return send(TOKEN,uid,"✅ <b>上传成功</b>\\n\\n📁 文件夹："+s.directoryName+"\\n📦 已转存到资源仓库\\n\\n可以继续发送下一个资源。\\n发送 /cancel 结束上传。",{parse_mode:"HTML"});
+    } catch(e) {
+      return send(TOKEN,uid,"❌ 上传失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
+    }
+  }
+
   if(t==="📢 广播消息"&&admin) {
     states.set(key,{step:"broadcast"});
     return send(TOKEN,uid,"📢 <b>广播模式</b>\\n\\n请发送你要广播的消息。\\n\\n支持：文字、粗体/斜体/链接等 Telegram 原生格式，以及图片、视频、文件、音频、贴纸等媒体。\\n\\n机器人会尽量原样复制你发送的整条消息。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
