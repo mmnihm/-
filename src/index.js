@@ -744,6 +744,21 @@ async function mainMessage(msg) {
   const admin=isAdmin(uid);
   const key="m:"+uid;
   const s=states.get(key);
+
+  if(admin && (t==="🏠 返回首页" || t==="⬅️ 返回首页")) {
+    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+    const bk=key+":broadcast";
+    if(uploadTimers.has(bk)) { clearTimeout(uploadTimers.get(bk)); uploadTimers.delete(bk); }
+    states.delete(key);
+    return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>：管理后台 · 广播 · 克隆机器人\\n\\n👇 <i>请选择下方功能开始使用</i>",adminMenu());
+  }
+  if(admin && t==="⬅️ 返回管理") {
+    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+    const bk=key+":broadcast";
+    if(uploadTimers.has(bk)) { clearTimeout(uploadTimers.get(bk)); uploadTimers.delete(bk); }
+    states.delete(key);
+    return sendHtml(TOKEN,uid,"<b>👑 管理员控制台</b>\\n\\n请选择管理分类。",adminMenu());
+  }
   const pendingHistory = historyInputs.get(String(uid));
   if (pendingHistory) {
     if (t === "/cancel") { historyInputs.delete(String(uid)); return send(TOKEN,uid,"❌ 已取消历史扫描授权。",adminMenu()); }
@@ -1035,9 +1050,6 @@ async function mainMessage(msg) {
   if(t==="⚙️ 系统设置"&&admin) return send(TOKEN,uid,"⚙️ <b>平台设置</b>\\n\\n管理指定群、管理员和系统参数。",{parse_mode:"HTML",...adminSettingsMenu()});
   if(t==="📊 数据与运营"&&admin) return send(TOKEN,uid,"📊 <b>数据与运营</b>\\n\\n查看数据、操作日志和发送广播。",{parse_mode:"HTML",...adminOpsMenu()});
   if(t==="🤖 机器人管理"&&admin) return send(TOKEN,uid,"🤖 <b>机器人管理</b>\\n\\n管理克隆机器人相关功能。",{parse_mode:"HTML",...adminBotMenu()});
-  if(t==="🏠 返回首页"&&admin) return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>：管理后台 · 广播 · 克隆机器人\\n\\n👇 <i>请选择下方功能开始使用</i>",adminMenu());
-  if(t==="⬅️ 返回管理"&&admin) return send(TOKEN,uid,"👑 <b>管理员控制台</b>\\n\\n请选择管理分类。",{parse_mode:"HTML",...adminMenu()});
-  if(t==="⬅️ 返回首页"&&admin) return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>",adminMenu());
 
   // 广播按钮必须优先于上传状态，避免“📢 广播消息”被当成文件夹名称。
   if(t==="📢 广播消息"&&admin) {
