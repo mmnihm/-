@@ -344,6 +344,7 @@ function adminToolsMenu() {
     ["📦 资源仓库","🔐 指定群"],
     ["🤖 克隆机器人","📢 广播消息"],
     ["⚙️ 平台设置","👥 管理员管理"],
+    ["📜 操作日志","⬅️ 返回管理"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
 }
@@ -959,6 +960,15 @@ async function mainMessage(msg) {
 
   if(t==="⬅️ 返回管理"&&admin) return send(TOKEN,uid,"👑 <b>管理员控制台</b>\\n\\n请选择需要管理的项目。",{parse_mode:"HTML",...adminMenu()});
 
+  if(t==="📜 操作日志"&&admin) {
+    const logs=Array.isArray(db.settings.logs)?db.settings.logs:[];
+    if(!logs.length) return send(TOKEN,uid,"📜 暂无操作日志。",adminToolsMenu());
+    const text=logs.slice(0,30).map((x,i)=>{
+      const when=new Date(x.at).toLocaleString("zh-CN",{hour12:false});
+      return (i+1)+". "+when+"\\n👤 "+x.uid+"\\n🔧 "+x.action+(x.detail?"\\n📌 "+x.detail:"");
+    }).join("\\n\\n");
+    return send(TOKEN,uid,"📜 <b>最近操作日志</b>\\n\\n"+text,{parse_mode:"HTML",...adminToolsMenu()});
+  }
   if(t==="👥 管理员管理"&&admin) {
     if(!isSuperAdmin(uid)) return send(TOKEN,uid,"⛔ 只有主管理员可以管理其他管理员。",adminMenu());
     states.set(key,{step:"admin_manage"});
@@ -977,7 +987,7 @@ async function mainMessage(msg) {
     if(!/^\d+$/.test(id)) return send(TOKEN,uid,"⚠️ ID 格式不正确，请发送纯数字 Telegram ID。");
     if(isSuperAdmin(id)) { states.delete(key); return send(TOKEN,uid,"⚠️ 该账号已经是主管理员。",adminMenu()); }
     if(db.settings.admins.includes(id)) { states.delete(key); return send(TOKEN,uid,"⚠️ 该账号已经是管理员。",adminMenu()); }
-    db.settings.admins.push(id); saveDb(); states.delete(key);
+    db.settings.admins.push(id); saveDb(); logAdmin(uid,"添加管理员",id); states.delete(key);
     return send(TOKEN,uid,`✅ 已添加管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
   }
   if(s?.step==="admin_remove"&&admin&&isSuperAdmin(uid)) {
@@ -987,7 +997,7 @@ async function mainMessage(msg) {
     if(isSuperAdmin(id)) { states.delete(key); return send(TOKEN,uid,"⛔ 不能删除主管理员。",adminMenu()); }
     const idx=db.settings.admins.indexOf(id);
     if(idx<0) { states.delete(key); return send(TOKEN,uid,"⚠️ 没找到这个管理员。",adminMenu()); }
-    db.settings.admins.splice(idx,1); saveDb(); states.delete(key);
+    db.settings.admins.splice(idx,1); saveDb(); logAdmin(uid,"删除管理员",id); states.delete(key);
     return send(TOKEN,uid,`✅ 已删除管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
   }
   if(t==="📤 上传资源"&&admin) {
