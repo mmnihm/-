@@ -475,8 +475,11 @@ async function finalizeUpload(uid, state) {
 
   let stored = 0;
   let failed = 0;
-  for (const pending of items) {
-    try {
+
+  // 并发转存，每批最多 10 个，避免逐个等待导致几十个文件长时间排队。
+  for (let i=0; i<items.length; i+=10) {
+    const batch=items.slice(i,i+10);
+    const results=await Promise.allSettled(batch.map(async pending=>{
       const copied = await tg(TOKEN,"copyMessage",{
         chat_id:r.chatId,
         from_chat_id:uid,
@@ -499,12 +502,17 @@ async function finalizeUpload(uid, state) {
       item.repositoryMessageId=Number(copied.message_id);
       item.sourceUserId=String(uid);
       item.indexedAt=Date.now();
-      stored++;
-    } catch (e) {
-      failed++;
-      console.error("UPLOAD FINALIZE:",e.message,"message=",pending.messageId);
+      return true;
+    }));
+
+    for (let n=0;n<results.length;n++) {
+      if (results[n].status==="fulfilled") {
+        stored++;
+      } else {
+        failed++;
+        console.error("UPLOAD FINALIZE:",String(results[n].reason?.message||results[n].reason),"message=",batch[n]?.messageId);
+      }
     }
-    await sleep(80);
   }
 
   saveDb();
@@ -1322,8 +1330,9 @@ async function mainMessage(msg) {
       if(pending.length % 10 === 0) {
         return send(TOKEN,uid,
           "📥 <b>已收到 "+pending.length+" 个文件</b>\\n\\n"+
-          "📁 文件夹："+escapeHtml(s.directoryName),
-          {parse_mode:"HTML"}
+          "📁 文件夹："+escapeHtml(s.directoryName)+"\\n\\n"+
+          "还要继续上传，还是现在结束上传？",
+          {parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"继续上传或结束上传"}}
         );
       }
       return;
