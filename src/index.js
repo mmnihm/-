@@ -675,7 +675,14 @@ async function mainMessage(msg) {
     const items=directoryItems(s.directoryId);
     const idx=Number((t.match(/^\\d+/)||["0"])[0])-1;
     if(idx<0 || !items[idx]) return send(TOKEN,uid,"⚠️ 请从文件列表中选择。");
-    return deliver(TOKEN,uid,uid,[items[idx]]);
+    const selected=items[idx];
+    try {
+      await tg(TOKEN,"copyMessage",{chat_id:uid,from_chat_id:selected.chatId,message_id:Number(selected.messageId)});
+      return true;
+    } catch(e) {
+      console.error("DIRECTORY COPY:",e.message,"chat=",selected.chatId,"message=",selected.messageId);
+      return send(TOKEN,uid,"❌ 文件发送失败。\\n\\n请检查机器人是否仍在资源仓库中，并拥有读取/发送资源的权限。\\n\\n错误："+String(e.message||e),{parse_mode:"HTML"});
+    }
   }
   if(t==="🔎 搜索资源") {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
