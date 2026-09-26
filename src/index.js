@@ -40,14 +40,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const api = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
 
 async function tg(token, method, body = {}) {
-  const r = await fetch(api(token, method), {
-    method: "POST",
-    headers: {"content-type":"application/json"},
-    body: JSON.stringify(body)
-  });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.description || method + " failed");
-  return j.result;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const r = await fetch(api(token, method), {
+      method: "POST",
+      headers: {"content-type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const j = await r.json();
+
+    if (j.ok) return j.result;
+
+    const retryAfter = Number(j.parameters?.retry_after || 0);
+    if (r.status === 429 && retryAfter > 0 && attempt < 3) {
+      console.warn("⏳ Telegram 限流，"+method+" 等待 "+retryAfter+" 秒后自动重试");
+      await sleep((retryAfter + 1) * 1000);
+      continue;
+    }
+
+    throw new Error(j.description || method + " failed");
+  }
+  throw new Error(method + " failed after retries");
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
 
