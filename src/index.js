@@ -603,7 +603,8 @@ const states=new Map();
 
 async function binding(msg) {
   const admin=isAdmin(msg.from?.id);
-  const t=(msg.text||"").trim().split(/\\s+/)[0];
+  const rawText=(msg.text||"").trim();
+  const t=(rawText.split(/\s+/)[0]||"").replace(/@[^\s]+$/,"");
   if(!admin) return false;
 
   if(["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"].includes(t) &&
@@ -616,13 +617,13 @@ async function binding(msg) {
     if(t==="/绑定指定群") {
       db.settings.requiredGroup={chatId:String(msg.chat.id),title:msg.chat.title||String(msg.chat.id),username:msg.chat.username||"",type:msg.chat.type,url:msg.chat.username?"https://t.me/"+msg.chat.username:""};
       saveDb();
-      await send(TOKEN,msg.from.id,"✅ 指定群绑定成功。\\n\\n"+configText());
+      await send(TOKEN,msg.chat.id,"✅ <b>指定群绑定成功</b>\\n\\n"+configText(),{parse_mode:"HTML"});
       return true;
     }
     if(t==="/绑定仓库") {
       db.settings.repository={chatId:String(msg.chat.id),title:msg.chat.title||String(msg.chat.id),username:msg.chat.username||"",type:msg.chat.type};
       saveDb();
-      await send(TOKEN,msg.from.id,"✅ 资源仓库绑定成功。\\n\\n"+configText());
+      await send(TOKEN,msg.chat.id,"✅ <b>资源仓库绑定成功</b>\\n\\n"+configText(),{parse_mode:"HTML"});
       return true;
     }
     if(t==="/解绑指定群") db.settings.requiredGroup=null;
