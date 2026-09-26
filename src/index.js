@@ -1310,7 +1310,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     return tg(token,"editMessageText",{
       chat_id:chatId,
       message_id:messageId,
-      text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源。\\n\\n点击下面按钮开始获取资源，每次发送 10 个。",
+      text:"📁 <b>"+safe+"</b>\\n\\n━━━━━━━━━━━━\\n📦 共 <b>"+all.length+"</b> 个资源\\n📤 每次获取 <b>10 个</b>\\n\\n👇 点击下方按钮开始获取\\n━━━━━━━━━━━━",
       parse_mode:"HTML",
       reply_markup:folderSummaryKeyboard(d.id,all.length,0)
     });
