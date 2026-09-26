@@ -462,7 +462,11 @@ async function finalizeUpload(uid, state) {
     return send(TOKEN,uid,"❌ 资源仓库未绑定，无法入库。",adminMenu());
   }
 
-  const d = ensureDirectory(state.directoryName);
+  let directoryName = String(state.directoryName || "").trim();
+  if (!directoryName) {
+    directoryName = "未命名-" + Math.random().toString(36).slice(2, 8);
+  }
+  const d = ensureDirectory(directoryName);
   if (!d) {
     states.delete("m:"+uid);
     return send(TOKEN,uid,"❌ 文件夹创建失败。",adminMenu());
@@ -503,7 +507,7 @@ async function finalizeUpload(uid, state) {
   }
 
   saveDb();
-  logAdmin(uid,"结束上传",state.directoryName+" / 收到"+items.length+" / 入库"+stored);
+  logAdmin(uid,"结束上传",d.name+" / 收到"+items.length+" / 入库"+stored);
 
   states.delete("m:"+uid);
 
