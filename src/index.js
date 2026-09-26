@@ -655,9 +655,13 @@ async function mainMessage(msg) {
   if(s?.step==="directory") {
     if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
     if(t==="📭 暂无分类") return send(TOKEN,uid,"📭 目前还没有可浏览的文件夹。",directoryKeyboard());
-    const name=t.replace(/^📁\\s*/,"").replace(/（\\d+）$/,"").trim();
+    const name=t.replace(/^📁\\s*/,"").split("（")[0].trim();
     const d=getDirectoryByName(name);
-    if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹，请重新选择。",directoryKeyboard());
+    if(!d) {
+      const fallback=db.directories.find(x=>String(x.name||"").trim()===name);
+      if(fallback) return send(TOKEN,uid,"⚠️ 目录读取异常，请重新点击该文件夹。",directoryKeyboard());
+      return send(TOKEN,uid,"⚠️ 找不到这个文件夹，请重新选择。",directoryKeyboard());
+    }
     const items=directoryItems(d.id);
     if(!items.length) return send(TOKEN,uid,"📭 这个文件夹暂时没有资源。",directoryKeyboard());
     states.set(key,{step:"directory_files",directoryId:d.id});
