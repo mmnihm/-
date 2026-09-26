@@ -313,7 +313,7 @@ function backMenu(admin=false) {
 }
 function adminMenu() {
   return {reply_markup:{keyboard:[
-    ["📤 上传资源","🗑️ 删除资源"],
+    ["📤 上传资源","📁 文件夹管理"],
     ["📂 资源管理","🏠 开始"]
   ],resize_keyboard:true,input_field_placeholder:"管理常用功能"}};
 }
@@ -730,21 +730,25 @@ async function mainMessage(msg) {
 
     const all=directoryItems(d.id);
     if(!all.length) return send(TOKEN,uid,"📭 这个文件夹暂时没有资源。",directoryKeyboard());
-
-    const page=all.slice(0,10);
-    const sent=await sendDirectoryBatch(TOKEN,uid,page);
-    if(!sent) return send(TOKEN,uid,"❌ 资源发送失败。\\n\\n请检查机器人是否仍在资源仓库中，并拥有读取资源的权限。");
-
-    const offset=page.length;
-    states.set(key,{step:"directory_page",directoryId:d.id,offset});
+    states.set(key,{step:"folder_files",directoryId:d.id});
     const safe=String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     return sendHtml(TOKEN,uid,
       "📁 <b>"+safe+"</b>\\n\\n"+
-      "✅ 已发送 <b>"+sent+"</b> 个资源。\\n"+
-      "📦 进度："+offset+" / "+all.length+"\\n\\n"+
-      (offset<all.length?"👇 点击「➡️ 下一步」继续获取。":"🏁 这个文件夹到头了，没有更多资源了。"),
-      {reply_markup:{keyboard:offset<all.length?[["➡️ 下一步"],["📂 返回文件夹","🏠 开始"]]:[["📂 返回文件夹","🏠 开始"]],resize_keyboard:true}}
+      "📚 共 <b>"+all.length+"</b> 个资源。\\n"+
+      "点击下面的文件名即可获取文件：",
+      {reply_markup:folderFileKeyboard(all.slice(0,10))}
     );
+  }
+
+  if(s?.step==="folder_files"&&admin===admin) {
+    const all=directoryItems(s.directoryId);
+    if(t==="⬅️ 返回文件夹") { states.set(key,{step:"directory"}); return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard()); }
+    const page=all.slice(0,10);
+    const idx=page.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,42)===t);
+    if(idx<0) return send(TOKEN,uid,"⚠️ 请点击文件名获取资源。",folderFileKeyboard(page));
+    try { await sendIndexedResource(TOKEN,uid,page[idx]); }
+    catch(e) { return send(TOKEN,uid,"❌ 文件发送失败："+e.message); }
+    return send(TOKEN,uid,"✅ 已发送："+page[idx].title,folderFileKeyboard(page));
   }
 
   if(s?.step==="directory_page") {
@@ -806,7 +810,7 @@ async function mainMessage(msg) {
   if(t==="📂 资源管理"&&admin) {
     return send(TOKEN,uid,"🛠️ <b>资源管理</b>\\n\\n这里放不常用的管理功能。",{parse_mode:"HTML",...adminToolsMenu()});
   }
-  if(t==="🗑️ 删除资源"&&admin) {
+  if(t==="📁 文件夹管理"&&admin) {
     states.set(key,{step:"delete_folder"});
     return send(TOKEN,uid,"🗑️ <b>删除资源</b>\\n\\n先选择文件夹：\\n\\n进入文件夹后可以删除单个文件，或直接删除整个文件夹。",{parse_mode:"HTML",...deleteResourceMenu()});
   }
