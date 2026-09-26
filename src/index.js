@@ -431,18 +431,37 @@ function indexResource(msg) {
   saveDb();
 }
 async function sendIndexedResource(token, chatId, item) {
-  if (item.fileId && item.fileType) {
-    const field = item.fileType.toLowerCase();
-    const body = {chat_id:chatId, [field]:item.fileId};
-    if (item.caption) body.caption = String(item.caption).slice(0,1024);
-    await tg(token, "send" + item.fileType, body);
-    return;
+  // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
+  // 子机器人没有加入资源仓库时，优先让主机器人代发资源。
+  const sendWith = async (sendToken) => {
+    if (item.fileId && item.fileType) {
+      const field = item.fileType.toLowerCase();
+      const body = {chat_id:chatId, [field]:item.fileId};
+      if (item.caption) body.caption = String(item.caption).slice(0,1024);
+      await tg(sendToken, "send" + item.fileType, body);
+      return;
+    }
+    if (item.textOnly) {
+      await tg(sendToken, "sendMessage", {chat_id:chatId, text:item.caption || item.title || "未命名资源"});
+      return;
+    }
+    await tg(sendToken, "copyMessage", {chat_id:chatId,from_chat_id:item.chatId,message_id:Number(item.messageId)});
+  };
+
+  if (token === TOKEN) {
+    return sendWith(TOKEN);
   }
-  if (item.textOnly) {
-    await tg(token, "sendMessage", {chat_id:chatId, text:item.caption || item.title || "未命名资源"});
-    return;
+
+  try {
+    return await sendWith(token);
+  } catch (e) {
+    const message = String(e?.message || e);
+    if (/chat not found|file.?id|wrong file|message to copy not found/i.test(message)) {
+      console.warn("⚠️ 子机器人无法直接发送主机器人资源，改由主机器人代发：", message);
+      return sendWith(TOKEN);
+    }
+    throw e;
   }
-  await tg(token, "copyMessage", {chat_id:chatId,from_chat_id:item.chatId,message_id:Number(item.messageId)});
 }
 function search(q) {
   q=q.toLowerCase();
