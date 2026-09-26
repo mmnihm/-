@@ -334,10 +334,8 @@ function backMenu(admin=false) {
 }
 function adminMenu() {
   return {reply_markup:{keyboard:[
-    ["📦 资源管理"],
-    ["⚙️ 平台设置"],
-    ["📊 数据与运营"],
-    ["🤖 机器人管理"],
+    ["📦 资源管理","⚙️ 平台设置"],
+    ["📊 数据与运营","🤖 机器人管理"],
     ["🏠 返回首页"]
   ],resize_keyboard:true,input_field_placeholder:"选择管理分类"}};
 }
@@ -345,28 +343,24 @@ function adminResourceMenu() {
   return {reply_markup:{keyboard:[
     ["📤 上传资源","📂 资源目录"],
     ["🗑️ 删除资源","🔍 仓库扫描"],
-    ["📦 资源仓库"],
-    ["⬅️ 返回管理"]
+    ["📦 资源仓库","⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"资源管理"}};
 }
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
     ["🔐 指定群管理","👥 管理员管理"],
-    ["⚙️ 系统设置"],
-    ["⬅️ 返回管理"]
+    ["⚙️ 系统设置","⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
 function adminOpsMenu() {
   return {reply_markup:{keyboard:[
     ["📊 数据统计","📜 操作日志"],
-    ["📢 广播消息"],
-    ["⬅️ 返回管理"]
+    ["📢 广播消息","⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"数据与运营"}};
 }
 function adminBotMenu() {
   return {reply_markup:{keyboard:[
-    ["🤖 克隆机器人"],
-    ["⬅️ 返回管理"]
+    ["🤖 克隆机器人","⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"机器人管理"}};
 }
 function adminToolsMenu() {
@@ -375,8 +369,7 @@ function adminToolsMenu() {
     ["📦 资源仓库","🔐 指定群管理"],
     ["🤖 克隆机器人","📢 广播消息"],
     ["⚙️ 系统设置","👥 管理员管理"],
-    ["📜 操作日志"],
-    ["⬅️ 返回管理"]
+    ["📜 操作日志","⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
 }
 function deleteResourceMenu() {
