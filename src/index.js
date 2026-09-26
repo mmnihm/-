@@ -425,14 +425,17 @@ function adminToolsMenu() {
     ["📜 操作日志","⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
 }
-function uploadFolderMenu() {
+function uploadFolderInlineMenu() {
   const rows=[];
   for(const d of db.directories) {
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
-    rows.push(["📁 "+d.name+"（"+count+"）"]);
+    rows.push([{text:"📁 "+d.name+"（"+count+"）",callback_data:"upload_dir:"+d.id}]);
   }
-  rows.push(["➕ 新建文件夹","❌ 取消"]);
-  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择已有文件夹或新建"}};
+  rows.push([
+    {text:"➕ 新建文件夹",callback_data:"upload_new"},
+    {text:"❌ 取消",callback_data:"upload_cancel"}
+  ]);
+  return {inline_keyboard:rows};
 }
 function deleteResourceMenu() {
   const rows = [];
@@ -1244,17 +1247,18 @@ async function mainMessage(msg) {
   if(t==="📤 上传资源"&&admin) {
     if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
     states.set(key,{step:"upload_folder"});
-    return send(TOKEN,uid,
-      "📤 <b>上传资源</b>\\n\\n"+
+    return sendHtml(TOKEN,uid,
+      "<b>📤 上传资源</b>\\n\\n"+
       "请选择要使用的文件夹：\\n"+
-      "📁 点击已有文件夹，可继续往里面添加资源。\\n"+
-      "➕ 点击「新建文件夹」可创建新的文件夹。\\n\\n"+
+      "📁 点击已有文件夹，可继续向里面添加资源。\\n"+
+      "➕ 点击「新建文件夹」创建新的文件夹。\\n\\n"+
       "也可以直接发送文件夹名称。\\n"+
       "发送 /cancel 可取消。",
-      {parse_mode:"HTML",...uploadFolderMenu()}
+      {reply_markup:uploadFolderInlineMenu()}
     );
   }
   if(s?.step==="upload_folder"&&admin) {
+    if(t==="❌ 取消") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
 
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
@@ -1449,6 +1453,57 @@ async function handleDirectoryCallback(token, q, child=false) {
       await tg(token,"answerCallbackQuery",body);
     } catch {}
   };
+
+  // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
+  if(!child && isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
+    if(data==="upload_cancel") {
+      states.delete("m:"+uid);
+      await answer("已取消上传");
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"❌ <b>已取消上传</b>",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[]}
+      });
+    }
+    if(data==="upload_new") {
+      states.set("m:"+uid,{step:"upload_folder"});
+      await answer("请输入新文件夹名称");
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"📁 <b>新建文件夹</b>\\n\\n请直接发送新的文件夹名称。\\n\\n发送 /cancel 可取消。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[]}
+      });
+    }
+    const directoryId=data.slice("upload_dir:".length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(!d) {
+      await answer("文件夹不存在，请重新选择",true);
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"⚠️ 这个文件夹已经不存在，请重新选择。",
+        parse_mode:"HTML",
+        reply_markup:uploadFolderInlineMenu()
+      });
+    }
+    states.set("m:"+uid,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    await answer("已选择："+d.name);
+    return tg(token,"editMessageText",{
+      chat_id:chatId,
+      message_id:messageId,
+      text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n"+
+        "✅ 已选择此文件夹。\\n"+
+        "现在直接发送要上传的文件即可。\\n\\n"+
+        "📥 后续继续上传都会进入这个文件夹。\\n"+
+        "完成后点击「✅ 结束上传」。",
+      parse_mode:"HTML",
+      reply_markup:{inline_keyboard:[]}
+    });
+  }
 
   if(!(await allowed(TOKEN,uid))) {
     await answer("🔐 请先加入指定群",true);
