@@ -1242,8 +1242,16 @@ async function mainMessage(msg) {
   }
   if(s?.step==="upload_folder"&&admin) {
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
-    const folder=t.trim().slice(0,80);
-    if(!folder) return send(TOKEN,uid,"⚠️ 文件夹名称不能为空。");
+
+    const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
+    let folder=t.trim().slice(0,80);
+
+    // 如果管理员没有输入文件夹名称，而是直接发送第一个文件，则自动创建随机文件夹。
+    if(!folder && media) {
+      folder="未命名-"+Math.random().toString(36).slice(2,8);
+    }
+    if(!folder) return send(TOKEN,uid,"⚠️ 请发送文件夹名称，或者直接发送第一个文件，系统会自动创建随机文件夹。");
+
     const cleanFolder=folder;
     const existing=getDirectoryByName(cleanFolder);
     const uploadKey=key;
@@ -1255,8 +1263,19 @@ async function mainMessage(msg) {
         send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
       }
     },UPLOAD_TIMEOUT_MS));
-    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:[]});
-    return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n\\n现在请直接连续发送要上传的文件、图片、视频、音频或其他资源。\\n\\n📥 上传过程中不会逐个回复，全部发完后点击「✅ 结束上传」。\\n⏱️ 连续 "+UPLOAD_IDLE_SECONDS+" 分钟没有新文件，会提示你继续或结束。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+
+    const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
+    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:firstPending});
+    if(media) {
+      return send(TOKEN,uid,
+        "📥 <b>已收到第 1 个资源</b>\\n\\n"+
+        "📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n"+
+        "📦 当前已收到：<b>1</b> 个资源\\n\\n"+
+        "请选择下一步：",
+        {parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"继续发送文件或选择操作"}}
+      );
+    }
+    return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n\\n现在请发送要上传的文件、图片、视频、音频或其他资源。\\n\\n📥 每收到一个资源都会告诉你当前数量。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
   if(s?.step==="upload_file"&&admin) {
     if(t==="/cancel") {
