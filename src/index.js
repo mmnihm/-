@@ -334,16 +334,47 @@ function backMenu(admin=false) {
 }
 function adminMenu() {
   return {reply_markup:{keyboard:[
-    ["📤 上传资源","📁 文件夹管理"],
-    ["📂 资源管理","🏠 开始"]
-  ],resize_keyboard:true,input_field_placeholder:"管理常用功能"}};
+    ["📦 资源管理"],
+    ["⚙️ 平台设置"],
+    ["📊 数据与运营"],
+    ["🤖 机器人管理"],
+    ["🏠 返回首页"]
+  ],resize_keyboard:true,input_field_placeholder:"选择管理分类"}};
+}
+function adminResourceMenu() {
+  return {reply_markup:{keyboard:[
+    ["📤 上传资源","📂 资源目录"],
+    ["🗑️ 删除资源","🔍 仓库扫描"],
+    ["📦 资源仓库"],
+    ["⬅️ 返回管理"]
+  ],resize_keyboard:true,input_field_placeholder:"资源管理"}};
+}
+function adminSettingsMenu() {
+  return {reply_markup:{keyboard:[
+    ["🔐 指定群管理","👥 管理员管理"],
+    ["⚙️ 系统设置"],
+    ["⬅️ 返回管理"]
+  ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
+}
+function adminOpsMenu() {
+  return {reply_markup:{keyboard:[
+    ["📊 数据统计","📜 操作日志"],
+    ["📢 广播消息"],
+    ["⬅️ 返回管理"]
+  ],resize_keyboard:true,input_field_placeholder:"数据与运营"}};
+}
+function adminBotMenu() {
+  return {reply_markup:{keyboard:[
+    ["🤖 克隆机器人"],
+    ["⬅️ 返回管理"]
+  ],resize_keyboard:true,input_field_placeholder:"机器人管理"}};
 }
 function adminToolsMenu() {
   return {reply_markup:{keyboard:[
     ["📊 数据统计","🔍 仓库扫描"],
-    ["📦 资源仓库","🔐 指定群"],
+    ["📦 资源仓库","🔐 指定群管理"],
     ["🤖 克隆机器人","📢 广播消息"],
-    ["⚙️ 平台设置","👥 管理员管理"],
+    ["⚙️ 系统设置","👥 管理员管理"],
     ["📜 操作日志"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
@@ -909,10 +940,10 @@ async function mainMessage(msg) {
     }
   }
 
-  if(t==="📂 资源管理"&&admin) {
+  if(t==="📂 资源目录"&&admin) {
     return send(TOKEN,uid,"🛠️ <b>资源管理</b>\\n\\n这里放不常用的管理功能。",{parse_mode:"HTML",...adminToolsMenu()});
   }
-  if(t==="📁 文件夹管理"&&admin) {
+  if(t==="🗑️ 删除资源"&&admin) {
     states.set(key,{step:"delete_folder"});
     return send(TOKEN,uid,"🗑️ <b>删除资源</b>\\n\\n先选择文件夹：\\n\\n进入文件夹后可以删除单个文件，或直接删除整个文件夹。",{parse_mode:"HTML",...deleteResourceMenu()});
   }
@@ -1000,6 +1031,14 @@ async function mainMessage(msg) {
     db.settings.admins.splice(idx,1); saveDb(); logAdmin(uid,"删除管理员",id); states.delete(key);
     return send(TOKEN,uid,`✅ 已删除管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
   }
+  if(t==="📦 资源管理"&&admin) return send(TOKEN,uid,"📦 <b>资源管理</b>\\n\\n请选择需要操作的项目。",{parse_mode:"HTML",...adminResourceMenu()});
+  if(t==="⚙️ 系统设置"&&admin) return send(TOKEN,uid,"⚙️ <b>平台设置</b>\\n\\n管理指定群、管理员和系统参数。",{parse_mode:"HTML",...adminSettingsMenu()});
+  if(t==="📊 数据与运营"&&admin) return send(TOKEN,uid,"📊 <b>数据与运营</b>\\n\\n查看数据、操作日志和发送广播。",{parse_mode:"HTML",...adminOpsMenu()});
+  if(t==="🤖 机器人管理"&&admin) return send(TOKEN,uid,"🤖 <b>机器人管理</b>\\n\\n管理克隆机器人相关功能。",{parse_mode:"HTML",...adminBotMenu()});
+  if(t==="🏠 返回首页"&&admin) return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>：管理后台 · 广播 · 克隆机器人\\n\\n👇 <i>请选择下方功能开始使用</i>",adminMenu());
+  if(t==="⬅️ 返回管理"&&admin) return send(TOKEN,uid,"👑 <b>管理员控制台</b>\\n\\n请选择管理分类。",{parse_mode:"HTML",...adminMenu()});
+  if(t==="⬅️ 返回首页"&&admin) return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>",adminMenu());
+
   if(t==="📤 上传资源"&&admin) {
     if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
     states.set(key,{step:"upload_folder"});
