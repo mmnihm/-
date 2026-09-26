@@ -135,7 +135,7 @@ let TelegramClientClass = null;
 let StringSessionClass = null;
 const historyInputs = new Map();
 const uploadTimers = new Map();
-const UPLOAD_TIMEOUT_MS = 3 * 60 * 1000;
+const UPLOAD_TIMEOUT_MS = 60 * 1000;
 
 function askHistoryInput(uid, step, prompt) {
   return new Promise(resolve => {
@@ -932,7 +932,7 @@ async function mainMessage(msg) {
       const current=states.get(uploadKey);
       if(current?.step==="upload_file" && String(current.directoryId)===String(d.id)) {
         states.delete(uploadKey);
-        send(TOKEN,uid,"⏰ <b>上传已自动结束</b>\\n\\n📁 文件夹："+d.name+"\\n⚠️ 连续 3 分钟没有上传新文件。\\n\\n文件夹已经创建并保留，之后可以重新进入「📤 上传资源」继续上传。",{parse_mode:"HTML",...adminMenu()}).catch(()=>{});
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+d.name+"\\n⏱️ 已等待 60 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
       }
     },UPLOAD_TIMEOUT_MS));
     states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name});
@@ -970,11 +970,11 @@ async function mainMessage(msg) {
         const current=states.get(key);
         if(current?.step==="upload_file" && String(current.directoryId)===String(s.directoryId)) {
           states.delete(key);
-          send(TOKEN,uid,"⏰ <b>上传已自动结束</b>\\n\\n📁 文件夹："+s.directoryName+"\\n⚠️ 连续 3 分钟没有上传新文件。\\n\\n文件夹已经创建并保留。",{parse_mode:"HTML",...adminMenu()}).catch(()=>{});
+          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+s.directoryName+"\\n⏱️ 已等待 60 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName});
-      return send(TOKEN,uid,"✅ <b>上传成功</b>\\n\\n📁 文件夹："+s.directoryName+"\\n📦 已转存到资源仓库\\n\\n可以继续发送下一个资源。\\n⏱️ 3 分钟内继续上传，否则自动结束本次上传。\\n\\n发送 /cancel 结束上传。",{parse_mode:"HTML"});
+      return;
     } catch(e) {
       return send(TOKEN,uid,"❌ 上传失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
