@@ -682,12 +682,30 @@ async function mainMessage(msg) {
     return deliver(TOKEN,uid,uid,results);
   }
 
-  if(t==="📢 广播消息"&&admin) { states.set(key,{step:"broadcast"}); return send(TOKEN,uid,"📢 请发送要广播的内容："); }
-  if(s?.step==="broadcast"&&admin) {
-    states.delete(key); let ok=0,fail=0;
-    for(const id of db.users){ try{await send(TOKEN,id,t);ok++;}catch{fail++;} await sleep(50); }
-    return send(TOKEN,uid,`✅ 广播完成\n\n成功：${ok}\n失败：${fail}`,adminMenu());
+  if(t==="📢 广播消息"&&admin) {
+    states.set(key,{step:"broadcast"});
+    return send(TOKEN,uid,"📢 <b>广播模式</b>\\n\\n请发送你要广播的消息。\\n\\n支持：文字、粗体/斜体/链接等 Telegram 原生格式，以及图片、视频、文件、音频、贴纸等媒体。\\n\\n机器人会尽量原样复制你发送的整条消息。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
+  if(s?.step==="broadcast"&&admin) {
+    if(t==="/cancel") {
+      states.delete(key);
+      return send(TOKEN,uid,"❌ 已取消广播。",adminMenu());
+    }
+    states.delete(key);
+    let ok=0,fail=0;
+    for(const id of db.users){
+      try {
+        await tg(TOKEN,"copyMessage",{chat_id:id,from_chat_id:uid,message_id:msg.message_id});
+        ok++;
+      } catch(e) {
+        fail++;
+        console.error("BROADCAST:",e.message,"user=",id);
+      }
+      await sleep(50);
+    }
+    return send(TOKEN,uid,"✅ <b>广播完成</b>\\n\\n📤 成功："+ok+"\\n⚠️ 失败："+fail,{parse_mode:"HTML",...adminMenu()});
+  }
+
   if((t==="⚙️ 平台设置" || t==="⚙️ 平台管理")&&admin) {
     return send(TOKEN,uid,
       "⚙️ <b>平台管理</b>\\n\\n"+
