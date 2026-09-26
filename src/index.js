@@ -392,8 +392,9 @@ function adminMenu() {
 function adminResourceMenu() {
   return {reply_markup:{keyboard:[
     ["📤 上传资源","📂 资源目录"],
-    ["🗑️ 删除资源","🔍 仓库扫描"],
-    ["📦 资源仓库","⬅️ 返回管理"]
+    ["✏️ 修改文件夹名称","🗑️ 删除资源"],
+    ["🔍 仓库扫描","📦 资源仓库"],
+    ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"资源管理"}};
 }
 function adminSettingsMenu() {
@@ -1072,6 +1073,34 @@ async function mainMessage(msg) {
 
   if(t==="📂 资源目录"&&admin) {
     return send(TOKEN,uid,"🛠️ <b>资源管理</b>\\n\\n这里放不常用的管理功能。",{parse_mode:"HTML",...adminToolsMenu()});
+  }
+  if(t==="✏️ 修改文件夹名称"&&admin) {
+    states.set(key,{step:"rename_folder"});
+    return send(TOKEN,uid,"✏️ <b>修改文件夹名称</b>\n\n请选择要修改名称的文件夹：",{parse_mode:"HTML",...deleteResourceMenu()});
+  }
+  if(s?.step==="rename_folder"&&admin) {
+    if(t==="⬅️ 返回管理"||t==="🏠 开始") { states.delete(key); return send(TOKEN,uid,"↩️ 已返回管理后台。",adminMenu()); }
+    if(t==="📭 暂无资源") return send(TOKEN,uid,"📭 当前没有可修改的文件夹。",deleteResourceMenu());
+    const name=t.replace(/^📁\s*/,"").split("（")[0].trim();
+    const d=getDirectoryByName(name);
+    if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹。",deleteResourceMenu());
+    states.set(key,{step:"rename_folder_name",directoryId:d.id});
+    return send(TOKEN,uid,"✏️ 当前名称：<b>"+escapeHtml(d.name)+"</b>\n\n请输入新的文件夹名称。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+  }
+  if(s?.step==="rename_folder_name"&&admin) {
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消修改名称。",adminResourceMenu()); }
+    const newName=t.trim().slice(0,80);
+    if(!newName) return send(TOKEN,uid,"⚠️ 名称不能为空，请重新输入。");
+    const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
+    if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ 文件夹不存在。",adminResourceMenu()); }
+    const oldName=d.name;
+    const existing=getDirectoryByName(newName);
+    if(existing && String(existing.id)!==String(d.id)) return send(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
+    d.name=newName;
+    saveDb();
+    logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
+    states.delete(key);
+    return send(TOKEN,uid,"✅ 文件夹名称已修改。\n\n📁 <b>"+escapeHtml(oldName)+"</b>\n⬇️\n📁 <b>"+escapeHtml(newName)+"</b>",{parse_mode:"HTML",...adminResourceMenu()});
   }
   if(t==="🗑️ 删除资源"&&admin) {
     states.set(key,{step:"delete_folder"});
