@@ -454,8 +454,10 @@ function indexResource(msg) {
   else if (msg.video) { fileType = "Video"; fileId = msg.video.file_id; }
   else if (msg.audio) { fileType = "Audio"; fileId = msg.audio.file_id; }
   else if (msg.animation) { fileType = "Animation"; fileId = msg.animation.file_id; }
+  else if (msg.voice) { fileType = "Voice"; fileId = msg.voice.file_id; }
+  else if (msg.video_note) { fileType = "VideoNote"; fileId = msg.video_note.file_id; }
   else if (msg.photo?.length) { fileType = "Photo"; fileId = msg.photo.at(-1).file_id; }
-  const media = msg.document || msg.video || msg.audio || msg.animation || msg.photo?.at(-1);
+  const media = msg.document || msg.video || msg.audio || msg.animation || msg.voice || msg.video_note || msg.photo?.at(-1);
   if (!media && !msg.text) return;
   const item = {
     chatId:String(msg.chat.id),
@@ -1069,27 +1071,7 @@ async function childMessage(child,msg,token) {
   if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
   if(t==="📂 资源目录") {
     if(!db.directories.length) return send(token,uid,"📂 暂无资源目录。",childMenu());
-    states.set(key,{step:"child_directory"});
-    return send(token,uid,"📂 资源目录\n\n请选择文件夹：",directoryKeyboard());
-  }
-  if(s?.step==="child_directory") {
-    if(t==="🏠 开始") { states.delete(key); return send(token,uid,"👋 已返回首页。",childMenu()); }
-    const name=t.replace(/^📁\s*/,"").split("（")[0].trim();
-    const d=getDirectoryByName(name);
-    if(!d) return send(token,uid,"⚠️ 找不到这个文件夹。",directoryKeyboard());
-    const all=directoryItems(d.id);
-    if(!all.length) return send(token,uid,"📭 这个文件夹暂无资源。",directoryKeyboard());
-    states.set(key,{step:"child_folder_files",directoryId:d.id});
-    return send(token,uid,"📁 "+d.name+"\n\n共 "+all.length+" 个资源。\n点击文件即可获取：",folderFileKeyboard(all.slice(0,10)));
-  }
-  if(s?.step==="child_folder_files") {
-    if(t==="⬅️ 返回文件夹") { states.set(key,{step:"child_directory"}); return send(token,uid,"📂 资源目录\n\n请选择文件夹：",directoryKeyboard()); }
-    const all=directoryItems(s.directoryId), page=all.slice(0,10);
-    const idx=page.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,42)===t);
-    if(idx<0) return send(token,uid,"⚠️ 请点击文件列表中的资源。",folderFileKeyboard(page));
-    try { await sendIndexedResource(token,uid,page[idx]); }
-    catch(e) { return send(token,uid,"❌ 文件发送失败："+e.message); }
-    return send(token,uid,"✅ 已发送："+page[idx].title,folderFileKeyboard(page));
+    return sendHtml(token,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
   if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 <b>搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});}
   if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10());
