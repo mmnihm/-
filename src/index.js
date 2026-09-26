@@ -1318,13 +1318,15 @@ async function mainMessage(msg) {
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
-      return send(TOKEN,uid,
-        "📥 <b>已收到第 "+pending.length+" 个资源</b>\\n\\n"+
-        "📁 文件夹：<b>"+escapeHtml(s.directoryName)+"</b>\\n"+
-        "📦 当前已收到：<b>"+pending.length+"</b> 个资源\\n\\n"+
-        "请选择下一步：",
-        {parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"继续发送文件或选择操作"}}
-      );
+      // 每收到 10 个资源才提醒一次，避免上传大量文件时刷屏。
+      if(pending.length % 10 === 0) {
+        return send(TOKEN,uid,
+          "📥 <b>已收到 "+pending.length+" 个文件</b>\\n\\n"+
+          "📁 文件夹："+escapeHtml(s.directoryName),
+          {parse_mode:"HTML"}
+        );
+      }
+      return;
     } catch(e) {
       return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
