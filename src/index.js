@@ -191,6 +191,7 @@ let TelegramClientClass = null;
 let StringSessionClass = null;
 const historyInputs = new Map();
 const uploadTimers = new Map();
+const uploadAckTimers = new Map();
 const UPLOAD_TIMEOUT_MS = UPLOAD_IDLE_SECONDS * 1000;
 
 function askHistoryInput(uid, step, prompt) {
@@ -1288,6 +1289,7 @@ async function mainMessage(msg) {
   if(s?.step==="upload_file"&&admin) {
     if(t==="/cancel") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
       states.delete(key);
       return send(TOKEN,uid,"❌ 已取消本次上传，未入库的资源不会保存。",adminMenu());
     }
@@ -1304,6 +1306,7 @@ async function mainMessage(msg) {
     }
     if(t==="✅ 结束上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
       return finalizeUpload(uid,s);
     }
     if(!repo()) {
@@ -1326,13 +1329,22 @@ async function mainMessage(msg) {
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
-      // 每收到一条资源都立即询问一次，不再等待累计 10 个。
-      return send(TOKEN,uid,
-        "📥 <b>已收到 "+pending.length+" 个文件</b>\\n\\n"+
-        "📁 文件夹："+escapeHtml(s.directoryName)+"\\n\\n"+
-        "还要继续上传，还是现在结束上传？",
-        {parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"继续上传或结束上传"}}
-      );
+      // 同一次转发可能会连续收到多条 Telegram 消息。
+      // 延迟短暂时间，等这一批消息收齐后只询问一次，避免每个文件都弹一次。
+      if(uploadAckTimers.has(key)) clearTimeout(uploadAckTimers.get(key));
+      uploadAckTimers.set(key,setTimeout(()=>{
+        uploadAckTimers.delete(key);
+        const current=states.get(key);
+        if(current?.step==="upload_file") {
+          send(TOKEN,uid,
+            "📥 <b>已收到 "+(current.pendingUploads?.length||0)+" 个文件</b>\\n\\n"+
+            "📁 文件夹："+escapeHtml(current.directoryName)+"\\n\\n"+
+            "还要继续上传，还是现在结束上传？",
+            {parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"继续上传或结束上传"}}
+          ).catch(()=>{});
+        }
+      },1500));
+      return;
     } catch(e) {
       return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
