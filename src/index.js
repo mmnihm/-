@@ -263,7 +263,8 @@ async function scanHistory(uid) {
   }
 }
 
-const isAdmin = id => ADMIN_IDS.has(String(id));
+const isSuperAdmin = id => ADMIN_IDS.has(String(id));
+const isAdmin = id => isSuperAdmin(id) || db.settings.admins.includes(String(id));
 const group = () => db.settings.requiredGroup;
 const repo = () => db.settings.repository;
 
