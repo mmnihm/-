@@ -924,8 +924,13 @@ async function mainMessage(msg) {
       const resourceMsg={...msg,chat:{...(msg.chat||{}),id:repo().chatId},message_id:copied.message_id};
       indexResource(resourceMsg);
       const item=db.resources.find(r=>String(r.chatId)===String(repo().chatId)&&Number(r.messageId)===Number(copied.message_id));
-      if(item) item.directoryId=s.directoryId;
+      if(!item) throw new Error("资源已转存，但没有成功写入资源索引");
+      item.directoryId=s.directoryId;
+      item.repositoryMessageId=Number(copied.message_id);
+      item.sourceUserId=String(uid);
+      item.indexedAt=Date.now();
       saveDb();
+      console.log("📚 RESOURCE INDEXED:", "folder=",s.directoryName, "directoryId=",s.directoryId, "chat=",repo().chatId, "message=",copied.message_id, "total=",db.resources.length);
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName});
       return send(TOKEN,uid,"✅ <b>上传成功</b>\\n\\n📁 文件夹："+s.directoryName+"\\n📦 已转存到资源仓库\\n\\n可以继续发送下一个资源。\\n发送 /cancel 结束上传。",{parse_mode:"HTML"});
     } catch(e) {
@@ -1020,35 +1025,89 @@ async function childMessage(child,msg,token) {
 async function handleDirectoryCallback(token, q, child=false) {
   const uid=q.from?.id;
   const data=String(q.data||"");
-  try { await tg(token,"answerCallbackQuery",{callback_query_id:q.id}); } catch {}
-  if(!uid) return;
+  const callbackId=q.id;
+  const chatId=q.message?.chat?.id;
+  const messageId=q.message?.message_id;
+
+  if(!uid || !callbackId || !chatId || !messageId) return;
+
+  const answer=async(text="",showAlert=false)=>{
+    try {
+      const body={callback_query_id:callbackId};
+      if(text) { body.text=text; body.show_alert=showAlert; }
+      await tg(token,"answerCallbackQuery",body);
+    } catch {}
+  };
+
   if(!(await allowed(TOKEN,uid))) {
-    try { await tg(token,"answerCallbackQuery",{callback_query_id:q.id,text:"🔐 请先加入指定群",show_alert:true}); } catch {}
+    await answer("🔐 请先加入指定群",true);
     return;
   }
-  const chatId=q.message?.chat?.id;
-  if(!chatId) return;
+  await answer();
+
+  console.log("🔘 DIRECTORY CALLBACK:", {
+    bot: child ? "child" : "main",
+    user: uid,
+    data,
+    chatId,
+    messageId,
+    directories: db.directories.length,
+    resources: db.resources.length
+  });
 
   if(data==="noop" || data==="done") return;
 
   if(data==="dirs") {
-    return tg(token,"editMessageText",{chat_id:chatId,message_id:q.message.message_id,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});
+    return tg(token,"editMessageText",{
+      chat_id:chatId,
+      message_id:messageId,
+      text:directoryText(),
+      parse_mode:"HTML",
+      reply_markup:directoryInlineKeyboard()
+    });
   }
 
-  const m=data.match(/^(?:dir|get):([^:]+):(\\d+)$/);
-  if(!m) return;
+  const m=data.match(/^(?:dir|get):([^:]+):(\d+)$/);
+  if(!m) {
+    console.warn("⚠️ UNKNOWN DIRECTORY CALLBACK:",data);
+    return;
+  }
+
   const directoryId=m[1];
   const offset=Number(m[2]||0);
   const d=db.directories.find(x=>String(x.id)===String(directoryId));
+
   if(!d) {
-    return tg(token,"editMessageText",{chat_id:chatId,message_id:q.message.message_id,text:"⚠️ 这个文件夹已经不存在。",reply_markup:directoryInlineKeyboard()});
+    console.warn("⚠️ DIRECTORY NOT FOUND:", {
+      directoryId,
+      data,
+      knownDirectories: db.directories.map(x=>({id:x.id,name:x.name}))
+    });
+    return tg(token,"editMessageText",{
+      chat_id:chatId,
+      message_id:messageId,
+      text:"⚠️ 这个文件夹记录已经更新，请重新选择当前文件夹。",
+      reply_markup:directoryInlineKeyboard()
+    });
   }
+
   const all=directoryItems(d.id);
   const safe=String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   if(data.startsWith("dir:")) {
+    if(!all.length) {
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",
+        parse_mode:"HTML",
+        reply_markup:directoryInlineKeyboard()
+      });
+    }
+
     return tg(token,"editMessageText",{
-      chat_id:chatId,message_id:q.message.message_id,
+      chat_id:chatId,
+      message_id:messageId,
       text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源。\\n\\n点击下面按钮开始获取资源，每次发送 10 个。",
       parse_mode:"HTML",
       reply_markup:folderSummaryKeyboard(d.id,all.length,0)
@@ -1056,16 +1115,23 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   if(offset>=all.length) return;
+
   const batch=all.slice(offset,offset+10);
   let sent=0;
   for(const item of batch) {
-    try { await sendIndexedResource(token,chatId,item); sent++; }
-    catch(e) { console.error("FOLDER BATCH SEND:",e.message,"chat=",chatId,"resource=",item.messageId); }
+    try {
+      await sendIndexedResource(token,chatId,item);
+      sent++;
+    } catch(e) {
+      console.error("FOLDER BATCH SEND:",e.message,"chat=",chatId,"resource=",item.messageId);
+    }
     await sleep(80);
   }
+
   const next=Math.min(offset+10,all.length);
   return tg(token,"editMessageText",{
-    chat_id:chatId,message_id:q.message.message_id,
+    chat_id:chatId,
+    message_id:messageId,
     text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源。\\n📤 本次已发送：<b>"+sent+"</b> 个。\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>",
     parse_mode:"HTML",
     reply_markup:folderProgressKeyboard(d.id,all.length,next)
