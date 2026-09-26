@@ -351,7 +351,7 @@ function platformMenu() {
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
-function getDirectoryByName(name) { const n=String(name||"").trim().toLowerCase(); return db.directories.find(d=>String(d.name||"").trim().toLowerCase()===n)||null; }
+function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
 function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
 function directoryKeyboard() {
   const rows=[];
