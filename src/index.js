@@ -400,6 +400,73 @@ function platformMenu() {
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
 function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
+async function finalizeUpload(uid, state) {
+  const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
+  if (!items.length) {
+    states.delete("m:"+uid);
+    return send(TOKEN,uid,"📭 本次没有收到资源。",adminMenu());
+  }
+  const r = repo();
+  if (!r) {
+    states.delete("m:"+uid);
+    return send(TOKEN,uid,"❌ 资源仓库未绑定，无法入库。",adminMenu());
+  }
+
+  const d = ensureDirectory(state.directoryName);
+  if (!d) {
+    states.delete("m:"+uid);
+    return send(TOKEN,uid,"❌ 文件夹创建失败。",adminMenu());
+  }
+
+  let stored = 0;
+  let failed = 0;
+  for (const pending of items) {
+    try {
+      const copied = await tg(TOKEN,"copyMessage",{
+        chat_id:r.chatId,
+        from_chat_id:uid,
+        message_id:Number(pending.messageId)
+      });
+      if (!copied?.message_id) throw new Error("仓库转存失败");
+
+      const resourceMsg = {
+        ...pending.msg,
+        chat:{...(pending.msg?.chat || {}),id:r.chatId},
+        message_id:Number(copied.message_id)
+      };
+      indexResource(resourceMsg);
+      const item = db.resources.find(x =>
+        String(x.chatId)===String(r.chatId) &&
+        Number(x.messageId)===Number(copied.message_id)
+      );
+      if (!item) throw new Error("资源索引写入失败");
+      item.directoryId=d.id;
+      item.repositoryMessageId=Number(copied.message_id);
+      item.sourceUserId=String(uid);
+      item.indexedAt=Date.now();
+      stored++;
+    } catch (e) {
+      failed++;
+      console.error("UPLOAD FINALIZE:",e.message,"message=",pending.messageId);
+    }
+    await sleep(80);
+  }
+
+  saveDb();
+  logAdmin(uid,"结束上传",state.directoryName+" / 收到"+items.length+" / 入库"+stored);
+
+  states.delete("m:"+uid);
+
+  return sendHtml(TOKEN,uid,
+    "<b>📦 本批上传完成</b>\\n\\n"+
+    "📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n"+
+    "📥 收到资源：<b>"+items.length+"</b> 个\\n"+
+    "💾 已存入资源库：<b>"+stored+"</b> 个\\n"+
+    (failed ? "⚠️ 入库失败：<b>"+failed+"</b> 个\\n" : "")+
+    "\\n📚 文件夹已建立，资源已统一整理入库。",
+    adminMenu()
+  );
+}
 function directoryKeyboard() {
   const rows=[];
   for(const d of db.directories){
@@ -1094,26 +1161,40 @@ async function mainMessage(msg) {
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
     const folder=t.trim().slice(0,80);
     if(!folder) return send(TOKEN,uid,"⚠️ 文件夹名称不能为空。");
-    const d=ensureDirectory(folder);
+    const cleanFolder=folder;
+    const existing=getDirectoryByName(cleanFolder);
     const uploadKey=key;
     if(uploadTimers.has(uploadKey)) clearTimeout(uploadTimers.get(uploadKey));
     uploadTimers.set(uploadKey,setTimeout(()=>{
       uploadTimers.delete(uploadKey);
       const current=states.get(uploadKey);
-      if(current?.step==="upload_file" && String(current.directoryId)===String(d.id)) {
-        states.delete(uploadKey);
-        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+d.name+"\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+      if(current?.step==="upload_file") {
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
       }
     },UPLOAD_TIMEOUT_MS));
-    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name});
-    return send(TOKEN,uid,"📁 文件夹：<b>"+d.name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</b>\\n\\n现在请直接发送要上传的文件、图片、视频、音频或其他资源。\\n⏱️ 连续 "+UPLOAD_IDLE_SECONDS+" 分钟没有上传新文件，将自动结束本次上传。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:[]});
+    return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n\\n现在请直接连续发送要上传的文件、图片、视频、音频或其他资源。\\n\\n📥 上传过程中不会逐个回复，全部发完后点击「✅ 结束上传」。\\n⏱️ 连续 "+UPLOAD_IDLE_SECONDS+" 分钟没有新文件，会提示你继续或结束。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
   if(s?.step==="upload_file"&&admin) {
     if(t==="/cancel") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       states.delete(key);
-      logAdmin(uid,"结束上传",s?.directoryName||"");
-      return send(TOKEN,uid,"❌ 已结束上传。",adminMenu());
+      return send(TOKEN,uid,"❌ 已取消本次上传，未入库的资源不会保存。",adminMenu());
+    }
+    if(t==="▶️ 继续上传") {
+      if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
+      uploadTimers.set(key,setTimeout(()=>{
+        uploadTimers.delete(key);
+        const current=states.get(key);
+        if(current?.step==="upload_file") {
+          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+        }
+      },UPLOAD_TIMEOUT_MS));
+      return send(TOKEN,uid,"▶️ 可以继续上传。");
+    }
+    if(t==="✅ 结束上传") {
+      if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      return finalizeUpload(uid,s);
     }
     if(!repo()) {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
@@ -1123,32 +1204,21 @@ async function mainMessage(msg) {
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
     if(!media && !msg.text) return send(TOKEN,uid,"⚠️ 请发送文件、图片、视频、音频或带文字的资源。");
     try {
-      const copied=await tg(TOKEN,"copyMessage",{chat_id:repo().chatId,from_chat_id:uid,message_id:msg.message_id});
-      if(!copied || !copied.message_id) throw new Error("仓库转存失败");
-      const resourceMsg={...msg,chat:{...(msg.chat||{}),id:repo().chatId},message_id:copied.message_id};
-      indexResource(resourceMsg);
-      const item=db.resources.find(r=>String(r.chatId)===String(repo().chatId)&&Number(r.messageId)===Number(copied.message_id));
-      if(!item) throw new Error("资源已转存，但没有成功写入资源索引");
-      item.directoryId=s.directoryId;
-      item.repositoryMessageId=Number(copied.message_id);
-      item.sourceUserId=String(uid);
-      item.indexedAt=Date.now();
-      saveDb();
-      logAdmin(uid,"上传资源",s.directoryName);
-      console.log("📚 RESOURCE INDEXED:", "folder=",s.directoryName, "directoryId=",s.directoryId, "chat=",repo().chatId, "message=",copied.message_id, "total=",db.resources.length);
+      const pending=Array.isArray(s.pendingUploads)?s.pendingUploads:[];
+      pending.push({messageId:Number(msg.message_id),msg});
       if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
       uploadTimers.set(key,setTimeout(()=>{
         uploadTimers.delete(key);
         const current=states.get(key);
-        if(current?.step==="upload_file" && String(current.directoryId)===String(s.directoryId)) {
-          states.delete(key);
-          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+s.directoryName+"\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+        if(current?.step==="upload_file") {
+          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
-      states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName});
-      return send(TOKEN,uid,"📥 已收到资源，正在存入资源库。");
+      states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
+      console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
+      return;
     } catch(e) {
-      return send(TOKEN,uid,"❌ 上传失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
+      return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
   }
 
