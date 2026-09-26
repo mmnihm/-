@@ -338,7 +338,22 @@ function platformMenu() {
 function getDirectoryByName(name) { const n=String(name||"").trim().toLowerCase(); return db.directories.find(d=>String(d.name||"").trim().toLowerCase()===n)||null; }
 function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
 function directoryKeyboard() { const rows=[]; for(const d of db.directories){ const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length; if(count)rows.push([`📁 ${d.name}（${count}）`]); } if(!rows.length)rows.push(["📭 暂无分类"]); rows.push(["🏠 开始"]); return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件夹"}}; }
-function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).slice(0,50); }
+function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).sort((a,b)=>Number(a.messageId)-Number(b.messageId)); }
+function sendDirectoryBatch(token, chatId, items) {
+  let sent = 0;
+  return (async () => {
+    for (const item of items) {
+      try {
+        await tg(token,"copyMessage",{chat_id:chatId,from_chat_id:item.chatId,message_id:Number(item.messageId)});
+        sent++;
+      } catch(e) {
+        console.error("DIRECTORY COPY:",e.message,"chat=",item.chatId,"message=",item.messageId);
+      }
+      await sleep(80);
+    }
+    return sent;
+  })();
+}
 function directoryText() {
   const dirs = Array.isArray(db.directories) ? db.directories : [];
   return ["📂 <b>资源目录</b>","","请选择下面的文件夹：","","📚 总资源："+db.resources.length+" 条"].join("\n");
@@ -655,72 +670,58 @@ async function mainMessage(msg) {
   if(s?.step==="directory") {
     if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
     if(t==="📭 暂无分类") return send(TOKEN,uid,"📭 目前还没有可浏览的文件夹。",directoryKeyboard());
+
     const name=t.replace(/^📁\\s*/,"").split("（")[0].trim();
     const d=getDirectoryByName(name);
     if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹，请重新选择。",directoryKeyboard());
-    const items=directoryItems(d.id);
-    if(!items.length) return send(TOKEN,uid,"📭 这个文件夹暂时没有资源。",directoryKeyboard());
 
-    const first=items.slice(0,10);
-    try {
-      await tg(TOKEN,"copyMessages",{
-        chat_id:uid,
-        from_chat_id:repo().chatId,
-        message_ids:first.map(x=>Number(x.messageId))
-      });
-    } catch(e) {
-      console.error("DIRECTORY COPY BATCH:",e.message,"folder=",d.name);
-      return send(TOKEN,uid,"❌ 资源发送失败。\\n\\n请检查机器人是否仍在资源仓库中，并拥有读取/发送资源的权限。");
-    }
+    const all=directoryItems(d.id);
+    if(!all.length) return send(TOKEN,uid,"📭 这个文件夹暂时没有资源。",directoryKeyboard());
 
-    const nextOffset=first.length;
-    states.set(key,{step:"directory_page",directoryId:d.id,offset:nextOffset});
-    const safeName=String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const page=all.slice(0,10);
+    const sent=await sendDirectoryBatch(TOKEN,uid,page);
+    if(!sent) return send(TOKEN,uid,"❌ 资源发送失败。\\n\\n请检查机器人是否仍在资源仓库中，并拥有读取资源的权限。");
+
+    const offset=page.length;
+    states.set(key,{step:"directory_page",directoryId:d.id,offset});
+    const safe=String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     return sendHtml(TOKEN,uid,
-      "📁 <b>"+safeName+"</b>\\n\\n"+
-      "✅ 本次已发送 <b>"+first.length+"</b> 个资源。\\n"+
-      "📦 当前进度："+nextOffset+" / "+items.length+"\\n\\n"+
-      (nextOffset<items.length ? "👇 点击「下一步」继续获取。" : "🏁 这个文件夹的资源已经全部发送完毕。"),
-      {reply_markup:{keyboard:nextOffset<items.length?[["➡️ 下一步"],["📂 返回文件夹","🏠 开始"]]:[["📂 返回文件夹","🏠 开始"]],resize_keyboard:true,input_field_placeholder:nextOffset<items.length?"继续获取资源":"请选择操作"}}
+      "📁 <b>"+safe+"</b>\\n\\n"+
+      "✅ 已发送 <b>"+sent+"</b> 个资源。\\n"+
+      "📦 进度："+offset+" / "+all.length+"\\n\\n"+
+      (offset<all.length?"👇 点击「➡️ 下一步」继续获取。":"🏁 这个文件夹到头了，没有更多资源了。"),
+      {reply_markup:{keyboard:offset<all.length?[["➡️ 下一步"],["📂 返回文件夹","🏠 开始"]]:[["📂 返回文件夹","🏠 开始"]],resize_keyboard:true}}
     );
   }
 
   if(s?.step==="directory_page") {
     if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
     if(t==="📂 返回文件夹") { states.set(key,{step:"directory"}); return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard()); }
-    if(t!=="➡️ 下一步") return send(TOKEN,uid,"⚠️ 请点击「➡️ 下一步」继续，或返回文件夹。");
+    if(t!=="➡️ 下一步") return send(TOKEN,uid,"⚠️ 请点击「➡️ 下一步」继续。");
 
-    const items=directoryItems(s.directoryId);
+    const all=directoryItems(s.directoryId);
     const offset=Number(s.offset||0);
-    if(offset>=items.length) {
+    if(offset>=all.length) {
       states.set(key,{step:"directory_page",directoryId:s.directoryId,offset});
       return send(TOKEN,uid,"🏁 这个文件夹到头了，没有更多资源了。");
     }
 
-    const page=items.slice(offset,offset+10);
-    try {
-      await tg(TOKEN,"copyMessages",{
-        chat_id:uid,
-        from_chat_id:repo().chatId,
-        message_ids:page.map(x=>Number(x.messageId))
-      });
-    } catch(e) {
-      console.error("DIRECTORY COPY NEXT:",e.message,"folderId=",s.directoryId,"offset=",offset);
-      return send(TOKEN,uid,"❌ 资源发送失败。\\n\\n请检查机器人是否仍在资源仓库中，并拥有读取/发送资源的权限。");
-    }
-
+    const page=all.slice(offset,offset+10);
+    const sent=await sendDirectoryBatch(TOKEN,uid,page);
     const nextOffset=offset+page.length;
     states.set(key,{step:"directory_page",directoryId:s.directoryId,offset:nextOffset});
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
-    const safeName=String(d?.name||"资源文件夹").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const safe=String(d?.name||"资源文件夹").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    if(!sent) return send(TOKEN,uid,"❌ 本批资源发送失败。请检查资源仓库权限。");
     return sendHtml(TOKEN,uid,
-      "📁 <b>"+safeName+"</b>\\n\\n"+
-      "✅ 本次已发送 <b>"+page.length+"</b> 个资源。\\n"+
-      "📦 当前进度："+nextOffset+" / "+items.length+"\\n\\n"+
-      (nextOffset<items.length ? "👇 点击「下一步」继续获取。" : "🏁 这个文件夹到头了，没有更多资源了。"),
-      {reply_markup:{keyboard:nextOffset<items.length?[["➡️ 下一步"],["📂 返回文件夹","🏠 开始"]]:[["📂 返回文件夹","🏠 开始"]],resize_keyboard:true,input_field_placeholder:nextOffset<items.length?"继续获取资源":"请选择操作"}}
+      "📁 <b>"+safe+"</b>\\n\\n"+
+      "✅ 本次发送 <b>"+sent+"</b> 个资源。\\n"+
+      "📦 进度："+nextOffset+" / "+all.length+"\\n\\n"+
+      (nextOffset<all.length?"👇 点击「➡️ 下一步」继续获取。":"🏁 这个文件夹到头了，没有更多资源了。"),
+      {reply_markup:{keyboard:nextOffset<all.length?[["➡️ 下一步"],["📂 返回文件夹","🏠 开始"]]:[["📂 返回文件夹","🏠 开始"]],resize_keyboard:true}}
     );
   }
+
   if(t==="🔎 搜索资源") {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
     states.set(key,{step:"search"});
