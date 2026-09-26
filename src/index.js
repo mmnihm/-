@@ -317,7 +317,7 @@ function adminMenu() {
     ["🔍 仓库扫描","📦 资源仓库"],
     ["🔐 指定群","🤖 克隆机器人"],
     ["📢 广播消息","⚙️ 平台设置"],
-    ["👥 管理员管理"]
+    ["📤 上传资源","👥 管理员管理"]
   ],resize_keyboard:true,input_field_placeholder:"请选择管理功能"}};
 }
 function scanMenu() {
