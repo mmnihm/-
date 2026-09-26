@@ -353,7 +353,21 @@ function platformMenu() {
 }
 function getDirectoryByName(name) { const n=String(name||"").trim().toLowerCase(); return db.directories.find(d=>String(d.name||"").trim().toLowerCase()===n)||null; }
 function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
-function directoryKeyboard() { const rows=[]; for(const d of db.directories){ const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length; if(count)rows.push([`📁 ${d.name}（${count}）`]); } if(!rows.length)rows.push(["📭 暂无分类"]); rows.push(["🏠 开始"]); return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件夹"}}; }
+function directoryKeyboard() {
+  const rows=[];
+  for(const d of db.directories){
+    const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+    if(count) rows.push(["📁 "+d.name+"（"+count+"）"]);
+  }
+  if(!rows.length) rows.push(["📭 暂无分类"]);
+  rows.push(["🏠 开始"]);
+  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件夹"}};
+}
+function folderFileKeyboard(items) {
+  const rows=items.map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,42)]);
+  rows.push(["⬅️ 返回文件夹"]);
+  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件"}};
+}
 function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).sort((a,b)=>Number(a.messageId)-Number(b.messageId)); }
 function sendDirectoryBatch(token, chatId, items) {
   let sent = 0;
@@ -946,7 +960,30 @@ async function childMessage(child,msg,token) {
     childMenu());
   // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。
   if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
-  if(t==="📂 资源目录") return send(token,uid,db.directories.length?"📂 资源目录\n\n"+db.directories.map((d,i)=>`${i+1}. ${d.name}`).join("\n"):"📂 暂无资源目录。");
+  if(t==="📂 资源目录") {
+    if(!db.directories.length) return send(token,uid,"📂 暂无资源目录。",childMenu());
+    states.set(key,{step:"child_directory"});
+    return send(token,uid,"📂 资源目录\n\n请选择文件夹：",directoryKeyboard());
+  }
+  if(s?.step==="child_directory") {
+    if(t==="🏠 开始") { states.delete(key); return send(token,uid,"👋 已返回首页。",childMenu()); }
+    const name=t.replace(/^📁\s*/,"").split("（")[0].trim();
+    const d=getDirectoryByName(name);
+    if(!d) return send(token,uid,"⚠️ 找不到这个文件夹。",directoryKeyboard());
+    const all=directoryItems(d.id);
+    if(!all.length) return send(token,uid,"📭 这个文件夹暂无资源。",directoryKeyboard());
+    states.set(key,{step:"child_folder_files",directoryId:d.id});
+    return send(token,uid,"📁 "+d.name+"\n\n共 "+all.length+" 个资源。\n点击文件即可获取：",folderFileKeyboard(all.slice(0,10)));
+  }
+  if(s?.step==="child_folder_files") {
+    if(t==="⬅️ 返回文件夹") { states.set(key,{step:"child_directory"}); return send(token,uid,"📂 资源目录\n\n请选择文件夹：",directoryKeyboard()); }
+    const all=directoryItems(s.directoryId), page=all.slice(0,10);
+    const idx=page.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,42)===t);
+    if(idx<0) return send(token,uid,"⚠️ 请点击文件列表中的资源。",folderFileKeyboard(page));
+    try { await sendIndexedResource(token,uid,page[idx]); }
+    catch(e) { return send(token,uid,"❌ 文件发送失败："+e.message); }
+    return send(token,uid,"✅ 已发送："+page[idx].title,folderFileKeyboard(page));
+  }
   if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 <b>搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});}
   if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10());
   if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
