@@ -425,6 +425,15 @@ function adminToolsMenu() {
     ["📜 操作日志","⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
 }
+function uploadFolderMenu() {
+  const rows=[];
+  for(const d of db.directories) {
+    const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+    rows.push(["📁 "+d.name+"（"+count+"）"]);
+  }
+  rows.push(["➕ 新建文件夹","❌ 取消"]);
+  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择已有文件夹或新建"}};
+}
 function deleteResourceMenu() {
   const rows = [];
   for (const d of db.directories) {
@@ -1235,19 +1244,32 @@ async function mainMessage(msg) {
   if(t==="📤 上传资源"&&admin) {
     if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
     states.set(key,{step:"upload_folder"});
-    return send(TOKEN,uid,"📤 <b>上传资源</b>\\n\\n请发送文件夹名称。\\n\\n例如：<code>电影</code>、<code>短剧</code>、<code>教程</code>。\\n\\n新名称会自动创建文件夹。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+    return send(TOKEN,uid,
+      "📤 <b>上传资源</b>\\n\\n"+
+      "请选择要使用的文件夹：\\n"+
+      "📁 点击已有文件夹，可继续往里面添加资源。\\n"+
+      "➕ 点击「新建文件夹」可创建新的文件夹。\\n\\n"+
+      "也可以直接发送文件夹名称。\\n"+
+      "发送 /cancel 可取消。",
+      {parse_mode:"HTML",...uploadFolderMenu()}
+    );
   }
   if(s?.step==="upload_folder"&&admin) {
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
 
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
     let folder=t.trim().slice(0,80);
-
+    if(folder.startsWith("📁 ")) folder=folder.slice(2).replace(/（\\d+）$/,"").trim();
+    if(t==="➕ 新建文件夹") folder="";
+    
     // 如果管理员没有输入文件夹名称，而是直接发送第一个文件，则自动创建随机文件夹。
     if(!folder && media) {
       folder="未命名-"+Math.random().toString(36).slice(2,8);
     }
-    if(!folder) return send(TOKEN,uid,"⚠️ 请发送文件夹名称，或者直接发送第一个文件，系统会自动创建随机文件夹。");
+    if(!folder && t==="➕ 新建文件夹") {
+      return send(TOKEN,uid,"📁 <b>新建文件夹</b>\\n\\n请发送新的文件夹名称。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML",reply_markup:{remove_keyboard:true}});
+    }
+    if(!folder) return send(TOKEN,uid,"⚠️ 请选择已有文件夹、发送新的文件夹名称，或者直接发送第一个文件。");
 
     const cleanFolder=folder;
     const existing=getDirectoryByName(cleanFolder);
