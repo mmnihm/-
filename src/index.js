@@ -335,6 +335,10 @@ function platformMenu() {
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
+function getDirectoryByName(name) { const n=String(name||"").trim().toLowerCase(); return db.directories.find(d=>String(d.name||"").trim().toLowerCase()===n)||null; }
+function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
+function directoryKeyboard() { const rows=[]; for(const d of db.directories){ const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length; if(count)rows.push([`📁 ${d.name}（${count}）`]); } if(!rows.length)rows.push(["📭 暂无分类"]); rows.push(["🏠 开始"]); return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件夹"}}; }
+function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).slice(0,50); }
 function directoryText() {
   const dirs = Array.isArray(db.directories) ? db.directories : [];
   const counts = new Map();
