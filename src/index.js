@@ -313,12 +313,28 @@ function backMenu(admin=false) {
 }
 function adminMenu() {
   return {reply_markup:{keyboard:[
-    ["🏠 开始","📊 数据统计"],
-    ["🔍 仓库扫描","📦 资源仓库"],
-    ["🔐 指定群","🤖 克隆机器人"],
-    ["📢 广播消息","⚙️ 平台设置"],
-    ["📤 上传资源","👥 管理员管理"]
-  ],resize_keyboard:true,input_field_placeholder:"请选择管理功能"}};
+    ["📤 上传资源","🗑️ 删除资源"],
+    ["📂 资源管理","🏠 开始"]
+  ],resize_keyboard:true,input_field_placeholder:"管理常用功能"}};
+}
+function adminToolsMenu() {
+  return {reply_markup:{keyboard:[
+    ["📊 数据统计","🔍 仓库扫描"],
+    ["📦 资源仓库","🔐 指定群"],
+    ["🤖 克隆机器人","📢 广播消息"],
+    ["⚙️ 平台设置","👥 管理员管理"],
+    ["⬅️ 返回管理"]
+  ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
+}
+function deleteResourceMenu() {
+  const rows = [];
+  for (const d of db.directories) {
+    const count = db.resources.filter(r => String(r.directoryId) === String(d.id)).length;
+    if (count) rows.push(["📁 " + d.name + "（" + count + "）"]);
+  }
+  if (!rows.length) rows.push(["📭 暂无资源"]);
+  rows.push(["⬅️ 返回管理"]);
+  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择要管理的文件夹"}};
 }
 function scanMenu() {
   return {reply_markup:{keyboard:[
@@ -344,10 +360,10 @@ function sendDirectoryBatch(token, chatId, items) {
   return (async () => {
     for (const item of items) {
       try {
-        await tg(token,"copyMessage",{chat_id:chatId,from_chat_id:item.chatId,message_id:Number(item.messageId)});
+        await sendIndexedResource(token, chatId, item);
         sent++;
       } catch(e) {
-        console.error("DIRECTORY COPY:",e.message,"chat=",item.chatId,"message=",item.messageId);
+        console.error("DIRECTORY SEND:",e.message,"chat=",item.chatId,"message=",item.messageId);
       }
       await sleep(80);
     }
@@ -376,20 +392,43 @@ function configText() {
 function indexResource(msg) {
   const r = repo();
   if (!r || String(msg.chat?.id) !== String(r.chatId)) return;
+  let fileType = null, fileId = null;
+  if (msg.document) { fileType = "Document"; fileId = msg.document.file_id; }
+  else if (msg.video) { fileType = "Video"; fileId = msg.video.file_id; }
+  else if (msg.audio) { fileType = "Audio"; fileId = msg.audio.file_id; }
+  else if (msg.animation) { fileType = "Animation"; fileId = msg.animation.file_id; }
+  else if (msg.photo?.length) { fileType = "Photo"; fileId = msg.photo.at(-1).file_id; }
   const media = msg.document || msg.video || msg.audio || msg.animation || msg.photo?.at(-1);
   if (!media && !msg.text) return;
   const item = {
     chatId:String(msg.chat.id),
     messageId:msg.message_id,
-    title:(msg.document?.file_name || msg.audio?.file_name || msg.caption || msg.text || "未命名资源").slice(0,200),
+    title:(msg.document?.file_name || msg.audio?.file_name || msg.video?.file_name || msg.caption || msg.text || "未命名资源").slice(0,200),
     caption:(msg.caption || msg.text || "").slice(0,500),
     date:msg.date || Math.floor(Date.now()/1000),
-    directoryId:null
+    directoryId:null,
+    fileType,
+    fileId,
+    textOnly:!media
   };
   const i=db.resources.findIndex(x=>x.chatId===item.chatId&&x.messageId===item.messageId);
   if(i>=0) db.resources[i]=item; else db.resources.unshift(item);
   db.resources=db.resources.slice(0,MAX_RESOURCES);
   saveDb();
+}
+async function sendIndexedResource(token, chatId, item) {
+  if (item.fileId && item.fileType) {
+    const field = item.fileType.toLowerCase();
+    const body = {chat_id:chatId, [field]:item.fileId};
+    if (item.caption) body.caption = String(item.caption).slice(0,1024);
+    await tg(token, "send" + item.fileType, body);
+    return;
+  }
+  if (item.textOnly) {
+    await tg(token, "sendMessage", {chat_id:chatId, text:item.caption || item.title || "未命名资源"});
+    return;
+  }
+  await tg(token, "copyMessage", {chat_id:chatId,from_chat_id:item.chatId,message_id:Number(item.messageId)});
 }
 function search(q) {
   q=q.toLowerCase();
@@ -749,6 +788,53 @@ async function mainMessage(msg) {
     );
     return deliver(TOKEN,uid,uid,results);
   }
+
+  if(t==="📂 资源管理"&&admin) {
+    return send(TOKEN,uid,"🛠️ <b>资源管理</b>\\n\\n这里放不常用的管理功能。",{parse_mode:"HTML",...adminToolsMenu()});
+  }
+  if(t==="🗑️ 删除资源"&&admin) {
+    states.set(key,{step:"delete_folder"});
+    return send(TOKEN,uid,"🗑️ <b>删除资源</b>\\n\\n先选择文件夹：\\n\\n进入文件夹后可以删除单个文件，或直接删除整个文件夹。",{parse_mode:"HTML",...deleteResourceMenu()});
+  }
+  if(s?.step==="delete_folder"&&admin) {
+    if(t==="⬅️ 返回管理"||t==="🏠 开始") { states.delete(key); return send(TOKEN,uid,"↩️ 已返回管理后台。",adminMenu()); }
+    if(t==="📭 暂无资源") return send(TOKEN,uid,"📭 当前没有可删除的资源。",deleteResourceMenu());
+    const name=t.replace(/^📁\\s*/,"").split("（")[0].trim();
+    const d=getDirectoryByName(name);
+    if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹。",deleteResourceMenu());
+    const items=directoryItems(d.id);
+    const rows=items.slice(0,40).map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,35)]);
+    rows.push(["🗑️ 删除整个文件夹"],["⬅️ 返回文件夹"]);
+    states.set(key,{step:"delete_file",directoryId:d.id});
+    return send(TOKEN,uid,"📁 <b>"+d.name+"</b>\\n\\n共有 <b>"+items.length+"</b> 个资源。\\n请选择要删除的文件：",{parse_mode:"HTML",reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件"}});
+  }
+  if(s?.step==="delete_file"&&admin) {
+    const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
+    if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ 文件夹不存在。",adminMenu()); }
+    if(t==="⬅️ 返回文件夹") { states.set(key,{step:"delete_folder"}); return send(TOKEN,uid,"🗑️ <b>选择要管理的文件夹</b>",{parse_mode:"HTML",...deleteResourceMenu()}); }
+    if(t==="🗑️ 删除整个文件夹") {
+      const items=directoryItems(d.id);
+      let deleted=0;
+      for(const item of items) { try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); deleted++; } catch(e) {} }
+      db.resources=db.resources.filter(x=>String(x.directoryId)!==String(d.id));
+      db.directories=db.directories.filter(x=>String(x.id)!==String(d.id));
+      saveDb(); states.set(key,{step:"delete_folder"});
+      return send(TOKEN,uid,"✅ 已删除文件夹「"+d.name+"」。\\n\\n📚 已从资源索引移除："+items.length+" 个文件。\\n🗑️ 仓库消息成功删除："+deleted+" 个。",deleteResourceMenu());
+    }
+    const items=directoryItems(d.id);
+    const idx=items.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,35)===t);
+    if(idx<0) return send(TOKEN,uid,"⚠️ 请重新选择要删除的文件。");
+    const item=items[idx];
+    try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
+    db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
+    saveDb();
+    const left=directoryItems(d.id);
+    const rows=left.slice(0,40).map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,35)]);
+    rows.push(["🗑️ 删除整个文件夹"],["⬅️ 返回文件夹"]);
+    return send(TOKEN,uid,"✅ 已删除："+item.title+"\\n\\n📁 文件夹「"+d.name+"」剩余 "+left.length+" 个资源。",{reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件"}});
+  }
+
+  if(t==="⬅️ 返回管理"&&admin) return send(TOKEN,uid,"👑 <b>管理员控制台</b>\\n\\n请选择需要管理的项目。",{parse_mode:"HTML",...adminMenu()});
 
   if(t==="👥 管理员管理"&&admin) {
     if(!isSuperAdmin(uid)) return send(TOKEN,uid,"⛔ 只有主管理员可以管理其他管理员。",adminMenu());
