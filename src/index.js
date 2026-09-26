@@ -579,7 +579,7 @@ async function mainMessage(msg) {
     return send(TOKEN,uid,"🤖 创建子机器人\n\n请把你在 BotFather 创建的 Bot Token 发给我。\n\n发送 /cancel 可取消。\n\n⚠️ Token 只用于启动你的子机器人，请勿把 Token 发给其他人。");
   }
   if(s?.step==="token") {
-    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消。",adminMenu()); }
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消。",admin ? adminMenu() : userMenu()); }
     try {
       const me=await tg(t,"getMe");
       if(db.children.some(x=>x.botId===me.id)) throw new Error("already");
