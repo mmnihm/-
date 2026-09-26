@@ -122,6 +122,8 @@ let historyConnecting = null;
 let TelegramClientClass = null;
 let StringSessionClass = null;
 const historyInputs = new Map();
+const uploadTimers = new Map();
+const UPLOAD_TIMEOUT_MS = 3 * 60 * 1000;
 
 function askHistoryInput(uid, step, prompt) {
   return new Promise(resolve => {
@@ -910,12 +912,30 @@ async function mainMessage(msg) {
     const folder=t.trim().slice(0,80);
     if(!folder) return send(TOKEN,uid,"⚠️ 文件夹名称不能为空。");
     const d=ensureDirectory(folder);
+    const uploadKey=key;
+    if(uploadTimers.has(uploadKey)) clearTimeout(uploadTimers.get(uploadKey));
+    uploadTimers.set(uploadKey,setTimeout(()=>{
+      uploadTimers.delete(uploadKey);
+      const current=states.get(uploadKey);
+      if(current?.step==="upload_file" && String(current.directoryId)===String(d.id)) {
+        states.delete(uploadKey);
+        send(TOKEN,uid,"⏰ <b>上传已自动结束</b>\\n\\n📁 文件夹："+d.name+"\\n⚠️ 连续 3 分钟没有上传新文件。\\n\\n文件夹已经创建并保留，之后可以重新进入「📤 上传资源」继续上传。",{parse_mode:"HTML",...adminMenu()}).catch(()=>{});
+      }
+    },UPLOAD_TIMEOUT_MS));
     states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name});
-    return send(TOKEN,uid,"📁 文件夹：<b>"+d.name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</b>\\n\\n现在请直接发送要上传的文件、图片、视频、音频或其他资源。\\n\\n机器人会自动转发到资源仓库并保存到这个文件夹。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+    return send(TOKEN,uid,"📁 文件夹：<b>"+d.name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</b>\\n\\n现在请直接发送要上传的文件、图片、视频、音频或其他资源。\\n⏱️ 连续 3 分钟没有上传新文件，将自动结束本次上传。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
   if(s?.step==="upload_file"&&admin) {
-    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已结束上传。",adminMenu()); }
-    if(!repo()) { states.delete(key); return send(TOKEN,uid,"❌ 资源仓库未绑定。",adminMenu()); }
+    if(t==="/cancel") {
+      if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      states.delete(key);
+      return send(TOKEN,uid,"❌ 已结束上传。",adminMenu());
+    }
+    if(!repo()) {
+      if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      states.delete(key);
+      return send(TOKEN,uid,"❌ 资源仓库未绑定。",adminMenu());
+    }
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
     if(!media && !msg.text) return send(TOKEN,uid,"⚠️ 请发送文件、图片、视频、音频或带文字的资源。");
     try {
@@ -931,8 +951,17 @@ async function mainMessage(msg) {
       item.indexedAt=Date.now();
       saveDb();
       console.log("📚 RESOURCE INDEXED:", "folder=",s.directoryName, "directoryId=",s.directoryId, "chat=",repo().chatId, "message=",copied.message_id, "total=",db.resources.length);
+      if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
+      uploadTimers.set(key,setTimeout(()=>{
+        uploadTimers.delete(key);
+        const current=states.get(key);
+        if(current?.step==="upload_file" && String(current.directoryId)===String(s.directoryId)) {
+          states.delete(key);
+          send(TOKEN,uid,"⏰ <b>上传已自动结束</b>\\n\\n📁 文件夹："+s.directoryName+"\\n⚠️ 连续 3 分钟没有上传新文件。\\n\\n文件夹已经创建并保留。",{parse_mode:"HTML",...adminMenu()}).catch(()=>{});
+        }
+      },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName});
-      return send(TOKEN,uid,"✅ <b>上传成功</b>\\n\\n📁 文件夹："+s.directoryName+"\\n📦 已转存到资源仓库\\n\\n可以继续发送下一个资源。\\n发送 /cancel 结束上传。",{parse_mode:"HTML"});
+      return send(TOKEN,uid,"✅ <b>上传成功</b>\\n\\n📁 文件夹："+s.directoryName+"\\n📦 已转存到资源仓库\\n\\n可以继续发送下一个资源。\\n⏱️ 3 分钟内继续上传，否则自动结束本次上传。\\n\\n发送 /cancel 结束上传。",{parse_mode:"HTML"});
     } catch(e) {
       return send(TOKEN,uid,"❌ 上传失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
