@@ -112,7 +112,8 @@ function saveDb() {
   } catch (e) { console.error("❌ SAVE:", e.message); }
 }
 const db = loadDb();
-if (!db.settings) db.settings = {requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}};
+if (!db.settings) db.settings = {requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}, admins:[]};
+if (!Array.isArray(db.settings.admins)) db.settings.admins = [];
 if (!("historyAuth" in db.settings)) db.settings.historyAuth = null;
 if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""};
 
@@ -314,7 +315,8 @@ function adminMenu() {
     ["🏠 开始","📊 数据统计"],
     ["🔍 仓库扫描","📦 资源仓库"],
     ["🔐 指定群","🤖 克隆机器人"],
-    ["📢 广播消息","⚙️ 平台设置"]
+    ["📢 广播消息","⚙️ 平台设置"],
+    ["👥 管理员管理"]
   ],resize_keyboard:true,input_field_placeholder:"请选择管理功能"}};
 }
 function scanMenu() {
@@ -682,6 +684,37 @@ async function mainMessage(msg) {
     return deliver(TOKEN,uid,uid,results);
   }
 
+  if(t==="👥 管理员管理"&&admin) {
+    if(!isSuperAdmin(uid)) return send(TOKEN,uid,"⛔ 只有主管理员可以管理其他管理员。",adminMenu());
+    states.set(key,{step:"admin_manage"});
+    const list=db.settings.admins.length?db.settings.admins.map((id,i)=>`${i+1}. ${id}`).join("\\n"):"暂无普通管理员";
+    return send(TOKEN,uid,`👥 <b>管理员管理</b>\\n\\n当前普通管理员：\\n${list}\\n\\n请选择操作：`,{parse_mode:"HTML",reply_markup:{keyboard:[["➕ 添加管理员","➖ 删除管理员"],["❌ 取消","🏠 开始"]],resize_keyboard:true}});
+  }
+  if(s?.step==="admin_manage"&&admin&&isSuperAdmin(uid)) {
+    if(t==="❌ 取消"||t==="🏠 开始"||t==="/cancel") { states.delete(key); return send(TOKEN,uid,"↩️ 已退出管理员管理。",adminMenu()); }
+    if(t==="➕ 添加管理员") { states.set(key,{step:"admin_add"}); return send(TOKEN,uid,"➕ 请发送要添加的管理员 Telegram 数字 ID。\\n\\n例如：123456789\\n\\n发送 /cancel 可取消。"); }
+    if(t==="➖ 删除管理员") { states.set(key,{step:"admin_remove"}); return send(TOKEN,uid,"➖ 请发送要删除的管理员 Telegram 数字 ID。\\n\\n发送 /cancel 可取消。"); }
+    return send(TOKEN,uid,"请选择「➕ 添加管理员」或「➖ 删除管理员」。");
+  }
+  if(s?.step==="admin_add"&&admin&&isSuperAdmin(uid)) {
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消。",adminMenu()); }
+    const id=t.trim();
+    if(!/^\\d+$/.test(id)) return send(TOKEN,uid,"⚠️ ID 格式不正确，请发送纯数字 Telegram ID。");
+    if(isSuperAdmin(id)) { states.delete(key); return send(TOKEN,uid,"⚠️ 该账号已经是主管理员。",adminMenu()); }
+    if(db.settings.admins.includes(id)) { states.delete(key); return send(TOKEN,uid,"⚠️ 该账号已经是管理员。",adminMenu()); }
+    db.settings.admins.push(id); saveDb(); states.delete(key);
+    return send(TOKEN,uid,`✅ 已添加管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
+  }
+  if(s?.step==="admin_remove"&&admin&&isSuperAdmin(uid)) {
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消。",adminMenu()); }
+    const id=t.trim();
+    if(!/^\\d+$/.test(id)) return send(TOKEN,uid,"⚠️ ID 格式不正确，请发送纯数字 Telegram ID。");
+    if(isSuperAdmin(id)) { states.delete(key); return send(TOKEN,uid,"⛔ 不能删除主管理员。",adminMenu()); }
+    const idx=db.settings.admins.indexOf(id);
+    if(idx<0) { states.delete(key); return send(TOKEN,uid,"⚠️ 没找到这个管理员。",adminMenu()); }
+    db.settings.admins.splice(idx,1); saveDb(); states.delete(key);
+    return send(TOKEN,uid,`✅ 已删除管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
+  }
   if(t==="📢 广播消息"&&admin) {
     states.set(key,{step:"broadcast"});
     return send(TOKEN,uid,"📢 <b>广播模式</b>\\n\\n请发送你要广播的消息。\\n\\n支持：文字、粗体/斜体/链接等 Telegram 原生格式，以及图片、视频、文件、音频、贴纸等媒体。\\n\\n机器人会尽量原样复制你发送的整条消息。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
