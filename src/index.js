@@ -6,13 +6,20 @@ import crypto from "node:crypto";
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = process.env.BOT_TOKEN || "";
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || "").split(",").map(x => x.trim()).filter(Boolean));
-const DATA_FILE = process.env.DATA_FILE || "/data/database.json";
+const CONFIG_DATA_FILE = process.env.DATA_FILE || "/data/database.json";
+let DATA_FILE = CONFIG_DATA_FILE;
+try {
+  fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
+  fs.accessSync(path.dirname(DATA_FILE), fs.constants.W_OK);
+} catch {
+  DATA_FILE = "/tmp/mmnihm/database.json";
+  console.warn("⚠️ 数据目录不可写，已切换到:", DATA_FILE);
+}
 const SECRET = process.env.STORAGE_KEY || "telegram-clone-platform-v2";
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 20000);
 const UPLOAD_IDLE_SECONDS = Math.max(15, Number(process.env.UPLOAD_IDLE_SECONDS || 180));
 const TG_API_ID = Number(process.env.TG_API_ID || 0);
 const TG_API_HASH = process.env.TG_API_HASH || "";
-
 console.log("🚀 Telegram Clone Platform v2 starting...");
 console.log("📦 Node:", process.version);
 console.log("🔐 BOT_TOKEN:", TOKEN ? "已配置" : "❌ 未配置");
