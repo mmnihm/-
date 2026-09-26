@@ -2,6 +2,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import dns from "node:dns";
+
+try { dns.setDefaultResultOrder("ipv4first"); } catch {}
 
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = process.env.BOT_TOKEN || "";
@@ -86,7 +89,10 @@ async function tg(token, method, body = {}) {
       });
     } catch (e) {
       if (e?.name === "AbortError") throw new Error(method + " 请求超时");
-      throw e;
+      const cause = e?.cause;
+      const detail = [e?.name, e?.message, cause?.code, cause?.message].filter(Boolean).join(" | ");
+      console.error("❌ TELEGRAM FETCH:", method, detail);
+      throw new Error(method + " 网络请求失败: " + detail);
     } finally {
       clearTimeout(timer);
     }
@@ -1462,6 +1468,8 @@ async function pollMain() {
     console.error("MAIN WEBHOOK:", runtime.lastError);
     await sleep(3000);
   }
+  console.log("🌐 Telegram API: https://api.telegram.org");
+  console.log("🌐 DNS order:", (() => { try { return dns.getDefaultResultOrder(); } catch { return "unknown"; } })());
   console.log("✅ MAIN POLLING READY");
   while(true){
     try{
@@ -1487,7 +1495,8 @@ async function pollMain() {
       saveDb();
     }catch(e){
       runtime.lastError = String(e.message || e);
-      console.error("MAIN POLLING:",e.message);
+      console.error("MAIN POLLING:", e.message);
+      console.error("MAIN POLLING DETAIL:", e?.cause || e);
       await sleep(3000);
     }
   }
@@ -1567,6 +1576,7 @@ async function boot(){
       runtime.mainConnected = false;
       runtime.lastError = String(e.message || e);
       console.error("❌ MAIN BOOT RETRY:", runtime.lastError);
+      console.error("❌ MAIN BOOT DETAIL:", e?.cause || e);
       await sleep(5000);
     }
   }
