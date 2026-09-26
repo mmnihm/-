@@ -398,8 +398,9 @@ function adminResourceMenu() {
 }
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
-    ["🔐 指定群管理","👥 管理员管理"],
-    ["⚙️ 系统设置","⬅️ 返回管理"]
+    ["🔐 指定群管理","➕ 添加管理员"],
+    ["➖ 删除管理员","⚙️ 系统设置"],
+    ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
 function adminOpsMenu() {
