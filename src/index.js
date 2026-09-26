@@ -649,7 +649,29 @@ async function mainMessage(msg) {
 
   if(t==="📂 资源目录") {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
-    return sendHtml(TOKEN,uid,directoryText(),backMenu(admin));
+    states.set(key,{step:"directory"});
+    return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard());
+  }
+  if(s?.step==="directory") {
+    if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
+    if(t==="📭 暂无分类") return send(TOKEN,uid,"📭 目前还没有可浏览的文件夹。",directoryKeyboard());
+    const name=t.replace(/^📁\\s*/,"").replace(/（\\d+）$/,"").trim();
+    const d=getDirectoryByName(name);
+    if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹，请重新选择。",directoryKeyboard());
+    const items=directoryItems(d.id);
+    if(!items.length) return send(TOKEN,uid,"📭 这个文件夹暂时没有资源。",directoryKeyboard());
+    states.set(key,{step:"directory_files",directoryId:d.id});
+    const rows=items.map((item,i)=>[(i+1)+" · "+String(item.title||"未命名").slice(0,45)]);
+    rows.push(["📂 返回文件夹","🏠 开始"]);
+    return sendHtml(TOKEN,uid,"📁 <b>"+String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</b>\\n\\n请选择要获取的文件：\\n\\n共 "+items.length+" 个资源。",{reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件"}});
+  }
+  if(s?.step==="directory_files") {
+    if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
+    if(t==="📂 返回文件夹") { states.set(key,{step:"directory"}); return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard()); }
+    const items=directoryItems(s.directoryId);
+    const idx=Number((t.match(/^\\d+/)||["0"])[0])-1;
+    if(idx<0 || !items[idx]) return send(TOKEN,uid,"⚠️ 请从文件列表中选择。");
+    return deliver(TOKEN,uid,uid,[items[idx]]);
   }
   if(t==="🔎 搜索资源") {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
