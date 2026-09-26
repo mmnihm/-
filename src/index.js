@@ -344,7 +344,7 @@ function adminToolsMenu() {
     ["📦 资源仓库","🔐 指定群"],
     ["🤖 克隆机器人","📢 广播消息"],
     ["⚙️ 平台设置","👥 管理员管理"],
-    ["📜 操作日志","⬅️ 返回管理"],
+    ["📜 操作日志"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
 }
@@ -965,7 +965,7 @@ async function mainMessage(msg) {
     if(!logs.length) return send(TOKEN,uid,"📜 暂无操作日志。",adminToolsMenu());
     const text=logs.slice(0,30).map((x,i)=>{
       const when=new Date(x.at).toLocaleString("zh-CN",{hour12:false});
-      return (i+1)+". "+when+"\\n👤 "+x.uid+"\\n🔧 "+x.action+(x.detail?"\\n📌 "+x.detail:"");
+      return (i+1)+". "+when+"\\n👤 "+escapeHtml(x.uid)+"\\n🔧 "+escapeHtml(x.action)+(x.detail?"\\n📌 "+escapeHtml(x.detail):"");
     }).join("\\n\\n");
     return send(TOKEN,uid,"📜 <b>最近操作日志</b>\\n\\n"+text,{parse_mode:"HTML",...adminToolsMenu()});
   }
