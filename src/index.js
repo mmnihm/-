@@ -20,6 +20,30 @@ const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 20000);
 const UPLOAD_IDLE_SECONDS = Math.max(15, Number(process.env.UPLOAD_IDLE_SECONDS || 180));
 const TG_API_ID = Number(process.env.TG_API_ID || 0);
 const TG_API_HASH = process.env.TG_API_HASH || "";
+
+const runtime = {
+  startedAt: Date.now(),
+  lastPollAt: 0,
+  lastUpdateAt: 0,
+  lastTelegramOkAt: 0,
+  lastError: "",
+  mainConnected: false
+};
+
+function runtimeStatus() {
+  return {
+    ok: runtime.mainConnected && !runtime.lastError,
+    startedAt: new Date(runtime.startedAt).toISOString(),
+    uptimeSeconds: Math.floor((Date.now() - runtime.startedAt) / 1000),
+    mainConnected: runtime.mainConnected,
+    lastPollAt: runtime.lastPollAt ? new Date(runtime.lastPollAt).toISOString() : null,
+    lastUpdateAt: runtime.lastUpdateAt ? new Date(runtime.lastUpdateAt).toISOString() : null,
+    lastTelegramOkAt: runtime.lastTelegramOkAt ? new Date(runtime.lastTelegramOkAt).toISOString() : null,
+    lastError: runtime.lastError || null,
+    dataFile: DATA_FILE
+  };
+}
+
 console.log("🚀 Telegram Clone Platform v2 starting...");
 console.log("📦 Node:", process.version);
 console.log("🔐 BOT_TOKEN:", TOKEN ? "已配置" : "❌ 未配置");
@@ -29,11 +53,12 @@ process.on("uncaughtException", e => console.error("UNCAUGHT:", e));
 process.on("unhandledRejection", e => console.error("UNHANDLED:", e));
 
 const server = http.createServer((req, res) => {
-  if (req.url === "/" || req.url === "/health") {
-    res.writeHead(200, {"content-type":"text/plain; charset=utf-8"});
-    res.end("Telegram Clone Platform OK\n");
+  if (req.url === "/health" || req.url === "/") {
+    const status = runtimeStatus();
+    res.writeHead(status.ok ? 200 : 503, {"content-type":"application/json; charset=utf-8"});
+    res.end(JSON.stringify(status, null, 2) + "\n");
   } else {
-    res.writeHead(404);
+    res.writeHead(404, {"content-type":"text/plain; charset=utf-8"});
     res.end("Not Found\n");
   }
 });
@@ -1423,7 +1448,11 @@ async function pollMain() {
   console.log("✅ MAIN POLLING READY");
   while(true){
     try{
+      runtime.lastPollAt = Date.now();
       const updates=await main("getUpdates",{offset:db.offset,timeout:25,allowed_updates:["message","callback_query","channel_post","edited_channel_post"]});
+      runtime.lastTelegramOkAt = Date.now();
+      runtime.lastError = "";
+      if (updates.length) runtime.lastUpdateAt = Date.now();
       for(const u of updates){
         console.log("📩 MAIN UPDATE:", u.update_id, u.channel_post ? "channel_post" : u.edited_channel_post ? "edited_channel_post" : u.message ? "message" : "other");
         if(u.channel_post) {
@@ -1439,7 +1468,11 @@ async function pollMain() {
         db.offset=u.update_id+1;
       }
       saveDb();
-    }catch(e){console.error("MAIN POLLING:",e.message);await sleep(3000);}
+    }catch(e){
+      runtime.lastError = String(e.message || e);
+      console.error("MAIN POLLING:",e.message);
+      await sleep(3000);
+    }
   }
 }
 
@@ -1481,11 +1514,19 @@ async function boot(){
   fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true});
   saveDb();
   const me=await main("getMe");
+  runtime.mainConnected = true;
+  runtime.lastTelegramOkAt = Date.now();
+  runtime.lastError = "";
   await ensureStartCommand(TOKEN);
   console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name));
   console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
   console.log("⚙️ "+configText().replaceAll("\n"," | "));
   for(const child of db.children) startChild(child);
+  console.log("🫀 BOT HEARTBEAT ENABLED");
+  setInterval(() => {
+    const s = runtimeStatus();
+    console.log("🫀 HEARTBEAT:", "connected="+s.mainConnected, "uptime="+s.uptimeSeconds+"s", "lastPoll="+(s.lastPollAt||"-"), "lastUpdate="+(s.lastUpdateAt||"-"), "error="+(s.lastError||"-"));
+  }, 30000);
   await pollMain();
 }
 boot().catch(e=>{console.error("❌ FATAL BOOT:",e);process.exit(1);});
