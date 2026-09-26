@@ -477,42 +477,40 @@ async function finalizeUpload(uid, state) {
   let stored = 0;
   let failed = 0;
 
-  // 并发转存，每批最多 10 个，避免逐个等待导致几十个文件长时间排队。
-  for (let i=0; i<items.length; i+=10) {
-    const batch=items.slice(i,i+10);
-    const results=await Promise.allSettled(batch.map(async pending=>{
-      const copied = await tg(TOKEN,"copyMessage",{
-        chat_id:r.chatId,
-        from_chat_id:uid,
-        message_id:Number(pending.messageId)
-      });
-      if (!copied?.message_id) throw new Error("仓库转存失败");
+  // 整批并发转存：本次收到多少条，就把多少条作为同一批立即提交到仓库。
+  // 不再人为切成 10 个一组，也不在单条资源之间等待。
+  const results=await Promise.allSettled(items.map(async pending=>{
+    const copied = await tg(TOKEN,"copyMessage",{
+      chat_id:r.chatId,
+      from_chat_id:uid,
+      message_id:Number(pending.messageId)
+    });
+    if (!copied?.message_id) throw new Error("仓库转存失败");
 
-      const resourceMsg = {
-        ...pending.msg,
-        chat:{...(pending.msg?.chat || {}),id:r.chatId},
-        message_id:Number(copied.message_id)
-      };
-      indexResource(resourceMsg);
-      const item = db.resources.find(x =>
-        String(x.chatId)===String(r.chatId) &&
-        Number(x.messageId)===Number(copied.message_id)
-      );
-      if (!item) throw new Error("资源索引写入失败");
-      item.directoryId=d.id;
-      item.repositoryMessageId=Number(copied.message_id);
-      item.sourceUserId=String(uid);
-      item.indexedAt=Date.now();
-      return true;
-    }));
+    const resourceMsg = {
+      ...pending.msg,
+      chat:{...(pending.msg?.chat || {}),id:r.chatId},
+      message_id:Number(copied.message_id)
+    };
+    indexResource(resourceMsg);
+    const item = db.resources.find(x =>
+      String(x.chatId)===String(r.chatId) &&
+      Number(x.messageId)===Number(copied.message_id)
+    );
+    if (!item) throw new Error("资源索引写入失败");
+    item.directoryId=d.id;
+    item.repositoryMessageId=Number(copied.message_id);
+    item.sourceUserId=String(uid);
+    item.indexedAt=Date.now();
+    return true;
+  }));
 
-    for (let n=0;n<results.length;n++) {
-      if (results[n].status==="fulfilled") {
-        stored++;
-      } else {
-        failed++;
-        console.error("UPLOAD FINALIZE:",String(results[n].reason?.message||results[n].reason),"message=",batch[n]?.messageId);
-      }
+  for (let n=0;n<results.length;n++) {
+    if (results[n].status==="fulfilled") {
+      stored++;
+    } else {
+      failed++;
+      console.error("UPLOAD FINALIZE:",String(results[n].reason?.message||results[n].reason),"message=",items[n]?.messageId);
     }
   }
 
