@@ -1039,6 +1039,46 @@ async function mainMessage(msg) {
   if(t==="⬅️ 返回管理"&&admin) return send(TOKEN,uid,"👑 <b>管理员控制台</b>\\n\\n请选择管理分类。",{parse_mode:"HTML",...adminMenu()});
   if(t==="⬅️ 返回首页"&&admin) return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>",adminMenu());
 
+  // 广播按钮必须优先于上传状态，避免“📢 广播消息”被当成文件夹名称。
+  if(t==="📢 广播消息"&&admin) {
+    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+    states.set(key,{step:"broadcast"});
+    const timerKey=key+":broadcast";
+    if(uploadTimers.has(timerKey)) clearTimeout(uploadTimers.get(timerKey));
+    uploadTimers.set(timerKey,setTimeout(()=>{
+      uploadTimers.delete(timerKey);
+      const current=states.get(key);
+      if(current?.step==="broadcast") {
+        states.delete(key);
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新的广播内容</b>\\n\\n📢 广播模式已等待 3 分钟。\\n\\n还要继续广播吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续广播","✅ 结束广播"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+      }
+    },UPLOAD_TIMEOUT_MS));
+    return send(TOKEN,uid,"📢 <b>广播消息</b>\\n\\n现在请直接发送要广播的文字、图片、视频、音频、文件或其他消息。\\n⏱️ 连续 3 分钟没有收到新的广播内容，将自动结束本次广播。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+  }
+
+  if(t==="▶️ 继续广播"&&admin) {
+    const timerKey=key+":broadcast";
+    if(uploadTimers.has(timerKey)) clearTimeout(uploadTimers.get(timerKey));
+    states.set(key,{step:"broadcast"});
+    uploadTimers.set(timerKey,setTimeout(()=>{
+      uploadTimers.delete(timerKey);
+      const current=states.get(key);
+      if(current?.step==="broadcast") {
+        states.delete(key);
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新的广播内容</b>\\n\\n📢 广播模式已等待 3 分钟。\\n\\n还要继续广播吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续广播","✅ 结束广播"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+      }
+    },UPLOAD_TIMEOUT_MS));
+    return send(TOKEN,uid,"📢 <b>广播消息</b>\\n\\n现在请继续发送要广播的文字、图片、视频、音频、文件或其他消息。\\n⏱️ 连续 3 分钟没有收到新的广播内容，将自动结束本次广播。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+  }
+
+  if(t==="✅ 结束广播"&&admin) {
+    const timerKey=key+":broadcast";
+    if(uploadTimers.has(timerKey)) { clearTimeout(uploadTimers.get(timerKey)); uploadTimers.delete(timerKey); }
+    states.delete(key);
+    logAdmin(uid,"结束广播");
+    return send(TOKEN,uid,"✅ 已结束广播。",adminMenu());
+  }
+
   if(t==="📤 上传资源"&&admin) {
     if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
     states.set(key,{step:"upload_folder"});
@@ -1056,11 +1096,11 @@ async function mainMessage(msg) {
       const current=states.get(uploadKey);
       if(current?.step==="upload_file" && String(current.directoryId)===String(d.id)) {
         states.delete(uploadKey);
-        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+d.name+"\\n⏱️ 已等待 60 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+d.name+"\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
       }
     },UPLOAD_TIMEOUT_MS));
     states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name});
-    return send(TOKEN,uid,"📁 文件夹：<b>"+d.name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</b>\\n\\n现在请直接发送要上传的文件、图片、视频、音频或其他资源。\\n⏱️ 连续 3 分钟没有上传新文件，将自动结束本次上传。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+    return send(TOKEN,uid,"📁 文件夹：<b>"+d.name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</b>\\n\\n现在请直接发送要上传的文件、图片、视频、音频或其他资源。\\n⏱️ 连续 "+UPLOAD_IDLE_SECONDS+" 分钟没有上传新文件，将自动结束本次上传。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
   if(s?.step==="upload_file"&&admin) {
     if(t==="/cancel") {
@@ -1096,7 +1136,7 @@ async function mainMessage(msg) {
         const current=states.get(key);
         if(current?.step==="upload_file" && String(current.directoryId)===String(s.directoryId)) {
           states.delete(key);
-          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+s.directoryName+"\\n⏱️ 已等待 60 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+s.directoryName+"\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName});
@@ -1106,16 +1146,14 @@ async function mainMessage(msg) {
     }
   }
 
-  if(t==="📢 广播消息"&&admin) {
-    states.set(key,{step:"broadcast"});
-    return send(TOKEN,uid,"📢 <b>广播模式</b>\\n\\n请发送你要广播的消息。\\n\\n支持：文字、粗体/斜体/链接等 Telegram 原生格式，以及图片、视频、文件、音频、贴纸等媒体。\\n\\n机器人会尽量原样复制你发送的整条消息。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
-  }
   if(s?.step==="broadcast"&&admin) {
+    const timerKey=key+":broadcast";
     if(t==="/cancel") {
+      if(uploadTimers.has(timerKey)) { clearTimeout(uploadTimers.get(timerKey)); uploadTimers.delete(timerKey); }
       states.delete(key);
+      logAdmin(uid,"取消广播");
       return send(TOKEN,uid,"❌ 已取消广播。",adminMenu());
     }
-    states.delete(key);
     let ok=0,fail=0;
     for(const id of db.users){
       try {
@@ -1127,7 +1165,18 @@ async function mainMessage(msg) {
       }
       await sleep(50);
     }
-    return send(TOKEN,uid,"✅ <b>广播完成</b>\\n\\n📤 成功："+ok+"\\n⚠️ 失败："+fail,{parse_mode:"HTML",...adminMenu()});
+    if(uploadTimers.has(timerKey)) clearTimeout(uploadTimers.get(timerKey));
+    uploadTimers.set(timerKey,setTimeout(()=>{
+      uploadTimers.delete(timerKey);
+      const current=states.get(key);
+      if(current?.step==="broadcast") {
+        states.delete(key);
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新的广播内容</b>\\n\\n📢 广播模式已等待 3 分钟。\\n\\n还要继续广播吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续广播","✅ 结束广播"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+      }
+    },UPLOAD_TIMEOUT_MS));
+    states.set(key,{step:"broadcast"});
+    console.log("📢 BROADCAST SENT:", "message=",msg.message_id, "success=",ok, "fail=",fail, "users=",db.users.length);
+    return;
   }
 
   if((t==="⚙️ 平台设置" || t==="⚙️ 平台管理")&&admin) {
