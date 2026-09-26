@@ -527,6 +527,9 @@ function resourceKeyboard(items,page=0) {
   rows.push(["❌ 退出"]);
   return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择资源"}};
 }
+function escapeHtml(value) {
+  return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
 
 async function deliverFromHistory(token,chatId,userId,items) {
   if (!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 请先加入指定群。");
@@ -865,13 +868,44 @@ async function mainMessage(msg) {
       if(t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
       return send(TOKEN,uid,"↩️ 已退出搜索。",admin?adminMenu():userMenu());
     }
-    states.delete(key);
-    const results=search(t);
+    const query=t.trim();
+    const results=search(query);
     if(!results.length) return sendHtml(TOKEN,uid,
-      "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
+      "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+escapeHtml(query)+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
       userMenu()
     );
-    return deliver(TOKEN,uid,uid,results);
+    states.set(key,{step:"search_results",query,results,page:0});
+    return send(TOKEN,uid,"🔎 搜索："+query+"\\n\\n📚 找到 "+results.length+" 个资源\\n请选择要获取的资源：",resourceKeyboard(results,0));
+  }
+  if(s?.step==="search_results") {
+    if(t==="❌ 退出" || t==="/cancel" || t==="🏠 开始") {
+      states.delete(key);
+      return t==="🏠 开始"
+        ? sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu())
+        : send(TOKEN,uid,"↩️ 已退出搜索。",admin?adminMenu():userMenu());
+    }
+    const results=Array.isArray(s.results)?s.results:[];
+    const page=Math.max(0,Number(s.page||0));
+    if(t==="➡️ 下一页") {
+      if((page+1)*10>=results.length) return send(TOKEN,uid,"📭 已经是最后一页。",resourceKeyboard(results,page));
+      const next=page+1;
+      states.set(key,{step:"search_results",query:s.query,results,page:next});
+      return send(TOKEN,uid,"🔎 搜索："+s.query+"\\n\\n第 "+(next+1)+" 页",resourceKeyboard(results,next));
+    }
+    if(t==="⬅️ 上一页") {
+      const prev=Math.max(0,page-1);
+      states.set(key,{step:"search_results",query:s.query,results,page:prev});
+      return send(TOKEN,uid,"🔎 搜索："+s.query+"\\n\\n第 "+(prev+1)+" 页",resourceKeyboard(results,prev));
+    }
+    const pageItems=results.slice(page*10,page*10+10);
+    const idx=pageItems.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,42)===t);
+    if(idx<0) return send(TOKEN,uid,"⚠️ 请点击搜索结果中的资源。",resourceKeyboard(results,page));
+    try {
+      await sendIndexedResource(TOKEN,uid,pageItems[idx]);
+      return send(TOKEN,uid,"📦 已发送："+pageItems[idx].title,resourceKeyboard(results,page));
+    } catch(e) {
+      return send(TOKEN,uid,"❌ 资源发送失败："+e.message,resourceKeyboard(results,page));
+    }
   }
 
   if(t==="📂 资源管理"&&admin) {
@@ -907,7 +941,7 @@ async function mainMessage(msg) {
       for(const item of items) { try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); deleted++; } catch(e) {} }
       db.resources=db.resources.filter(x=>String(x.directoryId)!==String(d.id));
       db.directories=db.directories.filter(x=>String(x.id)!==String(d.id));
-      saveDb(); states.set(key,{step:"delete_folder"});
+      saveDb(); logAdmin(uid,"删除文件夹",d.name); states.set(key,{step:"delete_folder"});
       return send(TOKEN,uid,"✅ 已删除文件夹「"+d.name+"」。\\n\\n📚 已从资源索引移除："+items.length+" 个文件。\\n🗑️ 仓库消息成功删除："+deleted+" 个。",deleteResourceMenu());
     }
     const items=directoryItems(d.id);
@@ -916,7 +950,7 @@ async function mainMessage(msg) {
     const item=items[idx];
     try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
     db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
-    saveDb();
+    saveDb(); logAdmin(uid,"删除资源",item.title);
     const left=directoryItems(d.id);
     const rows=left.slice(0,40).map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,35)]);
     rows.push(["🗑️ 删除整个文件夹"],["⬅️ 返回文件夹"]);
