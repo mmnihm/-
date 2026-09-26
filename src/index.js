@@ -8,7 +8,8 @@ const TOKEN = process.env.BOT_TOKEN || "";
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || "").split(",").map(x => x.trim()).filter(Boolean));
 const DATA_FILE = process.env.DATA_FILE || "/data/database.json";
 const SECRET = process.env.STORAGE_KEY || "telegram-clone-platform-v2";
-const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 5000);
+const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 20000);
+const UPLOAD_IDLE_SECONDS = Math.max(15, Number(process.env.UPLOAD_IDLE_SECONDS || 180));
 const TG_API_ID = Number(process.env.TG_API_ID || 0);
 const TG_API_HASH = process.env.TG_API_HASH || "";
 
@@ -109,7 +110,12 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},admins:[],logs:[]}};
+}
+function logAdmin(uid,action,detail="") {
+  if(!db.settings.logs) db.settings.logs=[];
+  db.settings.logs.unshift({uid:String(uid),action:String(action),detail:String(detail).slice(0,300),at:Date.now()});
+  db.settings.logs=db.settings.logs.slice(0,200);
 }
 function loadDb() {
   try { return {...emptyDb(), ...JSON.parse(fs.readFileSync(DATA_FILE, "utf8"))}; }
@@ -124,8 +130,9 @@ function saveDb() {
   } catch (e) { console.error("❌ SAVE:", e.message); }
 }
 const db = loadDb();
-if (!db.settings) db.settings = {requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""}, admins:[]};
+if (!db.settings) db.settings = emptyDb().settings;
 if (!Array.isArray(db.settings.admins)) db.settings.admins = [];
+if (!Array.isArray(db.settings.logs)) db.settings.logs = [];
 if (!("historyAuth" in db.settings)) db.settings.historyAuth = null;
 if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""};
 
@@ -135,7 +142,7 @@ let TelegramClientClass = null;
 let StringSessionClass = null;
 const historyInputs = new Map();
 const uploadTimers = new Map();
-const UPLOAD_TIMEOUT_MS = 60 * 1000;
+const UPLOAD_TIMEOUT_MS = UPLOAD_IDLE_SECONDS * 1000;
 
 function askHistoryInput(uid, step, prompt) {
   return new Promise(resolve => {
@@ -500,10 +507,24 @@ async function sendIndexedResource(token, chatId, item) {
   }
 }
 function search(q) {
-  q=q.toLowerCase();
-  return db.resources.filter(x=>(x.title+" "+x.caption).toLowerCase().includes(q)).slice(0,10);
+  q=String(q||"").trim().toLowerCase();
+  if(!q) return [];
+  return db.resources.filter(x=>(String(x.title||"")+" "+String(x.caption||"")+" "+String(x.directoryId||"")).toLowerCase().includes(q));
 }
-function random10() { return [...db.resources].sort(()=>Math.random()-.5).slice(0,10); }
+function random10() {
+  const arr=[...db.resources];
+  for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  return arr.slice(0,10);
+}
+function resourceKeyboard(items,page=0) {
+  const start=page*10;
+  const pageItems=items.slice(start,start+10);
+  const rows=pageItems.map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,42)]);
+  if(start+10<items.length) rows.push(["➡️ 下一页"]);
+  if(page>0) rows.push(["⬅️ 上一页"]);
+  rows.push(["❌ 退出"]);
+  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择资源"}};
+}
 
 async function deliverFromHistory(token,chatId,userId,items) {
   if (!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 请先加入指定群。");
@@ -619,13 +640,27 @@ async function binding(msg) {
   const t=(rawText.split(/\s+/)[0]||"").replace(/@[^\s]+$/,"");
   if(!admin) return false;
 
-  if(["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"].includes(t) &&
-     !["group","supergroup"].includes(msg.chat?.type)) {
+  const bindCommands=["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"];
+  const isBindCommand=bindCommands.includes(t);
+  const inGroup=["group","supergroup"].includes(msg.chat?.type);
+
+  if(isBindCommand && !inGroup) {
+    if(!admin) return false;
     return send(TOKEN,msg.from.id,"⚠️ 这个命令请在目标群里发送。");
   }
 
-  if(["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"].includes(t) &&
-     ["group","supergroup"].includes(msg.chat?.type)) {
+  if(isBindCommand && inGroup) {
+    let groupOperatorAllowed=admin;
+    try {
+      const member=await tg(TOKEN,"getChatMember",{chat_id:msg.chat.id,user_id:msg.from.id});
+      groupOperatorAllowed=groupOperatorAllowed || member.status==="creator" || member.status==="administrator";
+    } catch(e) {
+      console.warn("⚠️ 无法检查群操作员权限:",e.message);
+    }
+    if(!groupOperatorAllowed) {
+      await send(TOKEN,msg.chat.id,"⛔ 只有群主/群管理员或平台管理员可以执行绑定命令。");
+      return true;
+    }
     if(t==="/绑定指定群") {
       db.settings.requiredGroup={chatId:String(msg.chat.id),title:msg.chat.title||String(msg.chat.id),username:msg.chat.username||"",type:msg.chat.type,url:msg.chat.username?"https://t.me/"+msg.chat.username:""};
       saveDb();
@@ -861,6 +896,10 @@ async function mainMessage(msg) {
     if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ 文件夹不存在。",adminMenu()); }
     if(t==="⬅️ 返回文件夹") { states.set(key,{step:"delete_folder"}); return send(TOKEN,uid,"🗑️ <b>选择要管理的文件夹</b>",{parse_mode:"HTML",...deleteResourceMenu()}); }
     if(t==="🗑️ 删除整个文件夹") {
+      states.set(key,{step:"confirm_delete_folder",directoryId:d.id});
+      return send(TOKEN,uid,"⚠️ <b>确认删除整个文件夹？</b>\n\n📁 "+d.name+"\n📦 共 "+directoryItems(d.id).length+" 个资源\n\n删除后将同时删除仓库中的对应消息。",{parse_mode:"HTML",reply_markup:{keyboard:[["🗑️ 确认删除文件夹","❌ 取消"],["⬅️ 返回文件夹"]],resize_keyboard:true}});
+    }
+    if(t==="🗑️ 确认删除文件夹") {
       const items=directoryItems(d.id);
       let deleted=0;
       for(const item of items) { try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); deleted++; } catch(e) {} }
@@ -942,6 +981,7 @@ async function mainMessage(msg) {
     if(t==="/cancel") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       states.delete(key);
+      logAdmin(uid,"结束上传",s?.directoryName||"");
       return send(TOKEN,uid,"❌ 已结束上传。",adminMenu());
     }
     if(!repo()) {
@@ -963,6 +1003,7 @@ async function mainMessage(msg) {
       item.sourceUserId=String(uid);
       item.indexedAt=Date.now();
       saveDb();
+      logAdmin(uid,"上传资源",s.directoryName);
       console.log("📚 RESOURCE INDEXED:", "folder=",s.directoryName, "directoryId=",s.directoryId, "chat=",repo().chatId, "message=",copied.message_id, "total=",db.resources.length);
       if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
       uploadTimers.set(key,setTimeout(()=>{
