@@ -1176,7 +1176,7 @@ async function mainMessage(msg) {
     },UPLOAD_TIMEOUT_MS));
     states.set(key,{step:"broadcast"});
     console.log("📢 BROADCAST SENT:", "message=",msg.message_id, "success=",ok, "fail=",fail, "users=",db.users.length);
-    return;
+    return send(TOKEN,uid,"📢 <b>广播发送完成</b>\\n\\n✅ 成功发送：<b>"+ok+"</b> 人\\n❌ 发送失败：<b>"+fail+"</b> 人\\n👥 用户总数：<b>"+db.users.length+"</b> 人\\n\\n你可以继续发送下一条广播。\\n⏱️ 连续 3 分钟没有新内容将自动结束。",{parse_mode:"HTML"});
   }
 
   if((t==="⚙️ 平台设置" || t==="⚙️ 平台管理")&&admin) {
