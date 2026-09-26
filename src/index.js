@@ -802,7 +802,7 @@ async function mainMessage(msg) {
     try {
       const copied=await tg(TOKEN,"copyMessage",{chat_id:repo().chatId,from_chat_id:uid,message_id:msg.message_id});
       if(!copied || !copied.message_id) throw new Error("仓库转存失败");
-      const resourceMsg={...copied,chat:{...(copied.chat||{}),id:repo().chatId}};
+      const resourceMsg={...msg,chat:{...(msg.chat||{}),id:repo().chatId},message_id:copied.message_id};
       indexResource(resourceMsg);
       const item=db.resources.find(r=>String(r.chatId)===String(repo().chatId)&&Number(r.messageId)===Number(copied.message_id));
       if(item) item.directoryId=s.directoryId;
