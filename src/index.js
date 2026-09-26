@@ -368,6 +368,28 @@ function folderFileKeyboard(items) {
   rows.push(["⬅️ 返回文件夹"]);
   return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件"}};
 }
+function directoryInlineKeyboard() {
+  const rows=[];
+  for(const d of db.directories){
+    const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+    if(count) rows.push([{text:"📁 "+d.name+"（"+count+"）",callback_data:"dir:"+d.id+":0"}]);
+  }
+  if(!rows.length) rows.push([{text:"📭 暂无分类",callback_data:"noop"}]);
+  return {inline_keyboard:rows};
+}
+function folderSummaryKeyboard(directoryId,count,offset=0) {
+  const rows=[];
+  if(offset<count) rows.push([{text:offset===0?"📦 获取全部资源":"➡️ 继续获取10个",callback_data:"get:"+directoryId+":"+offset}]);
+  if(offset>0) rows.push([{text:"⬅️ 返回资源目录",callback_data:"dirs"}]);
+  return {inline_keyboard:rows};
+}
+function folderProgressKeyboard(directoryId,count,nextOffset) {
+  const rows=[];
+  if(nextOffset<count) rows.push([{text:"➡️ 继续获取10个",callback_data:"get:"+directoryId+":"+nextOffset}]);
+  else rows.push([{text:"✅ 已全部获取",callback_data:"done"}]);
+  rows.push([{text:"⬅️ 返回资源目录",callback_data:"dirs"}]);
+  return {inline_keyboard:rows};
+}
 function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).sort((a,b)=>Number(a.messageId)-Number(b.messageId)); }
 function sendDirectoryBatch(token, chatId, items) {
   let sent = 0;
@@ -736,38 +758,12 @@ async function mainMessage(msg) {
 
   if(t==="📂 资源目录") {
     if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
-    states.set(key,{step:"directory"});
-    return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard());
+    states.delete(key);
+    return sendHtml(TOKEN,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
-  if(s?.step==="directory") {
-    if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
-    if(t==="📭 暂无分类") return send(TOKEN,uid,"📭 目前还没有可浏览的文件夹。",directoryKeyboard());
-
-    const name=t.replace(/^📁\\s*/,"").split("（")[0].trim();
-    const d=getDirectoryByName(name);
-    if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹，请重新选择。",directoryKeyboard());
-
-    const all=directoryItems(d.id);
-    if(!all.length) return send(TOKEN,uid,"📭 这个文件夹暂时没有资源。",directoryKeyboard());
-    states.set(key,{step:"folder_files",directoryId:d.id});
-    const safe=String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    return sendHtml(TOKEN,uid,
-      "📁 <b>"+safe+"</b>\\n\\n"+
-      "📚 共 <b>"+all.length+"</b> 个资源。\\n"+
-      "点击下面的文件名即可获取文件：",
-      {reply_markup:folderFileKeyboard(all.slice(0,10))}
-    );
-  }
-
-  if(s?.step==="folder_files"&&admin===admin) {
-    const all=directoryItems(s.directoryId);
-    if(t==="⬅️ 返回文件夹") { states.set(key,{step:"directory"}); return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard()); }
-    const page=all.slice(0,10);
-    const idx=page.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,42)===t);
-    if(idx<0) return send(TOKEN,uid,"⚠️ 请点击文件名获取资源。",folderFileKeyboard(page));
-    try { await sendIndexedResource(TOKEN,uid,page[idx]); }
-    catch(e) { return send(TOKEN,uid,"❌ 文件发送失败："+e.message); }
-    return send(TOKEN,uid,"✅ 已发送："+page[idx].title,folderFileKeyboard(page));
+  if(t==="🏠 开始" && s?.step==="directory") {
+    states.delete(key);
+    return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
   }
 
   if(s?.step==="directory_page") {
@@ -1021,12 +1017,67 @@ async function childMessage(child,msg,token) {
   }
 }
 
+async function handleDirectoryCallback(token, q, child=false) {
+  const uid=q.from?.id;
+  const data=String(q.data||"");
+  try { await tg(token,"answerCallbackQuery",{callback_query_id:q.id}); } catch {}
+  if(!uid) return;
+  if(!(await allowed(TOKEN,uid))) {
+    try { await tg(token,"answerCallbackQuery",{callback_query_id:q.id,text:"🔐 请先加入指定群",show_alert:true}); } catch {}
+    return;
+  }
+  const chatId=q.message?.chat?.id;
+  if(!chatId) return;
+
+  if(data==="noop" || data==="done") return;
+
+  if(data==="dirs") {
+    return tg(token,"editMessageText",{chat_id:chatId,message_id:q.message.message_id,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});
+  }
+
+  const m=data.match(/^(?:dir|get):([^:]+):(\\d+)$/);
+  if(!m) return;
+  const directoryId=m[1];
+  const offset=Number(m[2]||0);
+  const d=db.directories.find(x=>String(x.id)===String(directoryId));
+  if(!d) {
+    return tg(token,"editMessageText",{chat_id:chatId,message_id:q.message.message_id,text:"⚠️ 这个文件夹已经不存在。",reply_markup:directoryInlineKeyboard()});
+  }
+  const all=directoryItems(d.id);
+  const safe=String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  if(data.startsWith("dir:")) {
+    return tg(token,"editMessageText",{
+      chat_id:chatId,message_id:q.message.message_id,
+      text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源。\\n\\n点击下面按钮开始获取资源，每次发送 10 个。",
+      parse_mode:"HTML",
+      reply_markup:folderSummaryKeyboard(d.id,all.length,0)
+    });
+  }
+
+  if(offset>=all.length) return;
+  const batch=all.slice(offset,offset+10);
+  let sent=0;
+  for(const item of batch) {
+    try { await sendIndexedResource(token,chatId,item); sent++; }
+    catch(e) { console.error("FOLDER BATCH SEND:",e.message,"chat=",chatId,"resource=",item.messageId); }
+    await sleep(80);
+  }
+  const next=Math.min(offset+10,all.length);
+  return tg(token,"editMessageText",{
+    chat_id:chatId,message_id:q.message.message_id,
+    text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源。\\n📤 本次已发送：<b>"+sent+"</b> 个。\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>",
+    parse_mode:"HTML",
+    reply_markup:folderProgressKeyboard(d.id,all.length,next)
+  });
+}
+
 async function pollMain() {
   await main("deleteWebhook",{drop_pending_updates:false});
   console.log("✅ MAIN POLLING READY");
   while(true){
     try{
-      const updates=await main("getUpdates",{offset:db.offset,timeout:25,allowed_updates:["message","channel_post","edited_channel_post"]});
+      const updates=await main("getUpdates",{offset:db.offset,timeout:25,allowed_updates:["message","callback_query","channel_post","edited_channel_post"]});
       for(const u of updates){
         console.log("📩 MAIN UPDATE:", u.update_id, u.channel_post ? "channel_post" : u.edited_channel_post ? "edited_channel_post" : u.message ? "message" : "other");
         if(u.channel_post) {
@@ -1037,6 +1088,7 @@ async function pollMain() {
           console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));
           indexResource(u.edited_channel_post);
         }
+        if(u.callback_query) handleDirectoryCallback(TOKEN,u.callback_query,false).catch(e=>console.error("MAIN CALLBACK:",e.message));
         if(u.message) mainMessage(u.message).catch(e=>console.error("MAIN MESSAGE:",e.message));
         db.offset=u.update_id+1;
       }
@@ -1063,10 +1115,11 @@ async function childLoop(child) {
 
   while(true){
     try{
-      const updates=await tg(token,"getUpdates",{offset:Number(child.offset||0),timeout:25,allowed_updates:["message"]});
+      const updates=await tg(token,"getUpdates",{offset:Number(child.offset||0),timeout:25,allowed_updates:["message","callback_query"]});
       if (updates.length) console.log("📩 CHILD UPDATE:", "@" + (child.username || child.botId), "count=" + updates.length);
       for(const u of updates){
         child.offset=u.update_id+1;
+        if(u.callback_query) await handleDirectoryCallback(token,u.callback_query,true);
         if(u.message) await childMessage(child,u.message,token);
       }
       saveDb();
