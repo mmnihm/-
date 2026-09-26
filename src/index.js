@@ -66,7 +66,6 @@ server.listen(PORT, "0.0.0.0", () => console.log(`🌐 HTTP server: 0.0.0.0:${PO
 
 if (!TOKEN) {
   console.error("❌ BOT_TOKEN 未配置，请在 Deplexo 环境变量中设置 BOT_TOKEN");
-  process.exit(1);
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -74,11 +73,23 @@ const api = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
 
 async function tg(token, method, body = {}) {
   for (let attempt = 0; attempt < 4; attempt++) {
-    const r = await fetch(api(token, method), {
-      method: "POST",
-      headers: {"content-type":"application/json"},
-      body: JSON.stringify(body)
-    });
+    const controller = new AbortController();
+    const timeoutMs = method === "getUpdates" ? 35000 : 20000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let r;
+    try {
+      r = await fetch(api(token, method), {
+        method: "POST",
+        headers: {"content-type":"application/json"},
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+    } catch (e) {
+      if (e?.name === "AbortError") throw new Error(method + " 请求超时");
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
     const j = await r.json();
 
     if (j.ok) return j.result;
@@ -1444,7 +1455,13 @@ async function handleDirectoryCallback(token, q, child=false) {
 }
 
 async function pollMain() {
-  await main("deleteWebhook",{drop_pending_updates:false});
+  try {
+    await main("deleteWebhook",{drop_pending_updates:false});
+  } catch (e) {
+    runtime.lastError = String(e.message || e);
+    console.error("MAIN WEBHOOK:", runtime.lastError);
+    await sleep(3000);
+  }
   console.log("✅ MAIN POLLING READY");
   while(true){
     try{
@@ -1489,7 +1506,8 @@ async function childLoop(child) {
     await ensureStartCommand(token);
   } catch (e) {
     console.error("❌ CHILD START FAILED:", child.username ? "@" + child.username : "(unknown)", e.message);
-    return;
+    await sleep(5000);
+    return childLoop(child);
   }
 
   while(true){
@@ -1513,21 +1531,45 @@ function startChild(child){ childLoop(child).catch(e=>{ console.error("❌ CHILD
 async function boot(){
   fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true});
   saveDb();
-  const me=await main("getMe");
-  runtime.mainConnected = true;
-  runtime.lastTelegramOkAt = Date.now();
-  runtime.lastError = "";
-  await ensureStartCommand(TOKEN);
-  console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name));
-  console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
-  console.log("⚙️ "+configText().replaceAll("\n"," | "));
-  for(const child of db.children) startChild(child);
+
+  if (!TOKEN) {
+    runtime.lastError = "BOT_TOKEN 未配置";
+    console.error("❌ BOT_TOKEN 未配置，等待环境变量后自动重试");
+  }
+
   console.log("🫀 BOT HEARTBEAT ENABLED");
   setInterval(() => {
     const s = runtimeStatus();
     console.log("🫀 HEARTBEAT:", "connected="+s.mainConnected, "uptime="+s.uptimeSeconds+"s", "lastPoll="+(s.lastPollAt||"-"), "lastUpdate="+(s.lastUpdateAt||"-"), "error="+(s.lastError||"-"));
   }, 30000);
-  await pollMain();
+
+  while (true) {
+    try {
+      if (!TOKEN) {
+        runtime.mainConnected = false;
+        runtime.lastError = "BOT_TOKEN 未配置";
+        await sleep(10000);
+        continue;
+      }
+
+      const me=await main("getMe");
+      runtime.mainConnected = true;
+      runtime.lastTelegramOkAt = Date.now();
+      runtime.lastError = "";
+      await ensureStartCommand(TOKEN);
+      console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name));
+      console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
+      console.log("⚙️ "+configText().replaceAll("\n"," | "));
+
+      for(const child of db.children) startChild(child);
+      await pollMain();
+    } catch (e) {
+      runtime.mainConnected = false;
+      runtime.lastError = String(e.message || e);
+      console.error("❌ MAIN BOOT RETRY:", runtime.lastError);
+      await sleep(5000);
+    }
+  }
 }
-boot().catch(e=>{console.error("❌ FATAL BOOT:",e);process.exit(1);});
+boot().catch(e=>console.error("❌ FATAL BOOT:",e));
 process.on("SIGTERM",()=>{console.log("SIGTERM received");server.close(()=>process.exit(0));});
