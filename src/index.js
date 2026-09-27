@@ -1548,6 +1548,9 @@ async function childMessage(child,msg,token) {
     );
 }
 
+  }
+}
+
 async function handleDirectoryCallback(token, q, child=false) {
   const uid=q.from?.id;
   const data=String(q.data||"");
