@@ -1546,8 +1546,6 @@ async function childMessage(child,msg,token) {
       "📚 共找到 <b>"+results.length+"</b> 个资源\\n\\n👇 点击资源名称即可获取",
       resourceInlineKeyboard(results,0)
     );
-}
-
   }
 }
 
