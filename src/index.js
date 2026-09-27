@@ -427,10 +427,10 @@ async function allowed(token, userId) {
 
 function userMenu() {
   return {reply_markup:{keyboard:[
-    ["🏠 开始","📂 资源目录"],
-    ["🔎 搜索资源","🎲 随机获取"],
-    ["🆕 最新资源","🤖 克隆机器人"]
-  ],resize_keyboard:true,input_field_placeholder:"请选择功能"}};
+    ["📂 资源目录","🔎 搜索资源"],
+    ["🎲 随机获取","🆕 最新资源"],
+    ["🏠 开始","🤖 克隆机器人"]
+  ],resize_keyboard:true,input_field_placeholder:"选择功能"}};
 }
 function childMenu() {
   return {reply_markup:{keyboard:[
@@ -619,13 +619,24 @@ function folderFileKeyboard(items) {
   rows.push(["⬅️ 返回文件夹"]);
   return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件"}};
 }
-function directoryInlineKeyboard() {
+function directoryInlineKeyboard(page=0) {
+  const all=db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id)));
+  const pageSize=20;
+  const start=Math.max(0,Number(page)||0)*pageSize;
+  const current=all.slice(start,start+pageSize);
   const rows=[];
-  for(const d of db.directories){
+  let row=[];
+  for(const d of current){
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
-    if(count) rows.push([{text:"📁 "+d.name+"（"+count+"）",callback_data:"dir:"+d.id+":0"}]);
+    row.push({text:"📁 "+String(d.name||"未命名").slice(0,18)+" · "+count,callback_data:"dir:"+d.id+":0"});
+    if(row.length===2){ rows.push(row); row=[]; }
   }
+  if(row.length) rows.push(row);
   if(!rows.length) rows.push([{text:"📭 暂无分类",callback_data:"noop"}]);
+  const nav=[];
+  if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"dirsp:"+(page-1)});
+  if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"dirsp:"+(page+1)});
+  if(nav.length) rows.push(nav);
   return {inline_keyboard:rows};
 }
 function folderSummaryKeyboard(directoryId,count,offset=0) {
@@ -659,7 +670,7 @@ function sendDirectoryBatch(token, chatId, items) {
 }
 function directoryText() {
   const dirs = Array.isArray(db.directories) ? db.directories : [];
-  return ["📂 <b>资源目录</b>","","请选择下面的文件夹：","","📚 总资源："+db.resources.length+" 条"].join("\n");
+  return ["📂 <b>资源目录</b>","","请选择下面的文件夹：","","📚 总资源："+db.resources.length+" 条","📁 文件夹："+db.directories.length+" 个"].join("\n");
 }
 function configText() {
   const g = group(), r = repo(), scan = db.settings.historyScan || {};
@@ -1356,7 +1367,7 @@ async function mainMessage(msg) {
       uploadTimers.delete(uploadKey);
       const current=states.get(uploadKey);
       if(current?.step==="upload_file") {
-        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
       }
     },UPLOAD_TIMEOUT_MS));
 
@@ -1368,7 +1379,9 @@ async function mainMessage(msg) {
         "📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n"+
         "📦 当前已收到：<b>1</b> 个资源\\n\\n"+
         "请选择下一步：",
-        {parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"继续发送文件或选择操作"}}
+        {parse_mode:"HTML",reply_markup:{inline_keyboard:[
+  [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
+]}}
       );
     }
     return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n\\n现在请发送要上传的文件、图片、视频、音频或其他资源。\\n\\n📥 每收到一个资源都会告诉你当前数量。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
@@ -1552,6 +1565,57 @@ async function handleDirectoryCallback(token, q, child=false) {
   };
 
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
+  if(!child && isAdmin(uid) && (data==="upload_continue" || data==="upload_finish")) {
+    const key="m:"+uid;
+    const s=states.get(key);
+    if(!s || s.step!=="upload_file") {
+      await answer("当前没有进行中的上传",true);
+      return;
+    }
+    if(data==="upload_continue") {
+      if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
+      uploadTimers.set(key,setTimeout(()=>{
+        uploadTimers.delete(key);
+        const current=states.get(key);
+        if(current?.step==="upload_file") {
+          send(TOKEN,uid,
+            "⏸️ <b>暂时没有收到新文件</b>\n\n"+
+            "📁 文件夹："+escapeHtml(current.directoryName)+"\n"+
+            "📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\n\n"+
+            "还要继续上传吗？",
+            {parse_mode:"HTML",reply_markup:{inline_keyboard:[[
+              {text:"▶️ 继续上传",callback_data:"upload_continue"},
+              {text:"✅ 结束上传",callback_data:"upload_finish"}
+            ]]}}
+          ).catch(()=>{});
+        }
+      },UPLOAD_TIMEOUT_MS));
+      await answer("可以继续上传");
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"📁 <b>"+escapeHtml(s.directoryName)+"</b>\n\n📤 <b>继续发送文件</b>\n收到的文件都会自动归入当前文件夹。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[[
+          {text:"▶️ 继续上传",callback_data:"upload_continue"},
+          {text:"✅ 结束上传",callback_data:"upload_finish"}
+        ]]}
+      });
+    }
+    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+    if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
+    await answer("正在结束上传");
+    await finalizeUpload(uid,s);
+    return tg(token,"editMessageText",{
+      chat_id:chatId,
+      message_id:messageId,
+      text:"✅ <b>已结束本次上传</b>",
+      parse_mode:"HTML",
+      reply_markup:{inline_keyboard:[]}
+    });
+  }
+
+  // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
   if(!child && isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
     if(data==="upload_cancel") {
       states.delete("m:"+uid);
@@ -1619,6 +1683,17 @@ async function handleDirectoryCallback(token, q, child=false) {
   });
 
   if(data==="noop" || data==="done") return;
+
+  if(data.startsWith("dirsp:")) {
+    const page=Math.max(0,Number(data.slice(6))||0);
+    return tg(token,"editMessageText",{
+      chat_id:chatId,
+      message_id:messageId,
+      text:directoryText(),
+      parse_mode:"HTML",
+      reply_markup:directoryInlineKeyboard(page)
+    });
+  }
 
   if(data==="dirs") {
     return tg(token,"editMessageText",{
