@@ -1506,10 +1506,16 @@ async function handleDirectoryCallback(token, q, child=false) {
       chat_id:chatId,
       message_id:messageId,
       text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n"+
-        "✅ 已选择此文件夹。\\n"+
-        "现在直接发送要上传的文件即可。\\n\\n"+
-        "📥 后续继续上传都会进入这个文件夹。\\n"+
-        "完成后点击「✅ 结束上传」。",
+        "━━━━━━━━━━━━\\n"+
+        "✅ <b>文件夹已选择</b>\\n"+
+        "━━━━━━━━━━━━\\n\\n"+
+        "📤 <b>现在可以开始上传</b>\\n"+
+        "直接把文件发送给机器人即可。\\n\\n"+
+        "📌 <b>上传规则</b>\\n"+
+        "• 后续发送的文件都会进入这个文件夹\\n"+
+        "• 可以连续发送多批文件\\n"+
+        "• 全部完成后点击「✅ 结束上传」\\n\\n"+
+        "📂 当前文件夹：<b>"+escapeHtml(d.name)+"</b>",
       parse_mode:"HTML",
       reply_markup:{inline_keyboard:[]}
     });
