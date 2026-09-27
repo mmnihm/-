@@ -759,14 +759,27 @@ function random10() {
   for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
   return arr.slice(0,10);
 }
-function resourceKeyboard(items,page=0) {
+function resourceInlineKeyboard(items,page=0) {
   const start=page*10;
   const pageItems=items.slice(start,start+10);
-  const rows=pageItems.map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,42)]);
-  if(start+10<items.length) rows.push(["➡️ 下一页"]);
-  if(page>0) rows.push(["⬅️ 上一页"]);
-  rows.push(["❌ 退出"]);
-  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择资源"}};
+  const rows=[];
+  for(let i=0;i<pageItems.length;i+=2) {
+    const row=[];
+    for(let j=i;j<i+2 && j<pageItems.length;j++) {
+      const item=pageItems[j];
+      row.push({
+        text:(start+j+1)+". "+String(item.title||"未命名资源").slice(0,28),
+        callback_data:"sr:"+page+":"+(j)
+      });
+    }
+    rows.push(row);
+  }
+  const nav=[];
+  if(page>0) nav.push({text:"⬅️ 上一页",callback_data:"srp:"+(page-1)});
+  if(start+10<items.length) nav.push({text:"下一页 ➡️",callback_data:"srp:"+(page+1)});
+  if(nav.length) rows.push(nav);
+  rows.push([{text:"❌ 关闭搜索",callback_data:"src"}]);
+  return {reply_markup:{inline_keyboard:rows}};
 }
 function escapeHtml(value) {
   return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -1131,37 +1144,22 @@ async function mainMessage(msg) {
       userMenu()
     );
     states.set(key,{step:"search_results",query,results,page:0});
-    return send(TOKEN,uid,"🔎 搜索："+query+"\\n\\n📚 找到 "+results.length+" 个资源\\n请选择要获取的资源：",resourceKeyboard(results,0));
+    return sendHtml(TOKEN,uid,
+      "🔎 <b>搜索结果</b>\\n\\n"+
+      "关键词：<code>"+escapeHtml(query)+"</code>\\n"+
+      "📚 共找到 <b>"+results.length+"</b> 个资源\\n\\n"+
+      "👇 点击资源名称即可获取",
+      resourceInlineKeyboard(results,0)
+    );
   }
   if(s?.step==="search_results") {
-    if(t==="❌ 退出" || t==="/cancel" || t==="🏠 开始") {
+    if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
       states.delete(key);
       return t==="🏠 开始"
         ? sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu())
         : send(TOKEN,uid,"↩️ 已退出搜索。",admin?adminMenu():userMenu());
     }
-    const results=Array.isArray(s.results)?s.results:[];
-    const page=Math.max(0,Number(s.page||0));
-    if(t==="➡️ 下一页") {
-      if((page+1)*10>=results.length) return send(TOKEN,uid,"📭 已经是最后一页。",resourceKeyboard(results,page));
-      const next=page+1;
-      states.set(key,{step:"search_results",query:s.query,results,page:next});
-      return send(TOKEN,uid,"🔎 搜索："+s.query+"\\n\\n第 "+(next+1)+" 页",resourceKeyboard(results,next));
-    }
-    if(t==="⬅️ 上一页") {
-      const prev=Math.max(0,page-1);
-      states.set(key,{step:"search_results",query:s.query,results,page:prev});
-      return send(TOKEN,uid,"🔎 搜索："+s.query+"\\n\\n第 "+(prev+1)+" 页",resourceKeyboard(results,prev));
-    }
-    const pageItems=results.slice(page*10,page*10+10);
-    const idx=pageItems.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,42)===t);
-    if(idx<0) return send(TOKEN,uid,"⚠️ 请点击搜索结果中的资源。",resourceKeyboard(results,page));
-    try {
-      await sendIndexedResource(TOKEN,uid,pageItems[idx]);
-      return send(TOKEN,uid,"📦 已发送："+pageItems[idx].title,resourceKeyboard(results,page));
-    } catch(e) {
-      return send(TOKEN,uid,"❌ 资源发送失败："+e.message,resourceKeyboard(results,page));
-    }
+    return sendHtml(TOKEN,uid,"🔎 <b>搜索结果已显示在上方</b>\\n\\n👇 请直接点击内联按钮选择资源。",resourceInlineKeyboard(s.results,Number(s.page||0)));
   }
 
   if(t==="📂 资源目录"&&admin) {
@@ -1538,13 +1536,16 @@ async function childMessage(child,msg,token) {
   if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search"){
     if(t==="/cancel"){states.delete(key);return send(token,uid,"↩️ 已退出搜索。",childMenu());}
-    states.delete(key);
     const results=search(t);
     if(!results.length) return sendHtml(token,uid,
       "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
       childMenu());
-    return deliverFromHistory(token,uid,uid,results);
-  }
+    states.set(key,{step:"search_results",query:t,results,page:0});
+    return sendHtml(token,uid,
+      "🔎 <b>搜索结果</b>\\n\\n关键词：<code>"+escapeHtml(t)+"</code>\\n"+
+      "📚 共找到 <b>"+results.length+"</b> 个资源\\n\\n👇 点击资源名称即可获取",
+      resourceInlineKeyboard(results,0)
+    );
 }
 
 async function handleDirectoryCallback(token, q, child=false) {
@@ -1563,6 +1564,67 @@ async function handleDirectoryCallback(token, q, child=false) {
       await tg(token,"answerCallbackQuery",body);
     } catch {}
   };
+
+  // 用户搜索结果使用内联按钮：两列排列，结果多时分页，不再占用底部键盘。
+  if(data==="src" || data.startsWith("srp:") || data.startsWith("sr:")) {
+    if(!(await allowed(TOKEN,uid))) {
+      await answer("🔐 请先加入指定群",true);
+      return;
+    }
+    const key=(child ? "c:" : "m:")+uid;
+    const s=states.get(key);
+    if(!s || s.step!=="search_results") {
+      await answer("搜索结果已过期，请重新搜索",true);
+      return;
+    }
+    if(data==="src") {
+      states.delete(key);
+      await answer("已关闭搜索");
+      return sendHtml(token,uid,"<b>↩️ 已退出搜索</b>\\n\\n👇 请选择其他功能。",child ? childMenu() : userMenu());
+    }
+    if(data.startsWith("srp:")) {
+      const page=Math.max(0,Number(data.slice(4))||0);
+      const maxPage=Math.max(0,Math.ceil(s.results.length/10)-1);
+      const next=Math.min(page,maxPage);
+      states.set(key,{step:"search_results",query:s.query,results:s.results,page:next});
+      await answer("已切换到第 "+(next+1)+" 页");
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"🔎 <b>搜索结果</b>\\n\\n关键词：<code>"+escapeHtml(s.query)+"</code>\\n📚 共找到 <b>"+s.results.length+"</b> 个资源\\n📄 第 <b>"+(next+1)+"</b> / <b>"+(maxPage+1)+"</b> 页\\n\\n👇 点击资源名称即可获取",
+        parse_mode:"HTML",
+        reply_markup:resourceInlineKeyboard(s.results,next)
+      });
+    }
+    const parts=data.split(":");
+    const page=Math.max(0,Number(parts[1])||0);
+    const idx=Math.max(0,Number(parts[2])||0);
+    const pageItems=s.results.slice(page*10,page*10+10);
+    const item=pageItems[idx];
+    if(!item) {
+      await answer("这个搜索结果不存在或已更新",true);
+      return;
+    }
+    await answer("正在获取资源…");
+    try {
+      await sendIndexedResource(token,chatId,item);
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"🔎 <b>搜索结果</b>\\n\\n关键词：<code>"+escapeHtml(s.query)+"</code>\\n📚 共找到 <b>"+s.results.length+"</b> 个资源\\n\\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+"</b>\\n\\n👇 继续点击其他资源即可获取",
+        parse_mode:"HTML",
+        reply_markup:resourceInlineKeyboard(s.results,page)
+      });
+    } catch(e) {
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"🔎 <b>搜索结果</b>\\n\\n❌ 获取资源失败：<code>"+escapeHtml(e.message)+"</code>\\n\\n👇 请重试或选择其他资源",
+        parse_mode:"HTML",
+        reply_markup:resourceInlineKeyboard(s.results,page)
+      });
+    }
+  }
 
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
   if(!child && isAdmin(uid) && (data==="upload_continue" || data==="upload_finish")) {
