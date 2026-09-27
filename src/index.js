@@ -171,7 +171,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},admins:[],logs:[]}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[]}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -470,7 +470,8 @@ function adminSettingsMenu() {
 function adminOpsMenu() {
   return {reply_markup:{keyboard:[
     ["📊 数据统计","📜 操作日志"],
-    ["📢 广播消息","⬅️ 返回管理"]
+    ["📢 广播消息","📌 广播后置顶"],
+    ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"数据与运营"}};
 }
 function adminBotMenu() {
@@ -1436,6 +1437,19 @@ async function mainMessage(msg) {
     }
   }
 
+  if(t==="📌 广播后置顶"&&admin) {
+    db.settings.broadcastPin = !Boolean(db.settings.broadcastPin);
+    saveDb();
+    logAdmin(uid,"切换广播自动置顶",db.settings.broadcastPin ? "开启" : "关闭");
+    return sendHtml(TOKEN,uid,
+      "<b>📌 广播自动置顶</b>\n\n"+
+      (db.settings.broadcastPin
+        ? "✅ <b>已开启</b>\n以后使用「📢 广播消息」发送内容后，机器人会自动把本次广播在用户私聊中置顶。"
+        : "❌ <b>已关闭</b>\n以后广播只发送，不自动置顶。"),
+      adminOpsMenu()
+    );
+  }
+
   if(s?.step==="broadcast"&&admin) {
     const timerKey=key+":broadcast";
     if(t==="/cancel") {
@@ -1447,7 +1461,18 @@ async function mainMessage(msg) {
     let ok=0,fail=0;
     for(const id of db.users){
       try {
-        await tg(TOKEN,"copyMessage",{chat_id:id,from_chat_id:uid,message_id:msg.message_id});
+        const copied = await tg(TOKEN,"copyMessage",{chat_id:id,from_chat_id:uid,message_id:msg.message_id});
+        if (db.settings.broadcastPin && copied?.message_id) {
+          try {
+            await tg(TOKEN,"pinChatMessage",{
+              chat_id:id,
+              message_id:copied.message_id,
+              disable_notification:true
+            });
+          } catch (pinError) {
+            console.error("BROADCAST PIN:",pinError.message,"user=",id);
+          }
+        }
         ok++;
       } catch(e) {
         fail++;
