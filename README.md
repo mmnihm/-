@@ -23,7 +23,9 @@
 - ADMIN_IDS：管理员 Numeric User ID，多个用逗号分隔
 - REQUIRED_GROUP_ID / REQUIRED_GROUP_URL / REPOSITORY_CHAT_ID：兼容旧配置，可不填写；推荐部署后由管理员在群内使用绑定命令自动保存
 - STORAGE_KEY：可选。现在项目内置固定加密密钥，正常部署无需填写；如果你主动设置此环境变量，它会覆盖内置密钥，且以后必须保持不变。
-- DATA_FILE：数据文件路径，默认 ./data/database.json
+- DATA_FILE：数据文件路径，默认 /data/database.json；必须放在部署平台的持久化磁盘/目录中
+- DATA_BACKUP_FILE：可选，数据库自动备份文件路径，默认 DATA_FILE + .bak
+- 如果 DATA_FILE 目录不可写，程序不再使用 /tmp 临时目录，而是退回项目目录 ./data 并打印警告；这仍不能保证换服务器后数据保留
 - MAX_RESOURCES：最多保存多少条资源索引，默认 5000
 
 ## 部署
@@ -53,7 +55,7 @@ npm start
 5. 主机器人加入指定权限群，并至少具备读取成员状态所需的管理员权限；Telegram 文档说明，机器人查询其他用户的成员状态通常需要在该群拥有管理员权限。
 6. 子机器人也需要加入指定权限群，否则用户无法使用资源功能。
 7. 资源通过仓库群/频道的新消息建立索引；Telegram Bot API 不提供让机器人直接读取任意历史频道消息的通用历史浏览接口，因此部署后新发布的资源会自动进入索引。
-8. Render Free 等临时文件系统重启/重新部署后可能丢失 data/database.json。生产环境建议把 DATA_FILE 放到持久化存储或改用外部数据库。
+8. 程序现在会在每次成功保存后自动生成 database.json.bak，并在主数据库不存在或损坏时尝试自动恢复。注意：备份文件仍然与 DATA_FILE 一起保存在同一存储位置；如果整个服务器/磁盘被删除，仍需要把 database.json 和 database.json.bak 迁移到新服务器。生产环境建议把 DATA_FILE 放到持久化存储或改用外部数据库。
 
 ## 真实历史扫描
 
