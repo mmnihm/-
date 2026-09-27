@@ -447,46 +447,38 @@ function backMenu(admin=false) {
 function adminMenu() {
   return {reply_markup:{keyboard:[
     ["📤 上传资源","📦 资源管理"],
-    ["⚙️ 平台设置","📊 数据与运营"],
+    ["📊 数据与运营","⚙️ 平台设置"],
     ["🤖 机器人管理"],
     ["🏠 返回首页"]
-  ],resize_keyboard:true,input_field_placeholder:"选择管理分类"}};
+  ],resize_keyboard:true,input_field_placeholder:"选择管理功能"}};
 }
 function adminResourceMenu() {
   return {reply_markup:{keyboard:[
     ["📤 上传资源","📂 资源目录"],
     ["✏️ 修改文件夹名称","🗑️ 删除资源"],
-    ["🔍 仓库扫描","📦 资源仓库"],
+    ["📦 资源仓库","🔍 仓库扫描"],
     ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"资源管理"}};
+  ],resize_keyboard:true,input_field_placeholder:"管理资源"}};
 }
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
-    ["🔐 指定群管理","➕ 添加管理员"],
-    ["➖ 删除管理员","⚙️ 系统设置"],
+    ["🔐 指定群管理","⚙️ 系统设置"],
+    ["➕ 添加管理员","➖ 删除管理员"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
 function adminOpsMenu() {
   return {reply_markup:{keyboard:[
-    ["📊 数据统计","📜 操作日志"],
-    ["📢 广播消息","📌 广播后置顶"],
+    ["📊 数据统计","📢 广播消息"],
+    ["📜 操作日志","📌 广播后置顶"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"数据与运营"}};
 }
 function adminBotMenu() {
   return {reply_markup:{keyboard:[
-    ["🤖 克隆机器人","⬅️ 返回管理"]
+    ["🤖 克隆机器人"],
+    ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"机器人管理"}};
-}
-function adminToolsMenu() {
-  return {reply_markup:{keyboard:[
-    ["📊 数据统计","🔍 仓库扫描"],
-    ["📦 资源仓库","🔐 指定群管理"],
-    ["🤖 克隆机器人","📢 广播消息"],
-    ["⚙️ 系统设置","👥 管理员管理"],
-    ["📜 操作日志","⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"其他管理功能"}};
 }
 function uploadFolderInlineMenu() {
   const rows=[];
@@ -979,7 +971,7 @@ async function mainMessage(msg) {
     const bk=key+":broadcast";
     if(uploadTimers.has(bk)) { clearTimeout(uploadTimers.get(bk)); uploadTimers.delete(bk); }
     states.delete(key);
-    return sendHtml(TOKEN,uid,"<b>👑 管理员控制台</b>\\n\\n请选择管理分类。",adminMenu());
+    return sendHtml(TOKEN,uid,"<b>👑 管理后台</b>\\n\\n📦 资源：上传、目录、仓库与扫描\\n📊 运营：数据、广播与日志\\n⚙️ 设置：指定群、管理员与系统\\n🤖 机器人：克隆机器人\\n\\n👇 <i>请选择管理模块</i>",adminMenu());
   }
   const pendingHistory = historyInputs.get(String(uid));
   if (pendingHistory) {
@@ -1281,10 +1273,10 @@ async function mainMessage(msg) {
     db.settings.admins.splice(idx,1); saveDb(); logAdmin(uid,"删除管理员",id); states.delete(key);
     return send(TOKEN,uid,`✅ 已删除管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
   }
-  if(t==="📦 资源管理"&&admin) return send(TOKEN,uid,"📦 <b>资源管理</b>\\n\\n请选择需要操作的项目。",{parse_mode:"HTML",...adminResourceMenu()});
-  if(t==="⚙️ 系统设置"&&admin) return send(TOKEN,uid,"⚙️ <b>平台设置</b>\\n\\n管理指定群、管理员和系统参数。",{parse_mode:"HTML",...adminSettingsMenu()});
-  if(t==="📊 数据与运营"&&admin) return send(TOKEN,uid,"📊 <b>数据与运营</b>\\n\\n查看数据、操作日志和发送广播。",{parse_mode:"HTML",...adminOpsMenu()});
-  if(t==="🤖 机器人管理"&&admin) return send(TOKEN,uid,"🤖 <b>机器人管理</b>\\n\\n管理克隆机器人相关功能。",{parse_mode:"HTML",...adminBotMenu()});
+  if(t==="📦 资源管理"&&admin) return send(TOKEN,uid,"📦 <b>资源管理</b>\\n\\n上传资源、管理文件夹、资源仓库和历史扫描。\\n\\n👇 <i>请选择操作</i>",{parse_mode:"HTML",...adminResourceMenu()});
+  if(t==="⚙️ 系统设置"&&admin) return send(TOKEN,uid,"⚙️ <b>平台设置</b>\\n\\n指定访问群、管理员和系统参数。\\n\\n👇 <i>请选择设置</i>",{parse_mode:"HTML",...adminSettingsMenu()});
+  if(t==="📊 数据与运营"&&admin) return send(TOKEN,uid,"📊 <b>数据与运营</b>\\n\\n查看平台数据、操作记录和广播设置。\\n\\n👇 <i>请选择功能</i>",{parse_mode:"HTML",...adminOpsMenu()});
+  if(t==="🤖 机器人管理"&&admin) return send(TOKEN,uid,"🤖 <b>机器人管理</b>\\n\\n创建和管理克隆机器人。\\n\\n👇 <i>请选择操作</i>",{parse_mode:"HTML",...adminBotMenu()});
 
   // 广播按钮必须优先于上传状态，避免“📢 广播消息”被当成文件夹名称。
   if(t==="📢 广播消息"&&admin) {
