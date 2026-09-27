@@ -15,9 +15,18 @@ try {
   fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
   fs.accessSync(path.dirname(DATA_FILE), fs.constants.W_OK);
 } catch {
-  DATA_FILE = "/tmp/mmnihm/database.json";
-  console.warn("⚠️ 数据目录不可写，已切换到:", DATA_FILE);
+  // 不再使用 /tmp 保存正式数据，避免重启/换容器后数据悄悄消失。
+  // 如果 /data 不可写，则退回项目目录 ./data，并明确给出警告。
+  DATA_FILE = path.resolve(process.env.LOCAL_DATA_DIR || "./data", "database.json");
+  try {
+    fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
+    fs.accessSync(path.dirname(DATA_FILE), fs.constants.W_OK);
+  } catch (e) {
+    console.error("❌ 数据目录不可写:", e.message);
+    console.error("❌ 请给 DATA_FILE 配置一个真正可持久化的目录。");
+  }
 }
+const BACKUP_FILE = process.env.DATA_BACKUP_FILE || (DATA_FILE + ".bak");
 const SECRET = process.env.STORAGE_KEY || "telegram-clone-platform-v2";
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 20000);
 const UPLOAD_IDLE_SECONDS = Math.max(15, Number(process.env.UPLOAD_IDLE_SECONDS || 180));
@@ -43,7 +52,10 @@ function runtimeStatus() {
     lastUpdateAt: runtime.lastUpdateAt ? new Date(runtime.lastUpdateAt).toISOString() : null,
     lastTelegramOkAt: runtime.lastTelegramOkAt ? new Date(runtime.lastTelegramOkAt).toISOString() : null,
     lastError: runtime.lastError || null,
-    dataFile: DATA_FILE
+    dataFile: DATA_FILE,
+    backupFile: BACKUP_FILE,
+    dataFileExists: fs.existsSync(DATA_FILE),
+    backupFileExists: fs.existsSync(BACKUP_FILE)
   };
 }
 
@@ -166,17 +178,67 @@ function logAdmin(uid,action,detail="") {
   db.settings.logs.unshift({uid:String(uid),action:String(action),detail:String(detail).slice(0,300),at:Date.now()});
   db.settings.logs=db.settings.logs.slice(0,200);
 }
+function normalizeDb(raw) {
+  const base = emptyDb();
+  const value = raw && typeof raw === "object" ? raw : {};
+  return {
+    ...base,
+    ...value,
+    settings: {
+      ...base.settings,
+      ...(value.settings && typeof value.settings === "object" ? value.settings : {})
+    }
+  };
+}
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
 function loadDb() {
-  try { return {...emptyDb(), ...JSON.parse(fs.readFileSync(DATA_FILE, "utf8"))}; }
-  catch { return emptyDb(); }
+  const primary = readJsonFile(DATA_FILE);
+  if (primary) return normalizeDb(primary);
+
+  // 主文件损坏/不存在时，自动尝试最近一次备份。
+  const backup = readJsonFile(BACKUP_FILE);
+  if (backup) {
+    try {
+      fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
+      const tmp = DATA_FILE + ".recovered.tmp";
+      fs.writeFileSync(tmp, JSON.stringify(normalizeDb(backup), null, 2));
+      fs.renameSync(tmp, DATA_FILE);
+      console.warn("⚠️ 主数据库不可用，已从备份恢复:", BACKUP_FILE);
+    } catch (e) {
+      console.error("❌ 数据库恢复失败:", e.message);
+    }
+    return normalizeDb(backup);
+  }
+
+  console.warn("⚠️ 未找到数据库文件，将创建新的数据库:", DATA_FILE);
+  return emptyDb();
 }
 function saveDb() {
   try {
     fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
+    const json = JSON.stringify(db, null, 2);
     const tmp = DATA_FILE + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+    fs.writeFileSync(tmp, json);
     fs.renameSync(tmp, DATA_FILE);
-  } catch (e) { console.error("❌ SAVE:", e.message); }
+
+    // 每次成功保存后同步生成一份可恢复备份。
+    if (BACKUP_FILE !== DATA_FILE) {
+      fs.mkdirSync(path.dirname(BACKUP_FILE), {recursive:true});
+      const backupTmp = BACKUP_FILE + ".tmp";
+      fs.writeFileSync(backupTmp, json);
+      fs.renameSync(backupTmp, BACKUP_FILE);
+    }
+  } catch (e) {
+    console.error("❌ SAVE:", e.message);
+    console.error("❌ 当前数据文件:", DATA_FILE);
+    console.error("❌ 备份文件:", BACKUP_FILE);
+  }
 }
 const db = loadDb();
 if (!db.settings) db.settings = emptyDb().settings;
