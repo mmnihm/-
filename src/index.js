@@ -427,10 +427,20 @@ function adminToolsMenu() {
 }
 function uploadFolderInlineMenu() {
   const rows=[];
+  let row=[];
   for(const d of db.directories) {
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
-    rows.push([{text:"📁 "+d.name+"（"+count+"）",callback_data:"upload_dir:"+d.id}]);
+    const name=String(d.name||"未命名").slice(0,18);
+    row.push({
+      text:"📁 "+name+" · "+count,
+      callback_data:"upload_dir:"+d.id
+    });
+    if(row.length===2) {
+      rows.push(row);
+      row=[];
+    }
   }
+  if(row.length) rows.push(row);
   rows.push([
     {text:"➕ 新建文件夹",callback_data:"upload_new"},
     {text:"❌ 取消",callback_data:"upload_cancel"}
