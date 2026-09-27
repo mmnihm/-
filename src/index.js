@@ -1399,7 +1399,7 @@ async function mainMessage(msg) {
         uploadTimers.delete(key);
         const current=states.get(key);
         if(current?.step==="upload_file") {
-          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
       return send(TOKEN,uid,"▶️ 可以继续上传。");
@@ -1440,7 +1440,7 @@ async function mainMessage(msg) {
             "📥 <b>已收到 "+(current.pendingUploads?.length||0)+" 个文件</b>\\n\\n"+
             "📁 文件夹："+escapeHtml(current.directoryName)+"\\n\\n"+
             "还要继续上传，还是现在结束上传？",
-            {parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"继续上传或结束上传"}}
+            {parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}
           ).catch(()=>{});
         }
       },1500));
