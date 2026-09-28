@@ -57,7 +57,8 @@ function patchSource() {
   // 修复历史版本中“上传代码保留，但进度辅助函数丢失”的情况。
   // 即使 CLOUD123_PROGRESS_V1 标记存在，也要以实际源码是否存在 helper 为准。
   if (src.includes(PATCH_MARK) && src.includes("refreshUploadProgress()") && !src.includes("const refreshUploadProgress = async")) {
-    const progressHelper = String.raw`\n    const uploadProgress = new Map();
+    const progressHelper = String.raw`\
+    const uploadProgress = new Map();
     let lastProgressEdit = 0;
     let progressEditing = false;
     const refreshUploadProgress = async () => {
