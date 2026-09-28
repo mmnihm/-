@@ -87,33 +87,63 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const api = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
 
 async function tg(token, method, body = {}) {
-  for (let attempt = 0; attempt < 4; attempt++) {
+  const maxAttempts = method === "getUpdates" ? 5 : 4;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timeoutMs = method === "getUpdates" ? 35000 : 20000;
+    const timeoutMs = method === "getUpdates" ? 45000 : 20000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let r;
     try {
       r = await fetch(api(token, method), {
         method: "POST",
-        headers: {"content-type":"application/json"},
+        headers: {
+          "content-type": "application/json",
+          "accept": "application/json"
+        },
         body: JSON.stringify(body),
         signal: controller.signal
       });
     } catch (e) {
-      if (e?.name === "AbortError") throw new Error(method + " 请求超时");
+      clearTimeout(timer);
       const cause = e?.cause;
-      const detail = [e?.name, e?.message, cause?.code, cause?.message].filter(Boolean).join(" | ");
-      console.error("❌ TELEGRAM FETCH:", method, detail);
-      throw new Error(method + " 网络请求失败: " + detail);
+      const detail = [e?.name, e?.message, cause?.code, cause?.message]
+        .filter(Boolean).join(" | ");
+      if (e?.name === "AbortError") {
+        console.warn("⚠️ TELEGRAM TIMEOUT:", method, "attempt=" + (attempt + 1) + "/" + maxAttempts);
+      } else {
+        console.warn("⚠️ TELEGRAM FETCH RETRY:", method, "attempt=" + (attempt + 1) + "/" + maxAttempts, detail);
+      }
+
+      if (attempt < maxAttempts - 1) {
+        const waitMs = Math.min(8000, 1000 * Math.pow(2, attempt));
+        await sleep(waitMs);
+        continue;
+      }
+
+      const reason = e?.name === "AbortError"
+        ? "请求超时"
+        : ("网络请求失败: " + (detail || "TypeError"));
+      throw new Error(method + " " + reason);
     } finally {
       clearTimeout(timer);
     }
-    const j = await r.json();
+
+    let j;
+    try {
+      j = await r.json();
+    } catch (e) {
+      if (attempt < maxAttempts - 1) {
+        console.warn("⚠️ TELEGRAM JSON RETRY:", method, "attempt=" + (attempt + 1) + "/" + maxAttempts);
+        await sleep(Math.min(8000, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+      throw new Error(method + " 响应解析失败: " + String(e?.message || e));
+    }
 
     if (j.ok) return j.result;
 
     const retryAfter = Number(j.parameters?.retry_after || 0);
-    if (r.status === 429 && retryAfter > 0 && attempt < 3) {
+    if (r.status === 429 && retryAfter > 0 && attempt < maxAttempts - 1) {
       console.warn("⏳ Telegram 限流，"+method+" 等待 "+retryAfter+" 秒后自动重试");
       await sleep((retryAfter + 1) * 1000);
       continue;
