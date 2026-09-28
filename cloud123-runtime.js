@@ -110,20 +110,56 @@ function cloud123RemoteName(name) {
 async function cloud123SyncDirectories(uid) {
   const client = cloud123Client();
   const dirs = Array.isArray(db.directories) ? db.directories : [];
-  let ok=0, fail=0;
+  const unique = new Map();
   for (const d of dirs) {
+    const name = cloud123RemoteName(d?.name);
+    if (!unique.has(name)) unique.set(name,d);
+  }
+  const list = [...unique.entries()];
+  let created=0, existing=0, fail=0;
+  const duplicate = Math.max(0,dirs.length-list.length);
+
+  let progressMessage = null;
+  try {
+    progressMessage = await send(TOKEN,uid,
+      "⏳ 正在同步机器人目录...\n\n📁 共 "+list.length+" 个唯一目录\n⚙️ 正在检查 123 云盘目录，请稍候。",
+      cloud123Menu()
+    );
+  } catch {}
+
+  for (let i=0; i<list.length; i++) {
+    const [remoteName,d] = list[i];
     try {
-      await client.ensureDirectory(cloud123RemoteName(d.name));
-      d.cloud123Path=cloud123RemoteName(d.name);
+      const result = await client.ensureDirectory(remoteName);
+      d.cloud123Path=remoteName;
       d.cloud123SyncedAt=Date.now();
-      ok++;
+      if (result?.created === false || result?.exists === true || result?.alreadyExists === true) existing++;
+      else created++;
     } catch(e) {
       fail++;
       console.error("123 DIR:", d.name, e.message);
     }
+
+    if (progressMessage?.message_id && ((i+1)%3===0 || i===list.length-1)) {
+      try {
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:progressMessage.message_id,
+          text:"⏳ <b>正在同步机器人目录</b>\n\n"+
+            "📁 进度："+(i+1)+" / "+list.length+"\n"+
+            "🆕 新建："+created+"\n"+
+            "✅ 已存在："+existing+"\n"+
+            "♻️ 重复目录："+duplicate+"\n"+
+            "⚠️ 失败："+fail,
+          parse_mode:"HTML",
+          reply_markup:cloud123Menu().reply_markup
+        });
+      } catch {}
+    }
   }
+
   saveDb();
-  return {ok,fail,total:dirs.length};
+  return {created,existing,fail,duplicate,total:dirs.length,unique:list.length,progressMessage};
 }
 
 async function cloud123ScanAndUpload(uid) {
