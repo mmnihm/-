@@ -66,6 +66,8 @@ export function createWebDavClient(config = {}) {
 
     async ensureDirectory(remotePath) {
       const clean = String(remotePath || "").split("/").filter(Boolean);
+      let created = false;
+      let existing = false;
       let current = "";
       for (const part of clean) {
         current = current ? current + "/" + part : part;
@@ -77,7 +79,10 @@ export function createWebDavClient(config = {}) {
           headers: {"Depth":"0"},
           timeoutMs: 20000
         });
-        if ([200,207].includes(probe.status)) continue;
+        if ([200,207].includes(probe.status)) {
+          existing = true;
+          continue;
+        }
         if (![404,405].includes(probe.status)) {
           throw new Error("检查123云盘目录失败 HTTP " + probe.status + "：" + part);
         }
@@ -102,8 +107,9 @@ export function createWebDavClient(config = {}) {
         if (![200,207].includes(verify.status)) {
           throw new Error("123云盘目录创建后无法确认：「" + part + "」 HTTP " + verify.status);
         }
+        created = true;
       }
-      return true;
+      return {created,existing};
     },
 
     async uploadFile(localPath, remoteDir, fileName) {
