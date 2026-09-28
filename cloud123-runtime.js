@@ -5,7 +5,54 @@ const PATCH_MARK = "CLOUD123_RUNTIME_V1";
 const SOURCE = path.resolve("src/index.js");
 
 function patchSource() {
+  const PROGRESS_PATCH_MARK = "CLOUD123_PROGRESS_V1";
   let src = fs.readFileSync(SOURCE, "utf8");
+  if (src.includes(PATCH_MARK) && !src.includes(PROGRESS_PATCH_MARK)) {
+    const progressHelper = String.raw`
+    const uploadProgress = new Map();
+    let lastProgressEdit = 0;
+    let progressEditing = false;
+    const refreshUploadProgress = async () => {
+      if (!statusMessage?.message_id || progressEditing) return;
+      const now = Date.now();
+      if (now - lastProgressEdit < 1000) return;
+      lastProgressEdit = now;
+      progressEditing = true;
+      try {
+        let sentBytes=0,totalBytes=0;
+        for (const p of uploadProgress.values()) { sentBytes += p.sent; totalBytes += p.total; }
+        const mb=n => (n/1024/1024).toFixed(1);
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,message_id:statusMessage.message_id,
+          text:"🚀 <b>123云盘实时上传</b>\\n\\n"+
+            "📊 成功："+success+"  | 失败："+fail+"  | 跳过："+skip+"\\n"+
+            "📤 当前传输："+mb(sentBytes)+" / "+mb(totalBytes)+" MB\\n"+
+            "⚡ 小文件最多 5 个并发\\n📦 大文件单个上传",
+          parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+        });
+      } catch {} finally { progressEditing=false; }
+    };
+`;
+    const helperAnchor = "    for(let i=0;i<resources.length;i++) {";
+    if (!src.includes(helperAnchor)) throw new Error("123云盘进度补丁：找不到上传循环");
+    src = src.replace(helperAnchor, progressHelper + "\n" + helperAnchor);
+    const uploadAnchor = "        await client.uploadFile(tempPath,remoteDir,originalName);";
+    if (!src.includes(uploadAnchor)) throw new Error("123云盘进度补丁：找不到上传调用");
+    const uploadReplacement = `        uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
+        await client.uploadFile(tempPath,remoteDir,originalName,(sent,total)=>{
+          uploadProgress.set(String(item.messageId),{sent,total,name:originalName});
+          refreshUploadProgress();
+        });
+        uploadProgress.delete(String(item.messageId));
+        await refreshUploadProgress();`;
+    src = src.replace(uploadAnchor, uploadReplacement);
+    src = src.replace('"⚙️ 同时只处理 1 个文件。",', '"⚡ 小文件最多 5 个并发；大文件单个上传。",');
+    src = src.replace('"⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",', '"⚡ ≤200MB：5 个并发；>200MB：单个上传。",');
+    src = src.replace("/* ${PATCH_MARK} */", "/* ${PATCH_MARK} */\\nconst "+PROGRESS_PATCH_MARK+"=true;");
+    fs.writeFileSync(SOURCE, src);
+    console.log("📊 CLOUD123 实时上传进度补丁已贴");
+    return true;
+  }
   if (src.includes(PATCH_MARK)) {
     const repairedSrc = src.replace(
       /^\s*if\(!\/\^https\?:.*$/m,
