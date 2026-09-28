@@ -1683,7 +1683,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="src") {
       states.delete(key);
       await answer("已关闭搜索");
-      return sendHtml(token,uid,"<b>↩️ 已退出搜索</b>\\n\\n👇 请选择其他功能。",child ? childMenu() : userMenu());
+      return sendHtml(token,uid,"<b>↩️ 已退出搜索</b>\n\n👇 请选择其他功能。",child ? childMenu() : userMenu());
     }
     if(data.startsWith("srp:")) {
       const page=Math.max(0,Number(data.slice(4))||0);
@@ -1694,7 +1694,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return tg(token,"editMessageText",{
         chat_id:chatId,
         message_id:messageId,
-        text:"🔎 <b>搜索资源</b>\\n━━━━━━━━━━━━━━\\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\\n📚 共找到 <b>"+s.results.length+"</b> 个结果\\n📄 第 <b>"+(next+1)+" / "+(maxPage+1)+"</b> 页\\n\\n👇 <b>请选择资源</b>",
+        text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(next+1)+" / "+(maxPage+1)+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
         parse_mode:"HTML",
         reply_markup:resourceInlineKeyboard(s.results,next)
       });
@@ -1714,7 +1714,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return tg(token,"editMessageText",{
         chat_id:chatId,
         message_id:messageId,
-        text:"🔎 <b>搜索资源</b>\\n━━━━━━━━━━━━━━\\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\\n📚 共找到 <b>"+s.results.length+"</b> 个结果\\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\\n\\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\\n👇 可继续选择其他资源",
+        text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源",
         parse_mode:"HTML",
         reply_markup:resourceInlineKeyboard(s.results,page)
       });
@@ -1722,7 +1722,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return tg(token,"editMessageText",{
         chat_id:chatId,
         message_id:messageId,
-        text:"🔎 <b>搜索资源</b>\\n━━━━━━━━━━━━━━\\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\\n\\n❌ 获取资源失败：<code>"+escapeHtml(e.message)+"</code>\\n👇 请重试或选择其他资源",
+        text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n❌ 获取资源失败：<code>"+escapeHtml(e.message)+"</code>\n👇 请重试或选择其他资源",
         parse_mode:"HTML",
         reply_markup:resourceInlineKeyboard(s.results,page)
       });
