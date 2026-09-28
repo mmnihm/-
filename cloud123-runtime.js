@@ -54,6 +54,43 @@ function patchSource() {
     console.log("📊 CLOUD123 实时上传进度补丁已贴");
     return true;
   }
+  // 修复历史版本中“上传代码保留，但进度辅助函数丢失”的情况。
+  // 即使 CLOUD123_PROGRESS_V1 标记存在，也要以实际源码是否存在 helper 为准。
+  if (src.includes(PATCH_MARK) && src.includes("refreshUploadProgress()") && !src.includes("const refreshUploadProgress = async")) {
+    const progressHelper = String.raw\`\
+    const uploadProgress = new Map();
+    let lastProgressEdit = 0;
+    let progressEditing = false;
+    const refreshUploadProgress = async () => {
+      if (!statusMessage?.message_id || progressEditing) return;
+      const now = Date.now();
+      if (now - lastProgressEdit < 1000) return;
+      lastProgressEdit = now;
+      progressEditing = true;
+      try {
+        let sentBytes=0,totalBytes=0;
+        for (const p of uploadProgress.values()) { sentBytes += Number(p.sent||0); totalBytes += Number(p.total||0); }
+        const mb=n => (n/1024/1024).toFixed(1);
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,message_id:statusMessage.message_id,
+          text:"🚀 <b>123云盘实时上传</b>\\n\\n"+
+            "📁 当前文件："+escapeHtml(currentFileName || "准备中")+"\\n"+
+            "📊 成功："+success+"  | 失败："+fail+"  | 跳过："+skip+"\\n"+
+            "📤 当前传输："+mb(sentBytes)+" / "+mb(totalBytes)+" MB\\n"+
+            "⚡ 小文件最多 5 个并发\\n📦 单批总量 ≤ 1GB",
+          parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+        });
+      } catch {} finally { progressEditing=false; }
+    };
+\`;
+    const uploadAnchor = "    const uploadOne = async (item) => {";
+    if (!src.includes(uploadAnchor)) throw new Error("123云盘进度修复：找不到 uploadOne 插入点");
+    src = src.replace(uploadAnchor, progressHelper + "\\n" + uploadAnchor);
+    console.log("🛠️ CLOUD123 已恢复实时上传进度 helper");
+    fs.writeFileSync(SOURCE, src);
+    return true;
+  }
+
   if (src.includes(PATCH_MARK)) {
     const repairedSrc = src.replace(
       /^\s*if\(!\/\^https\?:.*$/m,
