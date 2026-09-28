@@ -35,14 +35,14 @@ function patchSource() {
     };
 `;
     // 兼容不同版本的云盘上传源码：优先寻找 uploadOne，找不到时就在扫描函数内部注入进度 helper。
-    const uploadOneMatch = src.match(/^[ \\t]*const\\s+uploadOne\\s*=\\s*async\\s*\\(\\s*item\\s*\\)\\s*=>\\s*\\{/m);
-    const scanMatch = src.match(/^[ \\t]*async\\s+function\\s+cloud123ScanAndUpload\\s*\\(\\s*uid\\s*\\)\\s*\\{/m);
+    const uploadOneMatch = src.match(/^\s*const\s+uploadOne\s*=\s*async\s*\(\s*item\s*\)\s*=>\s*\{/m);
+    const scanMatch = src.match(/^\s*async\s+function\s+cloud123ScanAndUpload\s*\(\s*uid\s*\)\s*\{/m);
     const helperAnchor = uploadOneMatch || scanMatch;
     if (!helperAnchor) throw new Error("123云盘进度补丁：找不到云盘上传函数");
     // 进度 helper 必须位于 uploadOne 外层；放在函数声明后会导致 uploadOne 内部/并发场景出现“refreshUploadProgress 未定义”。\n    src = src.replace(helperAnchor[0], progressHelper + "\\n" + helperAnchor[0]);
 
     // 上传回调可能已经由旧版本补丁加入；只在当前源码仍是无回调的原始上传调用时替换。
-    const uploadPattern = /(await\\s+client\\.uploadFile\\(\\s*tempPath\\s*,\\s*remoteDir\\s*,\\s*originalName\\s*\\);)/;
+    const uploadPattern = /(await\s+client\.uploadFile\(\s*tempPath\s*,\s*remoteDir\s*,\s*originalName\s*\);)/;
     if (uploadPattern.test(src)) {
       const uploadReplacement = `uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
         await client.uploadFile(tempPath,remoteDir,originalName,(sent,total)=>{
@@ -55,7 +55,7 @@ function patchSource() {
     }
     src = src.replace('"⚡ 小文件最多 5 个并发；单批总传输不超过 1GB。",', '"⚡ 小文件最多 5 个并发；大文件单个上传。",');
     src = src.replace('"⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",', '"⚡ ≤200MB：5 个并发；>200MB：单个上传。",');
-    src = src.replace("/* ${PATCH_MARK} */", "/* ${PATCH_MARK} */\\nconst "+PROGRESS_PATCH_MARK+"=true;");
+    src = src.replace("/* " + PATCH_MARK + " */", "/* " + PATCH_MARK + " */\\nconst " + PROGRESS_PATCH_MARK + "=true;");
     fs.writeFileSync(SOURCE, src);
     console.log("📊 CLOUD123 实时上传进度补丁已贴");
     return true;
