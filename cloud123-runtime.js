@@ -172,16 +172,30 @@ async function cloud123ScanAndUpload(uid) {
   let success=0, fail=0, skip=0;
   try {
     const client=cloud123Client();
+    statusMessage=await sendHtml(TOKEN,uid,
+      "<b>🚀 正在启动123云盘扫描上传</b>\n\n"+
+      "⏳ 正在连接 Telegram 扫描账号，请稍候...\n"+
+      "📁 将按机器人现有文件夹建立目录\n"+
+      "⚙️ 同时只处理 1 个文件。",
+      cloud123Menu()
+    );
     const clientHistory=await ensureHistoryClient(uid);
     const entity=await findHistoryEntity(clientHistory);
     const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded);
-    statusMessage=await sendHtml(TOKEN,uid,
-      "<b>🚀 开始扫描并上传123云盘</b>\n\n"+
-      "📚 待处理："+resources.length+" 个\n"+
-      "📁 将按机器人现有文件夹建立目录\n"+
-      "⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",
-      cloud123Menu()
-    );
+    if(statusMessage?.message_id) {
+      try {
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:statusMessage.message_id,
+          text:"<b>🚀 开始扫描并上传123云盘</b>\n\n"+
+            "📚 待处理："+resources.length+" 个\n"+
+            "📁 将按机器人现有文件夹建立目录\n"+
+            "⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",
+          parse_mode:"HTML",
+          reply_markup:cloud123Menu().reply_markup
+        });
+      } catch {}
+    }
 
     for(let i=0;i<resources.length;i++) {
       const item=resources[i];
