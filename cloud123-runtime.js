@@ -36,7 +36,10 @@ function patchSource() {
     const helperAnchor = "    for(let i=0;i<resources.length;i++) {";
     if (!src.includes(helperAnchor)) throw new Error("123云盘进度补丁：找不到上传循环");
     src = src.replace(helperAnchor, progressHelper + "\n" + helperAnchor);
-    const uploadAnchor = "        await client.uploadFile(tempPath,remoteDir,originalName);";
+    const uploadAnchor = "        await client.uploadFile(tempPath,remoteDir,originalName);
+        activeBatchBytes += stat.size;
+        totalUploadedBytes += stat.size;
+        currentFileName = originalName;";
     if (!src.includes(uploadAnchor)) throw new Error("123云盘进度补丁：找不到上传调用");
     const uploadReplacement = `        uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
         await client.uploadFile(tempPath,remoteDir,originalName,(sent,total)=>{
@@ -246,8 +249,23 @@ async function cloud123ScanAndUpload(uid) {
       } catch {}
     }
 
+    const BATCH_LIMIT = 1024 * 1024 * 1024;
+    let batchBytes = 0;
+    let batchNumber = 1;
     for(let i=0;i<resources.length;i++) {
       const item=resources[i];
+      const estimatedSize=Number(item?.size || item?.fileSize || item?.bytes || 0);
+      if (batchBytes > 0 && estimatedSize > 0 && estimatedSize <= BATCH_LIMIT && batchBytes + estimatedSize > BATCH_LIMIT) {
+        batchNumber++;
+        batchBytes = 0;
+        if(statusMessage?.message_id) {
+          try { await tg(TOKEN,"editMessageText",{
+            chat_id:uid,message_id:statusMessage.message_id,
+            text:"⏸️ <b>第 "+(batchNumber-1)+" 批完成</b>\\n\\n📦 本批已达到约 1GB\\n⏭️ 正在等待并开始第 "+batchNumber+" 批...",
+            parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+          }); } catch {}
+        }
+      }
       if(!item || !Number(item.messageId)) { skip++; continue; }
       if(item.cloud123?.uploaded) { skip++; continue; }
       if(item.textOnly) {
