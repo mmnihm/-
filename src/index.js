@@ -219,10 +219,12 @@ function loadDb() {
   console.warn("⚠️ 未找到数据库文件，将创建新的数据库:", DATA_FILE);
   return emptyDb();
 }
+let lastSavedJson = "";
 function saveDb() {
   try {
     fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
     const json = JSON.stringify(db, null, 2);
+    if (json === lastSavedJson) return;
     const tmp = DATA_FILE + ".tmp";
     fs.writeFileSync(tmp, json);
     fs.renameSync(tmp, DATA_FILE);
@@ -234,6 +236,7 @@ function saveDb() {
       fs.writeFileSync(backupTmp, json);
       fs.renameSync(backupTmp, BACKUP_FILE);
     }
+    lastSavedJson = json;
   } catch (e) {
     console.error("❌ SAVE:", e.message);
     console.error("❌ 当前数据文件:", DATA_FILE);
@@ -245,7 +248,8 @@ if (!db.settings) db.settings = emptyDb().settings;
 if (!Array.isArray(db.settings.admins)) db.settings.admins = [];
 if (!Array.isArray(db.settings.logs)) db.settings.logs = [];
 if (!("historyAuth" in db.settings)) db.settings.historyAuth = null;
-if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""};
+if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:"",lastMessageId:0};
+if (!("lastMessageId" in db.settings.historyScan)) db.settings.historyScan.lastMessageId = 0;
 
 let historyClient = null;
 let historyConnecting = null;
@@ -254,6 +258,8 @@ let StringSessionClass = null;
 const historyInputs = new Map();
 const uploadTimers = new Map();
 const uploadAckTimers = new Map();
+const finalizingUploads = new Set();
+const childRunners = new Map();
 const UPLOAD_TIMEOUT_MS = UPLOAD_IDLE_SECONDS * 1000;
 
 function askHistoryInput(uid, step, prompt) {
@@ -358,7 +364,11 @@ function indexHistoryMessage(message, chatId) {
     directoryId:null
   };
   const i=db.resources.findIndex(x=>x.chatId===item.chatId&&x.messageId===item.messageId);
-  if(i>=0) db.resources[i]=item; else db.resources.unshift(item);
+  if(i>=0) {
+    db.resources[i]={...db.resources[i],...item,directoryId:item.directoryId ?? db.resources[i].directoryId ?? null};
+  } else {
+    db.resources.unshift(item);
+  }
   return true;
 }
 
@@ -366,24 +376,30 @@ async function scanHistory(uid) {
   if (db.settings.historyScan.status === "running") return send(TOKEN,uid,"🔍 历史扫描已经在进行中，请稍候。");
   const r = repo();
   if (!r) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。先绑定「📦 资源仓库」。",adminMenu());
-  db.settings.historyScan={status:"running",scanned:0,indexed:0,startedAt:Date.now(),finishedAt:null,error:""};
+  const previousCheckpoint=Number(db.settings.historyScan.lastMessageId||0);
+  const startedAt=Date.now();
+  db.settings.historyScan={status:"running",scanned:0,indexed:0,startedAt,finishedAt:null,error:"",lastMessageId:previousCheckpoint};
   saveDb();
   try {
     const client = await ensureHistoryClient(uid);
     const entity = await findHistoryEntity(client);
-    let scanned = 0, indexed = 0;
+    let scanned = 0, indexed = 0, boundary = previousCheckpoint;
     for await (const message of client.iterMessages(entity,{limit:undefined})) {
+      const messageId=Number(message?.id||0);
+      if (previousCheckpoint > 0 && messageId > 0 && messageId <= previousCheckpoint) break;
       scanned++;
       if (indexHistoryMessage(message,r.chatId)) indexed++;
+      if (messageId > 0) boundary=messageId;
       if (scanned % 100 === 0) {
         db.settings.historyScan.scanned=scanned;
         db.settings.historyScan.indexed=indexed;
+        db.settings.historyScan.lastMessageId=boundary;
         saveDb();
-        console.log("🔎 HISTORY SCAN:", scanned, "indexed=", indexed);
+        console.log("🔎 HISTORY SCAN:", scanned, "indexed=", indexed, "checkpoint=", boundary);
       }
     }
     db.resources=db.resources.slice(0,MAX_RESOURCES);
-    db.settings.historyScan={status:"completed",scanned,indexed,startedAt:db.settings.historyScan.startedAt,finishedAt:Date.now(),error:""};
+    db.settings.historyScan={status:"completed",scanned,indexed,startedAt,finishedAt:Date.now(),error:"",lastMessageId:boundary};
     saveDb();
     return sendHtml(TOKEN,uid,`<b>✅ 历史扫描完成</b>\n\n📦 <b>资源仓库</b>：${r.title}\n🔎 <b>扫描消息</b>：${scanned} 条\n📚 <b>新增 / 更新</b>：${indexed} 条\n📊 <b>当前资源</b>：${db.resources.length} 条\n\n━━━━━━━━━━━━━━\n✨ <i>历史消息已建立索引</i>\n现在可以直接使用搜索、随机获取和最新资源功能。`,adminMenu());;
   } catch(e) {
@@ -529,7 +545,7 @@ function platformMenu() {
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
 function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
-async function finalizeUpload(uid, state) {
+async function finalizeUploadUnlocked(uid, state) {
   const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
   if (!items.length) {
     states.delete("m:"+uid);
@@ -596,6 +612,17 @@ async function finalizeUpload(uid, state) {
     adminMenu()
   );
 }
+async function finalizeUpload(uid, state) {
+  const lockKey=String(uid);
+  if(finalizingUploads.has(lockKey)) return send(TOKEN,uid,"⏳ 正在整理本批资源，请不要重复点击结束上传。");
+  finalizingUploads.add(lockKey);
+  try {
+    return await finalizeUploadUnlocked(uid,state);
+  } finally {
+    finalizingUploads.delete(lockKey);
+  }
+}
+
 function directoryKeyboard() {
   const rows=[];
   for(const d of db.directories){
@@ -704,7 +731,11 @@ function indexResource(msg) {
     textOnly:!media
   };
   const i=db.resources.findIndex(x=>x.chatId===item.chatId&&x.messageId===item.messageId);
-  if(i>=0) db.resources[i]=item; else db.resources.unshift(item);
+  if(i>=0) {
+    db.resources[i]={...db.resources[i],...item,directoryId:item.directoryId ?? db.resources[i].directoryId ?? null};
+  } else {
+    db.resources.unshift(item);
+  }
   db.resources=db.resources.slice(0,MAX_RESOURCES);
   saveDb();
 }
@@ -1890,8 +1921,7 @@ async function childLoop(child) {
     await ensureStartCommand(token);
   } catch (e) {
     console.error("❌ CHILD START FAILED:", child.username ? "@" + child.username : "(unknown)", e.message);
-    await sleep(5000);
-    return childLoop(child);
+    throw e;
   }
 
   while(true){
@@ -1910,7 +1940,20 @@ async function childLoop(child) {
     }
   }
 }
-function startChild(child){ childLoop(child).catch(e=>{ console.error("❌ CHILD FATAL:",child.username ? "@"+child.username : child.botId,e); setTimeout(()=>startChild(child),5000); }); }
+function startChild(child){
+  const runnerId=String(child.id||child.botId||child.username||"child");
+  if(childRunners.has(runnerId)) return;
+  const runner=childLoop(child)
+    .catch(e=>{
+      console.error("❌ CHILD FATAL:",child.username ? "@"+child.username : child.botId,e);
+      child.lastError=String(e?.message||e);
+      child.restartCount=Number(child.restartCount||0)+1;
+      saveDb();
+      setTimeout(()=>startChild(child),5000);
+    })
+    .finally(()=>childRunners.delete(runnerId));
+  childRunners.set(runnerId,runner);
+}
 
 async function boot(){
   fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true});
