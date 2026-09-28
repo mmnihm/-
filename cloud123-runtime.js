@@ -39,7 +39,7 @@ function patchSource() {
     const scanMatch = src.match(/^[ \\t]*async\\s+function\\s+cloud123ScanAndUpload\\s*\\(\\s*uid\\s*\\)\\s*\\{/m);
     const helperAnchor = uploadOneMatch || scanMatch;
     if (!helperAnchor) throw new Error("123云盘进度补丁：找不到云盘上传函数");
-    src = src.replace(helperAnchor[0], helperAnchor[0] + "\\n" + progressHelper);
+    // 进度 helper 必须位于 uploadOne 外层；放在函数声明后会导致 uploadOne 内部/并发场景出现“refreshUploadProgress 未定义”。\n    src = src.replace(helperAnchor[0], progressHelper + "\\n" + helperAnchor[0]);
 
     // 上传回调可能已经由旧版本补丁加入；只在当前源码仍是无回调的原始上传调用时替换。
     const uploadPattern = /(await\\s+client\\.uploadFile\\(\\s*tempPath\\s*,\\s*remoteDir\\s*,\\s*originalName\\s*\\);)/;
@@ -60,7 +60,7 @@ function patchSource() {
     console.log("📊 CLOUD123 实时上传进度补丁已贴");
     return true;
   }
-  // 修复历史版本中“上传代码保留，但进度辅助函数丢失”的情况。
+  // 修复旧版本：如果 helper 被错误插进 uploadOne 内部，则整体移动到 uploadOne 外层。\n  if (src.includes(PATCH_MARK) && src.includes("const refreshUploadProgress = async")) {\n    const helperPos = src.indexOf("    const refreshUploadProgress = async");\n    const uploadPos = src.indexOf("    const uploadOne = async (item) => {");\n    if (helperPos > uploadPos && uploadPos >= 0) {\n      const helperEnd = src.indexOf("    };", helperPos);\n      if (helperEnd >= 0) {\n        const helperBlock = src.slice(helperPos - ("    const uploadProgress = new Map();").length, helperEnd + 7);\n        src = src.slice(0, helperPos - ("    const uploadProgress = new Map();").length) + src.slice(helperEnd + 7);\n        const newUploadPos = src.indexOf("    const uploadOne = async (item) => {");\n        src = src.slice(0,newUploadPos) + helperBlock + "\\n" + src.slice(newUploadPos);\n        fs.writeFileSync(SOURCE, src);\n        console.log("🛠️ CLOUD123 已将实时进度 helper 移到 uploadOne 外层");\n        return true;\n      }\n    }\n  }\n\n  // 修复历史版本中“上传代码保留，但进度辅助函数丢失”的情况。
   // 即使 CLOUD123_PROGRESS_V1 标记存在，也要以实际源码是否存在 helper 为准。
   if (src.includes(PATCH_MARK) && src.includes("refreshUploadProgress()") && !src.includes("const refreshUploadProgress = async")) {
     const progressHelper = [
