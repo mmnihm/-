@@ -1,4 +1,5 @@
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -90,70 +91,68 @@ const TELEGRAM_API_HOSTS = [
   "https://api.telegram.org"
 ];
 
+async function telegramHttpsRequest(token, method, body, timeoutMs) {
+  const payload = JSON.stringify(body || {});
+  return await new Promise((resolve, reject) => {
+    const req = https.request(
+      api(token, method),
+      {
+        method: "POST",
+        family: 4,
+        timeout: timeoutMs,
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(payload),
+          "accept": "application/json",
+          "connection": "keep-alive"
+        }
+      },
+      res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => { data += chunk; });
+        res.on("end", () => {
+          try {
+            resolve({status: res.statusCode || 0, json: JSON.parse(data || "{}")});
+          } catch (e) {
+            reject(new Error("Telegram 响应解析失败: " + (e?.message || e)));
+          }
+        });
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error("ETIMEDOUT")));
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function tg(token, method, body = {}) {
   const maxAttempts = method === "getUpdates" ? 8 : 4;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const controller = new AbortController();
-    const timeoutMs = method === "getUpdates" ? 45000 : 20000;
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let r;
+    const timeoutMs = method === "getUpdates" ? 50000 : 20000;
     try {
-      r = await fetch(api(token, method), {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "accept": "application/json"
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-    } catch (e) {
-      clearTimeout(timer);
-      const cause = e?.cause;
-      const detail = [e?.name, e?.message, cause?.code, cause?.message]
-        .filter(Boolean).join(" | ");
-      if (e?.name === "AbortError") {
-        console.warn("⚠️ TELEGRAM TIMEOUT:", method, "attempt=" + (attempt + 1) + "/" + maxAttempts);
-      } else {
-        console.warn("⚠️ TELEGRAM FETCH RETRY:", method, "attempt=" + (attempt + 1) + "/" + maxAttempts, detail);
-      }
+      const r = await telegramHttpsRequest(token, method, body, timeoutMs);
+      const j = r.json;
+      if (j.ok) return j.result;
 
-      if (attempt < maxAttempts - 1) {
-        const waitMs = Math.min(8000, 1000 * Math.pow(2, attempt));
-        await sleep(waitMs);
+      const retryAfter = Number(j.parameters?.retry_after || 0);
+      if (r.status === 429 && retryAfter > 0 && attempt < maxAttempts - 1) {
+        console.warn("⏳ Telegram 限流，"+method+" 等待 "+retryAfter+" 秒后自动重试");
+        await sleep((retryAfter + 1) * 1000);
         continue;
       }
 
-      const reason = e?.name === "AbortError"
-        ? "请求超时"
-        : ("网络请求失败: " + (detail || "TypeError"));
-      throw new Error(method + " " + reason);
-    } finally {
-      clearTimeout(timer);
-    }
-
-    let j;
-    try {
-      j = await r.json();
+      throw new Error(j.description || method + " failed");
     } catch (e) {
-      if (attempt < maxAttempts - 1) {
-        console.warn("⚠️ TELEGRAM JSON RETRY:", method, "attempt=" + (attempt + 1) + "/" + maxAttempts);
-        await sleep(Math.min(8000, 1000 * Math.pow(2, attempt)));
-        continue;
+      const code = e?.code || "";
+      const msg = String(e?.message || e);
+      console.warn("⚠️ Telegram HTTPS 请求失败:", method, "attempt="+(attempt+1)+"/"+maxAttempts, code ? code+" | " : "", msg);
+      if (attempt >= maxAttempts - 1) {
+        throw new Error(method + " 网络请求失败: " + (code ? code+" | " : "") + msg);
       }
-      throw new Error(method + " 响应解析失败: " + String(e?.message || e));
+      await sleep(Math.min(10000, 1000 * Math.pow(2, attempt)));
     }
-
-    if (j.ok) return j.result;
-
-    const retryAfter = Number(j.parameters?.retry_after || 0);
-    if (r.status === 429 && retryAfter > 0 && attempt < maxAttempts - 1) {
-      console.warn("⏳ Telegram 限流，"+method+" 等待 "+retryAfter+" 秒后自动重试");
-      await sleep((retryAfter + 1) * 1000);
-      continue;
-    }
-
-    throw new Error(j.description || method + " failed");
   }
   throw new Error(method + " failed after retries");
 }
