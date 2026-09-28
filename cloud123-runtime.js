@@ -527,13 +527,12 @@ async function cloud123ScanAndUpload(uid) {
   if(t==="🧪 测试连接"&&admin) {
     try {
       const client=cloud123Client();
-      await client.test();
-      return sendHtml(TOKEN,uid,
+      return client.test().then(() => sendHtml(TOKEN,uid,
         "<b>✅ 123云盘连接正常</b>\n\n"+
         "WebDAV 已可以访问。\n\n"+
         "下一步可以先点击「📁 同步机器人目录」。",
         cloud123Menu()
-      );
+      ));
     } catch(e) {
       return send(TOKEN,uid,"❌ 123云盘连接失败：\n\n"+String(e.message||e),cloud123Menu());
     }
