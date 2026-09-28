@@ -36,10 +36,7 @@ function patchSource() {
     const helperAnchor = "    for(let i=0;i<resources.length;i++) {";
     if (!src.includes(helperAnchor)) throw new Error("123云盘进度补丁：找不到上传循环");
     src = src.replace(helperAnchor, progressHelper + "\n" + helperAnchor);
-    const uploadAnchor = "        await client.uploadFile(tempPath,remoteDir,originalName);
-        activeBatchBytes += stat.size;
-        totalUploadedBytes += stat.size;
-        currentFileName = originalName;";
+    const uploadAnchor = "        await client.uploadFile(tempPath,remoteDir,originalName);";
     if (!src.includes(uploadAnchor)) throw new Error("123云盘进度补丁：找不到上传调用");
     const uploadReplacement = `        uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
         await client.uploadFile(tempPath,remoteDir,originalName,(sent,total)=>{
