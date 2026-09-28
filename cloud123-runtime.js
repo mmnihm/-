@@ -217,13 +217,15 @@ async function cloud123ScanAndUpload(uid) {
   const started=Date.now();
   let statusMessage=null;
   let success=0, fail=0, skip=0;
+  let activeBatchBytes=0, totalUploadedBytes=0;
+  let currentFileName="";
   try {
     const client=cloud123Client();
     statusMessage=await sendHtml(TOKEN,uid,
       "<b>🚀 正在启动123云盘扫描上传</b>\n\n"+
       "⏳ 正在连接 Telegram 扫描账号，请稍候...\n"+
       "📁 将按机器人现有文件夹建立目录\n"+
-      "⚙️ 同时只处理 1 个文件。",
+      "📦 每批最多传输 1GB；超过容量自动等待下一批。",
       cloud123Menu()
     );
     const clientHistory=await ensureHistoryClient(uid);
@@ -237,7 +239,7 @@ async function cloud123ScanAndUpload(uid) {
           text:"<b>🚀 开始扫描并上传123云盘</b>\n\n"+
             "📚 待处理："+resources.length+" 个\n"+
             "📁 将按机器人现有文件夹建立目录\n"+
-            "⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",
+            "📦 当前批次最多 1GB，超出自动进入下一批。",
           parse_mode:"HTML",
           reply_markup:cloud123Menu().reply_markup
         });
