@@ -258,7 +258,7 @@ async function cloud123ScanAndUpload(uid) {
       return send(TOKEN,uid,"❌ 已取消123云盘配置。",adminMenu());
     }
     if(cs.step==="url") {
-      if(!/^https?:\\/\\//i.test(t.trim())) return send(TOKEN,uid,"⚠️ WebDAV 地址格式不正确，请以 http:// 或 https:// 开头。");
+      if(!/^https?:\/\//i.test(t.trim())) return send(TOKEN,uid,"⚠️ WebDAV 地址格式不正确，请以 http:// 或 https:// 开头。");
       cloud123State.set(String(uid),{step:"username",url:t.trim()});
       return send(TOKEN,uid,"👤 请输入123云盘 WebDAV 用户名。\n\n发送 /cancel 可取消。");
     }
