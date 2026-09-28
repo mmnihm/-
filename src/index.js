@@ -127,6 +127,31 @@ async function telegramHttpsRequest(token, method, body, timeoutMs) {
   });
 }
 
+async function safeEdit(token, body, fallbackText = "") {
+  try {
+    return await tg(token, "editMessageText", body);
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (/message.*(can't|cannot).*edit|message is not modified|MESSAGE_ID_INVALID|message to edit not found/i.test(msg)) {
+      console.warn("⚠️ Telegram 进度消息无法编辑，继续任务：", msg);
+      if (fallbackText && body?.chat_id) {
+        try {
+          return await tg(token, "sendMessage", {
+            chat_id: body.chat_id,
+            text: fallbackText,
+            parse_mode: body.parse_mode,
+            reply_markup: body.reply_markup
+          });
+        } catch (sendErr) {
+          console.warn("⚠️ 备用进度消息发送失败，继续任务：", String(sendErr?.message || sendErr));
+        }
+      }
+      return null;
+    }
+    throw e;
+  }
+}
+
 async function tg(token, method, body = {}) {
   const maxAttempts = method === "getUpdates" ? 8 : 4;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1724,7 +1749,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const next=Math.min(page,maxPage);
       states.set(key,{step:"search_results",query:s.query,results:s.results,page:next});
       await answer("已切换到第 "+(next+1)+" 页");
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(next+1)+" / "+(maxPage+1)+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
