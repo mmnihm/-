@@ -25,9 +25,10 @@ function patchSource() {
         await tg(TOKEN,"editMessageText",{
           chat_id:uid,message_id:statusMessage.message_id,
           text:"🚀 <b>123云盘实时上传</b>\\n\\n"+
+            "📁 当前文件："+escapeHtml(currentFileName || "准备中")+"\\n"+
             "📊 成功："+success+"  | 失败："+fail+"  | 跳过："+skip+"\\n"+
             "📤 当前传输："+mb(sentBytes)+" / "+mb(totalBytes)+" MB\\n"+
-            "⚡ 小文件最多 5 个并发\\n📦 大文件单个上传",
+            "⚡ 小文件最多 5 个并发\\n📦 单批总量 ≤ 1GB",
           parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
         });
       } catch {} finally { progressEditing=false; }
@@ -229,7 +230,25 @@ async function cloud123ScanAndUpload(uid) {
       cloud123Menu()
     );
     const clientHistory=await ensureHistoryClient(uid);
+    if(statusMessage?.message_id) {
+      try { await tg(TOKEN,"editMessageText",{
+        chat_id:uid,message_id:statusMessage.message_id,
+        text:"<b>✅ Telegram 扫描账号连接成功</b>\\n\\n"+
+          "🔎 正在读取资源仓库历史消息...\\n"+
+          "📁 正在检查待上传资源，请稍候...",
+        parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+      }); } catch {}
+    }
     const entity=await findHistoryEntity(clientHistory);
+    if(statusMessage?.message_id) {
+      try { await tg(TOKEN,"editMessageText",{
+        chat_id:uid,message_id:statusMessage.message_id,
+        text:"<b>✅ 扫描账号已连接</b>\\n\\n"+
+          "📚 正在统计待上传资源...\\n"+
+          "⏳ 很快开始上传，请稍候...",
+        parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+      }); } catch {}
+    }
     const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded);
     if(statusMessage?.message_id) {
       try {
