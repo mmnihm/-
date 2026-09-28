@@ -143,6 +143,16 @@ async function tg(token, method, body = {}) {
         continue;
       }
 
+      // 4xx 是 Telegram 明确拒绝请求，不属于网络故障，不再重复重试。
+      // 特别是“message can't be edited”通常表示消息已过期、已删除、
+      // 内容没有变化或该消息不是机器人可编辑的消息。
+      if (r.status >= 400 && r.status < 500) {
+        const err = new Error(j.description || method + " failed");
+        err.telegramStatus = r.status;
+        err.telegramDescription = j.description || "";
+        throw err;
+      }
+
       throw new Error(j.description || method + " failed");
     } catch (e) {
       const code = e?.code || "";
