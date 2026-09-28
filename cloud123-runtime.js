@@ -46,7 +46,7 @@ function patchSource() {
         uploadProgress.delete(String(item.messageId));
         await refreshUploadProgress();`;
     src = src.replace(uploadAnchor, uploadReplacement);
-    src = src.replace('"⚙️ 同时只处理 1 个文件。",', '"⚡ 小文件最多 5 个并发；大文件单个上传。",');
+    src = src.replace('"⚡ 小文件最多 5 个并发；单批总传输不超过 1GB。",', '"⚡ 小文件最多 5 个并发；大文件单个上传。",');
     src = src.replace('"⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",', '"⚡ ≤200MB：5 个并发；>200MB：单个上传。",');
     src = src.replace("/* ${PATCH_MARK} */", "/* ${PATCH_MARK} */\\nconst "+PROGRESS_PATCH_MARK+"=true;");
     fs.writeFileSync(SOURCE, src);
@@ -143,8 +143,8 @@ function cloud123StatusText() {
     "📚 已上传：" + uploaded + " 个",
     "⚠️ 失败记录：" + failed + " 个",
     "",
-    "📌 当前采用：一次处理一个文件",
-    "💾 文件上传完成后立即删除服务器临时文件",
+    "📌 当前：小文件最多 5 个并发，单批总传输 ≤1GB",
+    "💾 每个文件完成后立即删除服务器临时文件",
     "",
     "👇 请选择操作"
   ].join("\n");
@@ -247,28 +247,17 @@ async function cloud123ScanAndUpload(uid) {
     }
 
     const BATCH_LIMIT = 1024 * 1024 * 1024;
-    let batchBytes = 0;
+    const SMALL_CONCURRENCY = 5;
     let batchNumber = 1;
-    for(let i=0;i<resources.length;i++) {
-      const item=resources[i];
-      const estimatedSize=Number(item?.size || item?.fileSize || item?.bytes || 0);
-      if (batchBytes > 0 && estimatedSize > 0 && estimatedSize <= BATCH_LIMIT && batchBytes + estimatedSize > BATCH_LIMIT) {
-        batchNumber++;
-        batchBytes = 0;
-        if(statusMessage?.message_id) {
-          try { await tg(TOKEN,"editMessageText",{
-            chat_id:uid,message_id:statusMessage.message_id,
-            text:"⏸️ <b>第 "+(batchNumber-1)+" 批完成</b>\\n\\n📦 本批已达到约 1GB\\n⏭️ 正在等待并开始第 "+batchNumber+" 批...",
-            parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
-          }); } catch {}
-        }
-      }
-      if(!item || !Number(item.messageId)) { skip++; continue; }
-      if(item.cloud123?.uploaded) { skip++; continue; }
+    let batchBytes = 0;
+
+    const uploadOne = async (item) => {
+      if(!item || !Number(item.messageId)) { skip++; return 0; }
+      if(item.cloud123?.uploaded) { skip++; return 0; }
       if(item.textOnly) {
         item.cloud123={uploaded:false,skipped:true,reason:"text-only",at:Date.now()};
         skip++;
-        continue;
+        return 0;
       }
 
       const d=db.directories.find(x=>String(x.id)===String(item.directoryId));
@@ -278,7 +267,7 @@ async function cloud123ScanAndUpload(uid) {
       if(!message || !message.media) {
         item.cloud123={uploaded:false,error:"Telegram 历史消息/媒体不存在",at:Date.now()};
         fail++;
-        continue;
+        return 0;
       }
 
       const originalName=cloud123RemoteName(message.file?.name || item.title || ("resource-"+item.messageId));
@@ -288,7 +277,13 @@ async function cloud123ScanAndUpload(uid) {
       try {
         await clientHistory.downloadMedia(message,{outputFile:tempPath});
         const stat=await fs.promises.stat(tempPath);
-        await client.uploadFile(tempPath,remoteDir,originalName);
+        currentFileName=originalName;
+        uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
+        await client.uploadFile(tempPath,remoteDir,originalName,(sent,total)=>{
+          uploadProgress.set(String(item.messageId),{sent,total,name:originalName});
+          refreshUploadProgress();
+        });
+        uploadProgress.delete(String(item.messageId));
         item.cloud123={
           uploaded:true,
           path:remoteDir+"/"+originalName,
@@ -296,31 +291,85 @@ async function cloud123ScanAndUpload(uid) {
           uploadedAt:Date.now()
         };
         success++;
+        totalUploadedBytes += stat.size;
+        return stat.size;
       } catch(e) {
+        uploadProgress.delete(String(item.messageId));
         item.cloud123={uploaded:false,error:String(e.message||e).slice(0,500),at:Date.now()};
         fail++;
         console.error("123 UPLOAD:", item.title, e);
+        return 0;
       } finally {
         try { await fs.promises.rm(tempPath,{force:true}); } catch {}
+        currentFileName="";
+        await refreshUploadProgress();
+      }
+    };
+
+    for(let i=0;i<resources.length;) {
+      const batch=[];
+      let plannedBytes=0;
+
+      while(i<resources.length && batch.length<SMALL_CONCURRENCY) {
+        const item=resources[i];
+        const estimatedSize=Number(item?.size || item?.fileSize || item?.bytes || 0);
+
+        if(batch.length===0) {
+          batch.push(item);
+          plannedBytes=estimatedSize>0 ? estimatedSize : BATCH_LIMIT;
+          i++;
+          continue;
+        }
+
+        if(estimatedSize>0 && plannedBytes+estimatedSize<=BATCH_LIMIT) {
+          batch.push(item);
+          plannedBytes+=estimatedSize;
+          i++;
+          continue;
+        }
+
+        break;
       }
 
-      if((i+1)%5===0 || i===resources.length-1) {
-        saveDb();
+      if(batch.length===0) continue;
+
+      const displayGB=(plannedBytes/1024/1024/1024).toFixed(2);
+      if(statusMessage?.message_id) {
+        try { await tg(TOKEN,"editMessageText",{
+          chat_id:uid,message_id:statusMessage.message_id,
+          text:"🚀 <b>123云盘同步中</b>\\n\\n"+
+            "📦 第 "+batchNumber+" 批\\n"+
+            "📁 本批文件："+batch.length+" 个\\n"+
+            "💾 预计传输："+displayGB+" GB\\n"+
+            "⚡ 最多 "+SMALL_CONCURRENCY+" 个小文件并发\\n"+
+            "📊 已完成："+success+" / "+resources.length,
+          parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+        }); } catch {}
+      }
+
+      batchBytes=0;
+      const results=await Promise.all(batch.map(async item=>{
+        const bytes=await uploadOne(item);
+        batchBytes+=bytes;
+        return bytes;
+      }));
+      batchBytes=results.reduce((a,b)=>a+b,0);
+
+      saveDb();
+      await refreshUploadProgress();
+
+      if(i<resources.length) {
         if(statusMessage?.message_id) {
-          try {
-            await tg(TOKEN,"editMessageText",{
-              chat_id:uid,
-              message_id:statusMessage.message_id,
-              text:"🚀 <b>123云盘同步中</b>\n\n"+
-                "📊 进度："+(i+1)+" / "+resources.length+"\n"+
-                "✅ 成功："+success+"\n"+
-                "⚠️ 失败："+fail+"\n"+
-                "⏭️ 跳过："+skip+"\n\n"+
-                "📁 按机器人目录同步\n💾 每次只处理一个文件。",
-              parse_mode:"HTML"
-            });
-          } catch {}
+          try { await tg(TOKEN,"editMessageText",{
+            chat_id:uid,message_id:statusMessage.message_id,
+            text:"✅ <b>第 "+batchNumber+" 批完成</b>\\n\\n"+
+              "📦 本批实际传输："+(batchBytes/1024/1024/1024).toFixed(2)+" GB\\n"+
+              "📊 总进度："+i+" / "+resources.length+"\\n"+
+              "⏭️ 下一批将继续，单批上限 1GB。",
+            parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+          }); } catch {}
         }
+        batchNumber++;
       }
     }
 
