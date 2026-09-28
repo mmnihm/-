@@ -112,12 +112,22 @@ export function createWebDavClient(config = {}) {
       return {created,existing};
     },
 
-    async uploadFile(localPath, remoteDir, fileName) {
+    async uploadFile(localPath, remoteDir, fileName, onProgress) {
       const stat = await fs.promises.stat(localPath);
       if (!stat.isFile()) throw new Error("待上传文件不存在");
       await this.ensureDirectory(remoteDir);
       const target = joinUrl(baseUrl, remoteDir) + encodePathPart(fileName);
       const stream = fs.createReadStream(localPath);
+      let transferred = 0;
+      let lastReport = 0;
+      stream.on("data", chunk => {
+        transferred += chunk.length;
+        const now = Date.now();
+        if (typeof onProgress === "function" && (now - lastReport >= 500 || transferred === stat.size)) {
+          lastReport = now;
+          try { onProgress(transferred, stat.size); } catch {}
+        }
+      });
       const r = await request(target, {
         method: "PUT",
         username,
