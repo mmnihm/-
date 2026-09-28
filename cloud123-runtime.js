@@ -6,7 +6,18 @@ const SOURCE = path.resolve("src/index.js");
 
 function patchSource() {
   let src = fs.readFileSync(SOURCE, "utf8");
-  if (src.includes(PATCH_MARK)) return false;
+  if (src.includes(PATCH_MARK)) {
+    const repairedSrc = src.replace(
+      /^\s*if\(!\/\^https\?:.*$/m,
+      '    if(!/^https?:\\/\\//i.test(t.trim())) return send(TOKEN,uid,"⚠️ WebDAV 地址格式不正确，请以 http:// 或 https:// 开头。");'
+    );
+    if (repairedSrc !== src) {
+      fs.writeFileSync(SOURCE, repairedSrc);
+      console.log("🛠️ CLOUD123 已修复 WebDAV 地址正则");
+      return true;
+    }
+    return false;
+  }
 
   const importAnchor = 'import dns from "node:dns";';
   if (!src.includes(importAnchor)) throw new Error("123云盘补丁：找不到 import 锚点");
