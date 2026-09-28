@@ -58,8 +58,7 @@ function cloud123Menu() {
       ],
       resize_keyboard:true,
       input_field_placeholder:"123云盘"
-    },
-    ready
+    }
   };
 }
 
