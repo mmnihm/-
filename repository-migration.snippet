@@ -1,0 +1,168 @@
+// BACKGROUND_REPOSITORY_SYNC_V2
+
+function repositoryKey(r) {
+  return r ? String(r.chatId || r.id || "") : "";
+}
+
+function rememberRepository(r) {
+  if (!r || !r.chatId) return;
+  if (!db.settings.repositoryHistory) db.settings.repositoryHistory = [];
+  const key = repositoryKey(r);
+  const old = db.settings.repositoryHistory.find(x => repositoryKey(x) === key);
+  if (old) Object.assign(old, {...r, lastSeenAt: Date.now()});
+  else db.settings.repositoryHistory.unshift({...r, lastSeenAt: Date.now()});
+  db.settings.repositoryHistory = db.settings.repositoryHistory.slice(0, 20);
+  saveDb();
+}
+
+function migrationSource() {
+  const current = repo();
+  const list = Array.isArray(db.settings.repositoryHistory) ? db.settings.repositoryHistory : [];
+  return list.find(x => repositoryKey(x) && repositoryKey(x) !== repositoryKey(current)) || null;
+}
+
+const repositorySyncing = new Set();
+
+async function syncRepositoryMessage(message) {
+  const current = repo();
+  const source = migrationSource();
+  if (!current || !source || repositoryKey(current) === repositoryKey(source)) return false;
+  const sourceId = String(message?.chat?.id ?? message?.chatId ?? "");
+  const messageId = Number(message?.message_id ?? message?.id ?? 0);
+  if (!sourceId || sourceId !== String(source.chatId) || !messageId) return false;
+  const key = sourceId + ":" + messageId;
+  if (repositorySyncing.has(key)) return false;
+  if (db.resources.some(x => !x.unavailable && String(x.chatId) === String(current.chatId) && Number(x.migratedFrom?.messageId) === messageId && String(x.migratedFrom?.chatId) === sourceId)) return true;
+
+  repositorySyncing.add(key);
+  try {
+    const copied = await tg(TOKEN, "copyMessage", {chat_id:current.chatId, from_chat_id:source.chatId, message_id:messageId});
+    const newId = Number(copied?.message_id ?? copied);
+    if (!Number.isFinite(newId)) throw new Error("复制结果无效");
+    const oldItem = db.resources.find(x => String(x.chatId) === sourceId && Number(x.messageId) === messageId);
+    const resource = {
+      ...(oldItem || {}),
+      chatId:String(current.chatId),
+      messageId:newId,
+      repositoryId:repositoryKey(current),
+      migratedFrom:{chatId:sourceId,messageId},
+      migratedAt:Date.now(),
+      unavailable:false,
+      fileId:null,
+      directoryId:oldItem?.directoryId ?? null
+    };
+    const existing = db.resources.findIndex(x => String(x.chatId) === String(current.chatId) && Number(x.messageId) === newId);
+    if (existing >= 0) db.resources[existing] = {...db.resources[existing],...resource};
+    else db.resources.unshift(resource);
+    if (oldItem) oldItem.unavailable = true;
+    db.resources = db.resources.slice(0, MAX_RESOURCES);
+    saveDb();
+    console.log("🔄 BACKGROUND REPOSITORY SYNC:", sourceId, messageId, "->", String(current.chatId), newId);
+    return true;
+  } catch (e) {
+    console.error("❌ BACKGROUND REPOSITORY SYNC:", e.message, "source=", sourceId, "message=", messageId);
+    return false;
+  } finally {
+    repositorySyncing.delete(key);
+  }
+}
+
+async function migrateRepositoryResources(uid) {
+  const target = repo();
+  const source = migrationSource();
+  if (!target) return send(TOKEN,uid,"❌ 当前还没有绑定新资源仓库。");
+  if (!source) return send(TOKEN,uid,"⚠️ 没有找到旧资源仓库。请先绑定新仓库，让机器人自动保留上一个仓库。");
+  if (repositoryKey(target) === repositoryKey(source)) return send(TOKEN,uid,"⚠️ 新旧仓库不能是同一个群/频道。");
+
+  const resources = db.resources.filter(x => !x.unavailable && String(x.chatId) === String(source.chatId) && Number(x.messageId) > 0).sort((a,b) => Number(a.messageId)-Number(b.messageId));
+  if (!resources.length) return send(TOKEN,uid,"📭 旧仓库暂时没有可迁移的已索引资源。请先执行「🔍 仓库扫描」。");
+
+  db.settings.repositoryMigration = {
+    status:"running",
+    source:{...source},
+    target:{...target},
+    total:resources.length,
+    migrated:0,
+    failed:0,
+    startedAt:Date.now(),
+    finishedAt:null,
+    error:""
+  };
+  saveDb();
+
+  let migrated=0, failed=0;
+  for (const item of resources) {
+    try {
+      const copied = await tg(TOKEN,"copyMessage",{chat_id:target.chatId,from_chat_id:source.chatId,message_id:Number(item.messageId)});
+      const newId=Number(copied?.message_id ?? copied);
+      if (!Number.isFinite(newId)) throw new Error("新消息ID无效");
+      db.resources.unshift({
+        ...item,
+        chatId:String(target.chatId),
+        messageId:newId,
+        repositoryId:repositoryKey(target),
+        migratedFrom:{chatId:String(source.chatId),messageId:Number(item.messageId)},
+        migratedAt:Date.now(),
+        unavailable:false,
+        fileId:null,
+        directoryId:item.directoryId ?? null
+      });
+      item.unavailable=true;
+      migrated++;
+      if (migrated % 20 === 0) saveDb();
+    } catch (e) {
+      failed++;
+      console.error("❌ REPOSITORY MIGRATION:",e.message,"message=",item.messageId);
+    }
+    await sleep(80);
+  }
+
+  db.resources=db.resources.slice(0,MAX_RESOURCES);
+  db.settings.repositoryMigration={
+    status:failed ? "completed_with_errors" : "completed",
+    source:{...source},
+    target:{...target},
+    total:resources.length,
+    migrated,
+    failed,
+    startedAt:db.settings.repositoryMigration.startedAt,
+    finishedAt:Date.now(),
+    error:""
+  };
+  saveDb();
+
+  return sendHtml(TOKEN,uid,
+    "<b>✅ 旧仓库迁移完成</b> | 旧仓库："+escapeHtml(source.title||source.chatId)+
+    " | 新仓库："+escapeHtml(target.title||target.chatId)+
+    " | 待迁移："+resources.length+" | 已迁移："+migrated+" | 失败："+failed+
+    " | 🔄 旧仓库继续保留，新资源会后台同步。",
+    {parse_mode:"HTML",...adminMenu()}
+  );
+}
+
+async function syncOldRepositoryRecent() {
+  const current=repo();
+  const source=migrationSource();
+  if (!current || !source || repositoryKey(current)===repositoryKey(source) || !historyClient) return;
+  try {
+    const dialogs=await historyClient.getDialogs({limit:1000});
+    let entity=null;
+    for (const d of dialogs) if (String(d.id)===String(source.chatId)) { entity=d.entity; break; }
+    if (!entity) return;
+    const recent=[];
+    for await (const message of historyClient.iterMessages(entity,{limit:100})) {
+      const id=Number(message?.id||0);
+      if (!id) continue;
+      if (!String(message?.message||message?.text||"").trim() && !message?.media && !message?.file) continue;
+      recent.push({id,chat:{id:source.chatId}});
+    }
+    let synced=0;
+    for (const message of recent.reverse()) {
+      if (await syncRepositoryMessage(message)) synced++;
+      await sleep(120);
+    }
+    if (synced) console.log("🛟 BACKGROUND REPOSITORY CHECK: synced="+synced);
+  } catch (e) {
+    console.error("❌ BACKGROUND REPOSITORY CHECK:",e.message);
+  }
+}
