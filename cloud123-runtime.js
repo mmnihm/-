@@ -16,10 +16,16 @@ function patchSource() {
   if (menuFn < 0) throw new Error("123云盘补丁：找不到资源管理菜单函数");
   const menuEnd = src.indexOf("function ", menuFn + 10);
   const menuBlock = src.slice(menuFn, menuEnd > 0 ? menuEnd : menuFn + 5000);
-  const menuNeedle = '["📦 资源仓库","🔍 仓库扫描"],';
-  if (!menuBlock.includes(menuNeedle)) throw new Error("123云盘补丁：资源管理菜单结构不匹配");
-  const patchedMenuBlock = menuBlock.replace(menuNeedle, menuNeedle + '\\n    ["☁️ 123云盘","🔄 云盘同步"],');
-  src = src.slice(0, menuFn) + patchedMenuBlock + src.slice(menuFn + menuBlock.length);
+  if (!menuBlock.includes("☁️ 123云盘")) {
+    const menuLines = menuBlock.split("\n");
+    const insertAt = menuLines.findIndex(line => line.includes("🔄 迁移旧仓库"));
+    const fallbackAt = menuLines.findIndex(line => line.includes("📦 资源仓库"));
+    const at = insertAt >= 0 ? insertAt + 1 : (fallbackAt >= 0 ? fallbackAt + 1 : -1);
+    if (at < 0) throw new Error("123云盘补丁：资源管理菜单结构不匹配");
+    menuLines.splice(at, 0, '    ["☁️ 123云盘","🔄 云盘同步"],');
+    const patchedMenuBlock = menuLines.join("\n");
+    src = src.slice(0, menuFn) + patchedMenuBlock + src.slice(menuFn + menuBlock.length);
+  }
 
   const insertAnchor = 'const repo = () => db.settings.repository;';
   if (!src.includes(insertAnchor)) throw new Error("123云盘补丁：找不到 repo 函数");
