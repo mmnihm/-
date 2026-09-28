@@ -34,19 +34,22 @@ function patchSource() {
       } catch {} finally { progressEditing=false; }
     };
 `;
-    const helperAnchor = "    for(let i=0;i<resources.length;i++) {";
-    if (!src.includes(helperAnchor)) throw new Error("123云盘进度补丁：找不到上传循环");
+    const helperAnchor = "    const uploadOne = async (item) => {";
+    if (!src.includes(helperAnchor)) throw new Error("123云盘进度补丁：找不到 uploadOne 插入点");
     src = src.replace(helperAnchor, progressHelper + "\n" + helperAnchor);
+
+    // 上传回调可能已经由旧版本补丁加入；只有在原始上传调用仍存在时才替换。
     const uploadAnchor = "        await client.uploadFile(tempPath,remoteDir,originalName);";
-    if (!src.includes(uploadAnchor)) throw new Error("123云盘进度补丁：找不到上传调用");
-    const uploadReplacement = `        uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
+    if (src.includes(uploadAnchor)) {
+      const uploadReplacement = `        uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
         await client.uploadFile(tempPath,remoteDir,originalName,(sent,total)=>{
           uploadProgress.set(String(item.messageId),{sent,total,name:originalName});
           refreshUploadProgress();
         });
         uploadProgress.delete(String(item.messageId));
         await refreshUploadProgress();`;
-    src = src.replace(uploadAnchor, uploadReplacement);
+      src = src.replace(uploadAnchor, uploadReplacement);
+    }
     src = src.replace('"⚡ 小文件最多 5 个并发；单批总传输不超过 1GB。",', '"⚡ 小文件最多 5 个并发；大文件单个上传。",');
     src = src.replace('"⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",', '"⚡ ≤200MB：5 个并发；>200MB：单个上传。",');
     src = src.replace("/* ${PATCH_MARK} */", "/* ${PATCH_MARK} */\\nconst "+PROGRESS_PATCH_MARK+"=true;");
