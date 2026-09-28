@@ -8,6 +8,7 @@ if (!s.includes("BACKGROUND_REPOSITORY_SYNC_V2")) {
 
   const repoCode = marker + `
 
+// BACKGROUND_REPOSITORY_SYNC_V2
 function repositoryKey(r) {
   return r ? String(r.chatId || r.id || "") : "";
 }
@@ -242,27 +243,27 @@ async function syncOldRepositoryRecent() {
   s = s.replace(marker, repoCode);
 
   const oldMenu = '[\"📦 资源仓库\",\"🔍 仓库扫描\"],';
-  const newMenu = '[\"📦 资源仓库\",\"🔗 绑定新仓库\"],\\n    [\"🔍 仓库扫描\"],\\n    [\"🔄 迁移旧仓库\"],';
+  const newMenu = '["📦 资源仓库","🔗 绑定新仓库"],["🔍 仓库扫描"],["🔄 迁移旧仓库"],';
   if (!s.includes(oldMenu)) throw new Error("找不到资源管理菜单");
   s = s.replace(oldMenu, newMenu);
 
   const oldForward = '  if(msg.chat?.type==="private" && msg.forward_origin?.chat) {\\n    const fc=msg.forward_origin.chat;\\n    db.settings.repository={\\n      chatId:String(fc.id),\\n      title:fc.title||fc.username||String(fc.id),\\n      username:fc.username||"",\\n      type:fc.type||"channel"\\n    };\\n    saveDb();\\n';
-  const newForward = '  if(msg.chat?.type==="private" && msg.forward_origin?.chat) {\\n    const fc=msg.forward_origin.chat;\\n    const previous = db.settings.repository ? {...db.settings.repository} : null;\\n    const next = {\\n      chatId:String(fc.id),\\n      title:fc.title||fc.username||String(fc.id),\\n      username:fc.username||"",\\n      type:fc.type||"channel"\\n    };\\n    if(previous && repositoryKey(previous) !== repositoryKey(next)) rememberRepository(previous);\\n    db.settings.repository = next;\\n    rememberRepository(next);\\n    saveDb();\\n';
+  const newForward = '  if(msg.chat?.type==="private" && msg.forward_origin?.chat) { const fc=msg.forward_origin.chat; const previous=db.settings.repository ? {...db.settings.repository} : null; const next={chatId:String(fc.id),title:fc.title||fc.username||String(fc.id),username:fc.username||"",type:fc.type||"channel"}; if(previous && repositoryKey(previous)!==repositoryKey(next)) rememberRepository(previous); db.settings.repository=next; rememberRepository(next); saveDb();';\\n    const previous = db.settings.repository ? {...db.settings.repository} : null;\\n    const next = {\\n      chatId:String(fc.id),\\n      title:fc.title||fc.username||String(fc.id),\\n      username:fc.username||"",\\n      type:fc.type||"channel"\\n    };\\n    if(previous && repositoryKey(previous) !== repositoryKey(next)) rememberRepository(previous);\\n    db.settings.repository = next;\\n    rememberRepository(next);\\n    saveDb();\\n';
   if (!s.includes(oldForward)) throw new Error("找不到仓库转发绑定代码");
   s = s.replace(oldForward, newForward);
 
   const oldPrivateInfo = '  if(t==="📦 绑定资源仓库" && admin)\\n    return send(TOKEN,uid,"📦 绑定资源仓库\\n\\n最简单的绑定方法：\\n\\n1. 先把主机器人加入资源仓库群/频道。\\n2. 从资源仓库里转发任意一条消息给主机器人。\\n3. 主机器人会自动识别并绑定这个群/频道。\\n\\n也可以直接在资源群里发送：/绑定仓库");\\n\\n  if(t==="🤖 克隆机器人") {\\n';
-  const newPrivateInfo = '  if(t==="📦 绑定资源仓库" && admin)\\n    return send(TOKEN,uid,\\n      "📦 资源仓库管理\\n\\n"+\\n      "支持：群 / 超级群 / 频道。\\n\\n"+\\n      "① 先绑定新仓库：点击「🔗 绑定新仓库」，然后转发新仓库任意消息给机器人。\\n"+\\n      "② 再点击「🔄 迁移旧仓库」，把旧仓库已有资源复制到新仓库。\\n"+\\n      "③ 迁移完成后，旧仓库继续保留；以后旧仓库新增资源会后台同步到新仓库。\\n\\n"+\\n      "⚠️ 旧仓库和新仓库都要确保机器人有读取/复制消息的权限。");\\n\\n  if(t==="🔗 绑定新仓库" && admin)\\n    return send(TOKEN,uid,\\n      "🔗 <b>绑定新仓库</b>\\n\\n"+\\n      "支持群、超级群、频道。\\n\\n"+\\n      "请先把主机器人加入新仓库。\\n"+\\n      "然后从新仓库转发任意一条消息给机器人。\\n\\n"+\\n      "机器人会自动保存当前仓库，并把上一个仓库记为「旧仓库」。\\n"+\\n      "之后即可点击「🔄 迁移旧仓库」。",\\n      {parse_mode:"HTML",...backMenu(true)});\\n\\n  if(t==="🔄 迁移旧仓库" && admin)\\n    return migrateRepositoryResources(uid);\\n\\n  if(t==="🤖 克隆机器人") {\\n';
+  const newPrivateInfo = '  if(t==="📦 绑定资源仓库" && admin) return send(TOKEN,uid,"📦 资源仓库管理 | 支持群 / 超级群 / 频道。 | ① 点击「🔗 绑定新仓库」并转发新仓库消息给机器人。 | ② 点击「🔄 迁移旧仓库」复制旧仓库资源。 | ③ 迁移后旧仓库继续保留，新资源会后台同步到新仓库。"); if(t==="🔗 绑定新仓库" && admin) return send(TOKEN,uid,"🔗 <b>绑定新仓库</b> | 支持群、超级群、频道。 | 请先把主机器人加入新仓库，再转发任意一条消息给机器人。 | 机器人会保存当前仓库，并把上一个仓库记为旧仓库。", {parse_mode:"HTML",...backMenu(true)}); if(t==="🔄 迁移旧仓库" && admin) return migrateRepositoryResources(uid); if(t==="🤖 克隆机器人") {';\\n\\n  if(t==="🔗 绑定新仓库" && admin)\\n    return send(TOKEN,uid,\\n      "🔗 <b>绑定新仓库</b>\\n\\n"+\\n      "支持群、超级群、频道。\\n\\n"+\\n      "请先把主机器人加入新仓库。\\n"+\\n      "然后从新仓库转发任意一条消息给机器人。\\n\\n"+\\n      "机器人会自动保存当前仓库，并把上一个仓库记为「旧仓库」。\\n"+\\n      "之后即可点击「🔄 迁移旧仓库」。",\\n      {parse_mode:"HTML",...backMenu(true)});\\n\\n  if(t==="🔄 迁移旧仓库" && admin)\\n    return migrateRepositoryResources(uid);\\n\\n  if(t==="🤖 克隆机器人") {\\n';
   if (!s.includes(oldPrivateInfo)) throw new Error("找不到资源仓库说明入口");
   s = s.replace(oldPrivateInfo, newPrivateInfo);
 
   const oldMainMessage = '  if(msg.chat?.type!=="private") { indexResource(msg); return; }';
-  const newMainMessage = '  if(msg.chat?.type!=="private") {\\n    indexResource(msg);\\n    syncRepositoryMessage(msg).catch(e=>console.error("BACKGROUND GROUP SYNC:",e.message));\\n    return;\\n  }';
+  const newMainMessage = '  if(msg.chat?.type!=="private") { indexResource(msg); syncRepositoryMessage(msg).catch(e=>console.error("BACKGROUND GROUP SYNC:",e.message)); return; }';\\n    syncRepositoryMessage(msg).catch(e=>console.error("BACKGROUND GROUP SYNC:",e.message));\\n    return;\\n  }';
   if (!s.includes(oldMainMessage)) throw new Error("找不到群消息入口");
   s = s.replace(oldMainMessage, newMainMessage);
 
   const oldChannel = '          indexResource(u.channel_post);\\n        }\\n        if(u.edited_channel_post) {\\n          console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));\\n          indexResource(u.edited_channel_post);\\n';
-  const newChannel = '          indexResource(u.channel_post);\\n          syncRepositoryMessage(u.channel_post).catch(e=>console.error("BACKGROUND CHANNEL SYNC:",e.message));\\n        }\\n        if(u.edited_channel_post) {\\n          console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));\\n          indexResource(u.edited_channel_post);\\n          syncRepositoryMessage(u.edited_channel_post).catch(e=>console.error("BACKGROUND EDITED CHANNEL SYNC:",e.message));\\n';
+  const newChannel = '          indexResource(u.channel_post); syncRepositoryMessage(u.channel_post).catch(e=>console.error("BACKGROUND CHANNEL SYNC:",e.message)); } if(u.edited_channel_post) { console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id)); indexResource(u.edited_channel_post); syncRepositoryMessage(u.edited_channel_post).catch(e=>console.error("BACKGROUND EDITED CHANNEL SYNC:",e.message));';\\n          syncRepositoryMessage(u.channel_post).catch(e=>console.error("BACKGROUND CHANNEL SYNC:",e.message));\\n        }\\n        if(u.edited_channel_post) {\\n          console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));\\n          indexResource(u.edited_channel_post);\\n          syncRepositoryMessage(u.edited_channel_post).catch(e=>console.error("BACKGROUND EDITED CHANNEL SYNC:",e.message));\\n';
   if (!s.includes(oldChannel)) throw new Error("找不到频道消息入口");
   s = s.replace(oldChannel, newChannel);
 
@@ -289,7 +290,7 @@ async function syncOldRepositoryRecent() {
   s = s.replaceAll('db.resources.slice(0,10)', 'db.resources.filter(x=>!x.unavailable).slice(0,10)');
 
   const oldBoot = 'boot().catch(e=>console.error("❌ FATAL BOOT:",e));';
-  const newBoot = 'setInterval(()=>{ syncOldRepositoryRecent().catch(e=>console.error("BACKGROUND REPOSITORY LOOP:",e.message)); }, 5*60*1000);\\nconsole.log("🔄 BACKGROUND REPOSITORY SYNC ENABLED");\\n'+oldBoot;
+  const newBoot = 'setInterval(()=>{ syncOldRepositoryRecent().catch(e=>console.error("BACKGROUND REPOSITORY LOOP:",e.message)); }, 5*60*1000); console.log("🔄 BACKGROUND REPOSITORY SYNC ENABLED"); '+oldBoot; }, 5*60*1000);\\nconsole.log("🔄 BACKGROUND REPOSITORY SYNC ENABLED");\\n'+oldBoot;
   if (!s.includes(oldBoot)) throw new Error("找不到 boot 入口");
   s = s.replace(oldBoot, newBoot);
 
