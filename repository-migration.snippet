@@ -74,68 +74,139 @@ async function migrateRepositoryResources(uid) {
   if (!source) return send(TOKEN,uid,"⚠️ 没有找到旧资源仓库。请先绑定新仓库，让机器人自动保留上一个仓库。");
   if (repositoryKey(target) === repositoryKey(source)) return send(TOKEN,uid,"⚠️ 新旧仓库不能是同一个群/频道。");
 
-  const resources = db.resources.filter(x => !x.unavailable && String(x.chatId) === String(source.chatId) && Number(x.messageId) > 0).sort((a,b) => Number(a.messageId)-Number(b.messageId));
+  const resources = db.resources
+    .filter(x => !x.unavailable && String(x.chatId) === String(source.chatId) && Number(x.messageId) > 0)
+    .sort((a,b) => Number(a.messageId)-Number(b.messageId));
+
   if (!resources.length) return send(TOKEN,uid,"📭 旧仓库暂时没有可迁移的已索引资源。请先执行「🔍 仓库扫描」。");
+
+  const total = resources.length;
+  const batchSize = 100;
+  let migrated = 0, failed = 0;
+  const startedAt = Date.now();
 
   db.settings.repositoryMigration = {
     status:"running",
     source:{...source},
     target:{...target},
-    total:resources.length,
+    total,
     migrated:0,
     failed:0,
-    startedAt:Date.now(),
+    startedAt,
     finishedAt:null,
     error:""
   };
   saveDb();
 
-  let migrated=0, failed=0;
-  for (const item of resources) {
+  const progress = await send(TOKEN,uid,
+    "🚀 <b>开始迁移旧仓库</b>\n\n"+
+    "📦 资源总数："+total+"\n"+
+    "🔄 正在按顺序批量迁移……\n"+
+    "⚡ 每批最多复制 100 个资源",
+    {parse_mode:"HTML"}
+  );
+  const progressMessageId = Number(progress?.result?.message_id || 0);
+
+  for (let offset=0; offset<total; offset+=batchSize) {
+    const batch = resources.slice(offset, offset+batchSize);
+    const messageIds = batch.map(x=>Number(x.messageId)).filter(Number.isFinite).sort((a,b)=>a-b);
+    if (!messageIds.length) continue;
+
     try {
-      const copied = await tg(TOKEN,"copyMessage",{chat_id:target.chatId,from_chat_id:source.chatId,message_id:Number(item.messageId)});
-      const newId=Number(copied?.message_id ?? copied);
-      if (!Number.isFinite(newId)) throw new Error("新消息ID无效");
-      db.resources.unshift({
-        ...item,
-        chatId:String(target.chatId),
-        messageId:newId,
-        repositoryId:repositoryKey(target),
-        migratedFrom:{chatId:String(source.chatId),messageId:Number(item.messageId)},
-        migratedAt:Date.now(),
-        unavailable:false,
-        fileId:null,
-        directoryId:item.directoryId ?? null
+      const copied = await tg(TOKEN,"copyMessages",{
+        chat_id:target.chatId,
+        from_chat_id:source.chatId,
+        message_ids:messageIds
       });
-      item.unavailable=true;
-      migrated++;
-      if (migrated % 20 === 0) saveDb();
+
+      const copiedList = Array.isArray(copied) ? copied : (Array.isArray(copied?.messages) ? copied.messages : null);
+      if (!copiedList || copiedList.length !== batch.length) {
+        throw new Error("批量复制返回数量异常："+(copiedList?.length ?? 0)+"/"+batch.length);
+      }
+
+      for (let i=0;i<batch.length;i++) {
+        const item=batch[i];
+        const newId=Number(copiedList[i]?.message_id ?? copiedList[i]?.id ?? copiedList[i]);
+        if (!Number.isFinite(newId)) { failed++; continue; }
+
+        db.resources.unshift({
+          ...item,
+          chatId:String(target.chatId),
+          messageId:newId,
+          repositoryId:repositoryKey(target),
+          migratedFrom:{chatId:String(source.chatId),messageId:Number(item.messageId)},
+          migratedAt:Date.now(),
+          unavailable:false,
+          fileId:null,
+          directoryId:item.directoryId ?? null
+        });
+        item.unavailable=true;
+        migrated++;
+      }
+
+      db.resources=db.resources.slice(0,MAX_RESOURCES);
+      db.settings.repositoryMigration.migrated=migrated;
+      db.settings.repositoryMigration.failed=failed;
+      db.settings.repositoryMigration.lastBatchEnd=offset+batch.length;
+      saveDb();
+
+      if (progressMessageId) {
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:progressMessageId,
+          text:"🚀 <b>正在迁移旧仓库</b>\n\n"+
+            "📦 总资源："+total+"\n"+
+            "🔄 已处理："+Math.min(offset+batch.length,total)+"/"+total+"\n"+
+            "✅ 已迁移："+migrated+"\n"+
+            "❌ 失败："+failed+"\n\n"+
+            "⚡ 当前按每批最多 100 个资源复制",
+          parse_mode:"HTML"
+        });
+      }
     } catch (e) {
-      failed++;
-      console.error("❌ REPOSITORY MIGRATION:",e.message,"message=",item.messageId);
+      failed += batch.length;
+      db.settings.repositoryMigration.migrated=migrated;
+      db.settings.repositoryMigration.failed=failed;
+      db.settings.repositoryMigration.lastBatchEnd=offset+batch.length;
+      saveDb();
+      console.error("❌ REPOSITORY MIGRATION BATCH:",e.message,"batch=",offset+1,"-",offset+batch.length);
+
+      if (progressMessageId) {
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:progressMessageId,
+          text:"⚠️ <b>迁移遇到一批失败</b>\n\n"+
+            "📦 总资源："+total+"\n"+
+            "🔄 已处理："+Math.min(offset+batch.length,total)+"/"+total+"\n"+
+            "✅ 已迁移："+migrated+"\n"+
+            "❌ 失败："+failed+"\n\n"+
+            "继续处理后续批次……",
+          parse_mode:"HTML"
+        }).catch(()=>{});
+      }
     }
-    await sleep(80);
   }
 
-  db.resources=db.resources.slice(0,MAX_RESOURCES);
   db.settings.repositoryMigration={
     status:failed ? "completed_with_errors" : "completed",
     source:{...source},
     target:{...target},
-    total:resources.length,
+    total,
     migrated,
     failed,
-    startedAt:db.settings.repositoryMigration.startedAt,
+    startedAt,
     finishedAt:Date.now(),
     error:""
   };
   saveDb();
 
   return sendHtml(TOKEN,uid,
-    "<b>✅ 旧仓库迁移完成</b> | 旧仓库："+escapeHtml(source.title||source.chatId)+
-    " | 新仓库："+escapeHtml(target.title||target.chatId)+
-    " | 待迁移："+resources.length+" | 已迁移："+migrated+" | 失败："+failed+
-    " | 🔄 旧仓库继续保留，新资源会后台同步。",
+    "<b>✅ 旧仓库批量迁移完成</b>\n\n"+
+    "📦 总资源："+total+
+    "\n✅ 成功迁移："+migrated+
+    "\n❌ 失败："+failed+
+    "\n📚 迁移方式：每批最多 100 个资源"+
+    "\n🔄 旧仓库继续保留，新资源会后台同步。",
     {parse_mode:"HTML",...adminMenu()}
   );
 }
