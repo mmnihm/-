@@ -12,9 +12,14 @@ function patchSource() {
   if (!src.includes(importAnchor)) throw new Error("123云盘补丁：找不到 import 锚点");
   src = src.replace(importAnchor, importAnchor + '\nimport { createWebDavClient } from "./cloud123.js";');
 
-  const menuAnchor = '["📦 资源仓库","🔍 仓库扫描"],';
-  if (!src.includes(menuAnchor)) throw new Error("123云盘补丁：找不到资源管理菜单");
-  src = src.replace(menuAnchor, '["📦 资源仓库","🔍 仓库扫描"],\n    ["☁️ 123云盘","🔄 云盘同步"],');
+  const menuFn = src.indexOf("function adminResourceMenu()");
+  if (menuFn < 0) throw new Error("123云盘补丁：找不到资源管理菜单函数");
+  const menuEnd = src.indexOf("function ", menuFn + 10);
+  const menuBlock = src.slice(menuFn, menuEnd > 0 ? menuEnd : menuFn + 5000);
+  const menuNeedle = '["📦 资源仓库","🔍 仓库扫描"],';
+  if (!menuBlock.includes(menuNeedle)) throw new Error("123云盘补丁：资源管理菜单结构不匹配");
+  const patchedMenuBlock = menuBlock.replace(menuNeedle, menuNeedle + '\\n    ["☁️ 123云盘","🔄 云盘同步"],');
+  src = src.slice(0, menuFn) + patchedMenuBlock + src.slice(menuFn + menuBlock.length);
 
   const insertAnchor = 'const repo = () => db.settings.repository;';
   if (!src.includes(insertAnchor)) throw new Error("123云盘补丁：找不到 repo 函数");
