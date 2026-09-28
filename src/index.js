@@ -293,6 +293,10 @@ async function ensureHistoryClient(uid) {
   if (historyClient) return historyClient;
   if (historyConnecting) return historyConnecting;
   historyConnecting = (async () => {
+    const connectionTimeout = (promise, ms, label) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(label + "（超过 " + Math.round(ms/1000) + " 秒）")), ms))
+    ]);
     const auth = db.settings.historyAuth || {};
     const hasApi = Boolean(auth.apiId || TG_API_ID) && Boolean(auth.apiHash || TG_API_HASH);
     if (!hasApi) {
@@ -309,9 +313,13 @@ async function ensureHistoryClient(uid) {
     const {client, apiId, apiHash} = await createHistoryClient();
     let authorized = false;
     try {
-      await client.connect();
-      await client.getMe();
+      await connectionTimeout(client.connect(), 20000, "Telegram 扫描账号连接超时");
+      await connectionTimeout(client.getMe(), 10000, "Telegram 扫描账号登录状态检查超时");
       authorized = true;
+      try {
+        const me = await client.getMe();
+        console.log("✅ MTProto 扫描账号已连接:", me?.username ? "@" + me.username : String(me?.id || ""));
+      } catch {}
     } catch {}
 
     if (!authorized) {
@@ -330,7 +338,15 @@ async function ensureHistoryClient(uid) {
     historyClient = client;
     console.log("✅ MTProto history client ready");
     return historyClient;
-  })();
+  })().catch(async e => {
+    console.error("❌ MTProto SCAN ACCOUNT:", e?.message || e);
+    try { await sendHtml(TOKEN, uid,
+      "<b>❌ Telegram 扫描账号连接失败</b>\\n\\n" +
+      "⚠️ " + escapeHtml(e?.message || "未知连接错误") + "\\n\\n" +
+      "💡 如果这个账号已经在资源频道里，请先在 Telegram 客户端打开一次该频道，然后重新点击「🚀 扫描并上传」。"
+    ); } catch {}
+    throw e;
+  });
   try { return await historyConnecting; }
   finally { historyConnecting = null; }
 }
