@@ -60,7 +60,23 @@ function patchSource() {
     console.log("📊 CLOUD123 实时上传进度补丁已贴");
     return true;
   }
-  // 修复旧版本：如果 helper 被错误插进 uploadOne 内部，则整体移动到 uploadOne 外层。\n  if (src.includes(PATCH_MARK) && src.includes("const refreshUploadProgress = async")) {\n    const helperPos = src.indexOf("    const refreshUploadProgress = async");\n    const uploadPos = src.indexOf("    const uploadOne = async (item) => {");\n    if (helperPos > uploadPos && uploadPos >= 0) {\n      const helperEnd = src.indexOf("    };", helperPos);\n      if (helperEnd >= 0) {\n        const helperBlock = src.slice(helperPos - ("    const uploadProgress = new Map();").length, helperEnd + 7);\n        src = src.slice(0, helperPos - ("    const uploadProgress = new Map();").length) + src.slice(helperEnd + 7);\n        const newUploadPos = src.indexOf("    const uploadOne = async (item) => {");\n        src = src.slice(0,newUploadPos) + helperBlock + "\\n" + src.slice(newUploadPos);\n        fs.writeFileSync(SOURCE, src);\n        console.log("🛠️ CLOUD123 已将实时进度 helper 移到 uploadOne 外层");\n        return true;\n      }\n    }\n  }\n\n  // 修复历史版本中“上传代码保留，但进度辅助函数丢失”的情况。
+  // 修复旧版本：如果 helper 被错误插进 uploadOne 内部，则整体移动到 uploadOne 外层。\n  if (src.includes(PATCH_MARK) && src.includes("const refreshUploadProgress = async")) {\n    const helperPos = src.indexOf("    const refreshUploadProgress = async");\n    const uploadPos = src.indexOf("    const uploadOne = async (item) => {");\n    if (helperPos > uploadPos && uploadPos >= 0) {\n      const helperEnd = src.indexOf("    };", helperPos);\n      if (helperEnd >= 0) {\n        const helperBlock = src.slice(helperPos - ("    const uploadProgress = new Map();").length, helperEnd + 7);\n        src = src.slice(0, helperPos - ("    const uploadProgress = new Map();").length) + src.slice(helperEnd + 7);\n        const newUploadPos = src.indexOf("    const uploadOne = async (item) => {");\n        src = src.slice(0,newUploadPos) + helperBlock + "\\n" + src.slice(newUploadPos);\n        fs.writeFileSync(SOURCE, src);\n        console.log("🛠️ CLOUD123 已将实时进度 helper 移到 uploadOne 外层");\n        return true;\n      }\n    }\n  }\n\n  // 最终兜底：无论历史补丁把 helper 放在哪个作用域，uploadOne 都必须拥有自己的进度 Map。
+  // 这样不会因为运行时补丁作用域异常而中断123云盘上传。
+  if (src.includes(PATCH_MARK) && src.includes("const uploadOne = async (item) => {") && !src.includes("CLOUD123_UPLOAD_PROGRESS_SCOPE_FIX")) {
+    const uploadOneAnchor = "    const uploadOne = async (item) => {";
+    const localProgress = [
+      "      /* CLOUD123_UPLOAD_PROGRESS_SCOPE_FIX */",
+      "      const uploadProgress = globalThis.__CLOUD123_UPLOAD_PROGRESS || (globalThis.__CLOUD123_UPLOAD_PROGRESS = new Map());"
+    ].join("\\n");
+    if (src.includes(uploadOneAnchor)) {
+      src = src.replace(uploadOneAnchor, uploadOneAnchor + "\\n" + localProgress);
+      fs.writeFileSync(SOURCE, src);
+      console.log("🛠️ CLOUD123 已修复 uploadOne 进度变量作用域");
+      return true;
+    }
+  }
+
+  // 修复历史版本中“上传代码保留，但进度辅助函数丢失”的情况。
   // 即使 CLOUD123_PROGRESS_V1 标记存在，也要以实际源码是否存在 helper 为准。
   if (src.includes(PATCH_MARK) && src.includes("refreshUploadProgress()") && !src.includes("const refreshUploadProgress = async")) {
     const progressHelper = [
