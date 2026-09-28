@@ -85,9 +85,13 @@ if (!TOKEN) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const api = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
+const TELEGRAM_API_HOSTS = [
+  "https://api.telegram.org",
+  "https://api.telegram.org"
+];
 
 async function tg(token, method, body = {}) {
-  const maxAttempts = method === "getUpdates" ? 5 : 4;
+  const maxAttempts = method === "getUpdates" ? 8 : 4;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const controller = new AbortController();
     const timeoutMs = method === "getUpdates" ? 45000 : 20000;
