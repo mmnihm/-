@@ -175,6 +175,16 @@ async function tg(token, method, body = {}) {
         const err = new Error(j.description || method + " failed");
         err.telegramStatus = r.status;
         err.telegramDescription = j.description || "";
+        // Telegram 对 editMessageText 的“消息无法编辑”属于业务状态，
+        // 不是网络故障：立即交给 safeEdit 处理，绝不重试 4 次。
+        if (
+          method === "editMessageText" &&
+          /message.*(can't|cannot).*edit|message is not modified|MESSAGE_ID_INVALID|message to edit not found/i.test(
+            String(j.description || "")
+          )
+        ) {
+          err.noRetry = true;
+        }
         throw err;
       }
 
@@ -182,6 +192,9 @@ async function tg(token, method, body = {}) {
     } catch (e) {
       const code = e?.code || "";
       const msg = String(e?.message || e);
+      if (e?.noRetry) {
+        throw e;
+      }
       console.warn("⚠️ Telegram HTTPS 请求失败:", method, "attempt="+(attempt+1)+"/"+maxAttempts, code ? code+" | " : "", msg);
       if (attempt >= maxAttempts - 1) {
         throw new Error(method + " 网络请求失败: " + (code ? code+" | " : "") + msg);
