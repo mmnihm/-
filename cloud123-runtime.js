@@ -9,7 +9,7 @@ function patchSource() {
   if (src.includes(PATCH_MARK)) {
     const repairedSrc = src.replace(
       /^\s*if\(!\/\^https\?:.*$/m,
-      '    if(!/^https?:\\/\\//i.test(t.trim())) return send(TOKEN,uid,"⚠️ WebDAV 地址格式不正确，请以 http:// 或 https:// 开头。");'
+      '    if(!/^https?:\/\//i.test(t.trim())) return send(TOKEN,uid,"⚠️ WebDAV 地址格式不正确，请以 http:// 或 https:// 开头。");'
     );
     if (repairedSrc !== src) {
       fs.writeFileSync(SOURCE, repairedSrc);
