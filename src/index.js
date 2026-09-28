@@ -338,14 +338,73 @@ async function ensureHistoryClient(uid) {
 async function findHistoryEntity(client) {
   const r = repo();
   if (!r) throw new Error("尚未绑定资源仓库");
-  if (r.username) {
-    try { return await client.getEntity(r.username); } catch {}
+
+  const targetId = String(r.chatId || "").trim();
+  const targetUsername = String(r.username || "").replace(/^@/, "").trim().toLowerCase();
+  const normalizeId = value => {
+    const s = String(value ?? "").trim();
+    if (!s) return "";
+    if (s.startsWith("-100")) return s;
+    if (/^\\d+$/.test(s)) return "-100" + s;
+    return s;
+  };
+  const targetBotId = normalizeId(targetId);
+
+  // 1. 优先通过 username 获取，兼容带/不带 @ 的写法。
+  if (targetUsername) {
+    try {
+      const entity = await client.getEntity(targetUsername);
+      console.log("✅ MTProto 仓库通过 username 找到:", targetUsername, "id=", String(entity?.id || ""));
+      return entity;
+    } catch (e) {
+      console.warn("⚠️ MTProto username 获取失败:", targetUsername, e?.message || e);
+    }
   }
+
+  // 2. 遍历 Telegram 账号实际能看到的对话。
   const dialogs = await client.getDialogs({limit:1000});
   for (const d of dialogs) {
-    if (String(d.id) === String(r.chatId)) return d.entity;
+    const entity = d?.entity || d;
+    const entityId = String(entity?.id ?? d?.id ?? "");
+    const entityBotId = normalizeId(entityId);
+    const dialogId = String(d?.id ?? "");
+    const dialogBotId = normalizeId(dialogId);
+
+    // Telegram Bot API 常见频道 ID 为 -100xxxxxxxxxx，
+    // MTProto entity.id 对频道通常是不带 -100 前缀的纯数字。
+    if (
+      (targetId && (entityId === targetId || dialogId === targetId)) ||
+      (targetBotId && (entityBotId === targetBotId || dialogBotId === targetBotId))
+    ) {
+      console.log("✅ MTProto 仓库通过 chatId 找到:", {
+        targetId,
+        targetBotId,
+        entityId,
+        title: entity?.title || entity?.username || ""
+      });
+      return entity;
+    }
+
+    const username = String(entity?.username || "").replace(/^@/, "").toLowerCase();
+    if (targetUsername && username && username === targetUsername) {
+      console.log("✅ MTProto 仓库通过 dialog username 找到:", username, "id=", entityId);
+      return entity;
+    }
   }
-  throw new Error("MTProto 账号找不到该仓库。请先用这个账号加入仓库，并在 Telegram 客户端里打开过该频道/群。");
+
+  console.error("❌ MTProto 仓库匹配失败:", {
+    targetId,
+    targetUsername,
+    dialogCount: dialogs.length,
+    visibleChats: dialogs.slice(0,50).map(d => ({
+      id: String(d?.id ?? ""),
+      entityId: String(d?.entity?.id ?? ""),
+      username: d?.entity?.username || "",
+      title: d?.entity?.title || ""
+    }))
+  });
+
+  throw new Error("MTProto 扫描账号已经登录，但没有匹配到当前资源仓库。已按 username、原始 chatId 和 -100 频道 ID 多种方式检查。");
 }
 
 function indexHistoryMessage(message, chatId) {
