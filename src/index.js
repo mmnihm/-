@@ -1645,7 +1645,7 @@ async function childMessage(child,msg,token) {
       "🔍 关键词：<b>"+escapeHtml(t)+"</b>\\n"+
       "📚 共找到 <b>"+results.length+"</b> 个结果\\n"+
       "📄 第 <b>1 / "+Math.max(1,Math.ceil(results.length/10))+"</b> 页\\n\\n"+
-      "👇 <b>请选择资源</b>",
+      "👇 <b>点击下方资源名称获取</b>",
       resourceInlineKeyboard(results,0)
     );
   }
