@@ -576,6 +576,7 @@ try {
   const changed=patchSource();
   console.log(changed ? "☁️ CLOUD123 PATCH APPLIED" : "☁️ CLOUD123 PATCH ALREADY PRESENT");
 } catch (e) {
-  console.error("❌ CLOUD123 PATCH FAILED:",e.message);
-  process.exitCode=1;
+  console.error("⚠️ CLOUD123 PATCH 跳过，机器人继续启动：",e.message);
+  // 123云盘进度补丁失败不应阻止主机器人启动
+  process.exitCode=0;
 }
