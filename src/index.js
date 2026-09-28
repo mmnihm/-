@@ -1769,7 +1769,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     await answer("正在获取资源…");
     try {
       await sendIndexedResource(token,chatId,item);
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源",
@@ -1777,7 +1777,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         reply_markup:resourceInlineKeyboard(s.results,page)
       });
     } catch(e) {
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n❌ 获取资源失败：<code>"+escapeHtml(e.message)+"</code>\n👇 请重试或选择其他资源",
@@ -1814,7 +1814,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         }
       },UPLOAD_TIMEOUT_MS));
       await answer("可以继续上传");
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"📁 <b>"+escapeHtml(s.directoryName)+"</b>\n\n📤 <b>继续发送文件</b>\n收到的文件都会自动归入当前文件夹。",
@@ -1829,7 +1829,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
     await answer("正在结束上传");
     await finalizeUpload(uid,s);
-    return tg(token,"editMessageText",{
+    return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
       text:"✅ <b>已结束本次上传</b>",
@@ -1843,7 +1843,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="upload_cancel") {
       states.delete("m:"+uid);
       await answer("已取消上传");
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"❌ <b>已取消上传</b>",
@@ -1854,7 +1854,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="upload_new") {
       states.set("m:"+uid,{step:"upload_folder"});
       await answer("请输入新文件夹名称");
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"📁 <b>新建文件夹</b>\\n\\n请直接发送新的文件夹名称。\\n\\n发送 /cancel 可取消。",
@@ -1866,7 +1866,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
     if(!d) {
       await answer("文件夹不存在，请重新选择",true);
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"⚠️ 这个文件夹已经不存在，请重新选择。",
@@ -1876,7 +1876,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     states.set("m:"+uid,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
     await answer("已选择："+d.name);
-    return tg(token,"editMessageText",{
+    return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
       text:"📁 <b>"+escapeHtml(d.name)+"</b>\n\n"+
@@ -1909,7 +1909,7 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(data.startsWith("dirsp:")) {
     const page=Math.max(0,Number(data.slice(6))||0);
-    return tg(token,"editMessageText",{
+    return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
       text:directoryText(),
@@ -1919,7 +1919,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   if(data==="dirs") {
-    return tg(token,"editMessageText",{
+    return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
       text:directoryText(),
@@ -1944,7 +1944,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       data,
       knownDirectories: db.directories.map(x=>({id:x.id,name:x.name}))
     });
-    return tg(token,"editMessageText",{
+    return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
       text:"⚠️ 这个文件夹记录已经更新，请重新选择当前文件夹。",
@@ -1957,7 +1957,7 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(data.startsWith("dir:")) {
     if(!all.length) {
-      return tg(token,"editMessageText",{
+      return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",
@@ -1966,7 +1966,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
     }
 
-    return tg(token,"editMessageText",{
+    return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
       text:"📁 <b>"+safe+"</b>\n\n━━━━━━━━━━━━\n📦 共 <b>"+all.length+"</b> 个资源\n📤 每次获取 <b>10 个</b>\n\n👇 点击下方按钮开始获取\n━━━━━━━━━━━━",
@@ -1990,7 +1990,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   const next=Math.min(offset+10,all.length);
-  return tg(token,"editMessageText",{
+  return safeEdit(token,{
     chat_id:chatId,
     message_id:messageId,
     text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源。\\n📤 本次已发送：<b>"+sent+"</b> 个。\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>",
