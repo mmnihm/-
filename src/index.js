@@ -428,6 +428,25 @@ async function findHistoryEntity(client) {
 
   // 3. 扩大 dialogs 范围，并同时检查 entity.id、dialog.id、username。
   const dialogs = await client.getDialogs({limit:5000});
+  const targetTitle = String(r.title || "").trim().toLowerCase();
+  if (targetTitle) {
+    const titleMatches = dialogs.filter(d => {
+      const e = d?.entity || d;
+      const title = String(e?.title || d?.title || "").trim().toLowerCase();
+      return title && title === targetTitle;
+    });
+    if (titleMatches.length === 1) {
+      const entity = titleMatches[0]?.entity || titleMatches[0];
+      console.log("✅ MTProto 仓库通过标题找到:", {
+        title: targetTitle,
+        entityId: String(entity?.id || ""),
+        username: entity?.username || "",
+        className: entity?.className || ""
+      });
+      return entity;
+    }
+    if (titleMatches.length > 1) console.warn("⚠️ MTProto 存在多个同名仓库，跳过标题匹配:", targetTitle);
+  }
   for (const d of dialogs) {
     const entity = d?.entity || d;
     const entityId = String(entity?.id ?? d?.id ?? "");
