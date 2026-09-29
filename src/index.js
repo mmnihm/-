@@ -2377,6 +2377,8 @@ async function binding(msg) {
 }
 
 async function mainMessage(msg) {
+  // 主机器人与其他机器人实例共享目录/资源索引。
+  await refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
   // Telegram 消息处理不能等待 Baserow；共享数据在后台同步。
   if(await binding(msg)) return;
   if(msg.chat?.type!=="private") { indexResource(msg); return; }
@@ -3174,6 +3176,8 @@ async function mainMessage(msg) {
 }
 
 async function childMessage(child,msg,token) {
+  // 目录/资源以 Baserow 为跨机器人共享源；本地缓存只负责加速显示。
+  await refreshSharedData(false).catch(e=>console.warn("⚠️ 子机器人共享目录刷新失败:",String(e?.message||e)));
   // 子机器人消息处理同样不能等待 Baserow，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
@@ -3255,6 +3259,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
   };
   await answer();
+  // 两个独立机器人实例使用同一个 Baserow 时，点击目录/管理按钮前先拉取共享目录。
+  await refreshSharedData(false).catch(e=>console.warn("⚠️ 回调共享目录刷新失败:",String(e?.message||e)));
 
   if(data==="hub"||data.startsWith("hub:")){
     const mode=data.split(":")[1]||"home";
@@ -3901,6 +3907,8 @@ async function boot(){
 
   console.log("🛡️ 内容保护：", contentProtectionEnabled() ? "开启" : "关闭", "自动删除：", autoDeleteText());
   setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
+  // 跨机器人目录同步：每 5 秒检查一次远端共享数据，refreshSharedData 自带节流与同步队列保护。
+  setInterval(() => { refreshSharedData(false).catch(e=>console.warn("⚠️ 跨机器人目录同步异常:",String(e?.message||e))); }, 5000);
   processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除初始化失败：",e.message));
 
   console.log("🫀 BOT HEARTBEAT ENABLED");
