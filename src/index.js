@@ -779,7 +779,6 @@ function adminResourceMenu() {
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
     ["🔐 指定群管理","👥 管理员管理"],
-    ["✏️ 非会员提示","📣 获取后推广"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
@@ -787,6 +786,7 @@ function adminOpsMenu() {
   return {reply_markup:{keyboard:[
     ["📊 数据统计","📢 广播消息"],
     ["📜 操作日志","📌 广播后置顶"],
+    ["✏️ 非会员提示","📣 获取后推广"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"数据与运营"}};
 }
