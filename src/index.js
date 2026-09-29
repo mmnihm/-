@@ -1119,7 +1119,11 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
       {parse_mode:"HTML"});
   }
 
-  return true;
+  return send(token,chatId,
+    "✅ <b>本批获取完成</b>\\n\\n"+
+    "📦 本组："+valid.length+" 个资源\\n"+
+    "📤 已发送："+ok+" 个",
+    {parse_mode:"HTML"});
 }
 const states=new Map();
 
