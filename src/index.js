@@ -3562,8 +3562,11 @@ async function boot(){
       runtime.lastTelegramOkAt = Date.now();
       runtime.lastError = "";
       await ensureStartCommand(TOKEN);
-      await initializeSharedBaserow();
-      console.log("🔄 Baserow 共享模式：已启用");
+      // Telegram 轮询必须优先启动，Baserow 同步不得阻塞机器人按钮和消息。
+      console.log("🔄 Baserow 共享模式：后台初始化，不阻塞 Telegram");
+      initializeSharedBaserow()
+        .then(()=>console.log("✅ Baserow 共享初始化完成"))
+        .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
       console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name));
       console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
       console.log("⚙️ "+configText().replaceAll("\n"," | "));
