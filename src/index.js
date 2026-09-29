@@ -541,11 +541,57 @@ async function scanHistory(uid) {
   if (db.settings.historyScan.status === "running") return send(TOKEN,uid,"🔍 历史扫描已经在进行中，请稍候。");
   const r = repo();
   if (!r) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。先绑定「📦 资源仓库」。",adminMenu());
+
   const previousCheckpoint=Number(db.settings.historyScan.lastMessageId||0);
   const startedAt=Date.now();
   db.settings.historyScan={status:"running",scanned:0,indexed:0,startedAt,finishedAt:null,error:"",lastMessageId:previousCheckpoint};
   saveDb();
+
+  let progressMessage = null;
+  const elapsedText = () => {
+    const seconds=Math.max(0,Math.floor((Date.now()-startedAt)/1000));
+    const mm=String(Math.floor(seconds/60)).padStart(2,"0");
+    const ss=String(seconds%60).padStart(2,"0");
+    return mm+":"+ss;
+  };
+  const updateProgress = async (scanned,indexed,boundary,force=false) => {
+    db.settings.historyScan.scanned=scanned;
+    db.settings.historyScan.indexed=indexed;
+    db.settings.historyScan.lastMessageId=boundary;
+    saveDb();
+    const text =
+      "<b>🔍 正在扫描资源仓库</b>\\n\\n"+
+      "📦 已扫描：<b>"+scanned+"</b> 条\\n"+
+      "📚 已发现资源：<b>"+indexed+"</b> 条\\n"+
+      "⏱️ 已运行：<b>"+elapsedText()+"</b>\\n"+
+      "🆔 当前消息：<code>"+boundary+"</code>\\n\\n"+
+      "━━━━━━━━━━━━━━\\n"+
+      "🔄 正在继续扫描……";
+    if(!progressMessage || force){
+      if(!progressMessage){
+        try {
+          progressMessage=await sendHtml(TOKEN,uid,text,{reply_markup:{inline_keyboard:[]}});
+        } catch(e) {
+          console.warn("⚠️ 无法发送扫描进度消息：",e.message);
+        }
+      }
+      return;
+    }
+    try {
+      await safeEdit(TOKEN,{
+        chat_id:uid,
+        message_id:progressMessage.message_id,
+        text,
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[]}
+      });
+    } catch(e) {
+      console.warn("⚠️ 扫描进度更新失败，继续扫描：",e.message);
+    }
+  };
+
   try {
+    await updateProgress(0,0,previousCheckpoint,true);
     const client = await ensureHistoryClient(uid);
     const entity = await findHistoryEntity(client);
     let scanned = 0, indexed = 0, boundary = previousCheckpoint;
@@ -555,28 +601,68 @@ async function scanHistory(uid) {
       scanned++;
       if (indexHistoryMessage(message,r.chatId)) indexed++;
       if (messageId > 0) boundary=messageId;
+
       if (scanned % 100 === 0) {
-        db.settings.historyScan.scanned=scanned;
-        db.settings.historyScan.indexed=indexed;
-        db.settings.historyScan.lastMessageId=boundary;
-        saveDb();
+        await updateProgress(scanned,indexed,boundary);
         console.log("🔎 HISTORY SCAN:", scanned, "indexed=", indexed, "checkpoint=", boundary);
       }
     }
+
     db.resources=db.resources.slice(0,MAX_RESOURCES);
     db.settings.historyScan={status:"completed",scanned,indexed,startedAt,finishedAt:Date.now(),error:"",lastMessageId:boundary};
     saveDb();
-    return sendHtml(TOKEN,uid,`<b>✅ 历史扫描完成</b>\n\n📦 <b>资源仓库</b>：${r.title}\n🔎 <b>扫描消息</b>：${scanned} 条\n📚 <b>新增 / 更新</b>：${indexed} 条\n📊 <b>当前资源</b>：${db.resources.length} 条\n\n━━━━━━━━━━━━━━\n✨ <i>历史消息已建立索引</i>\n现在可以直接使用搜索、随机获取和最新资源功能。`,adminMenu());;
+
+    const doneText =
+      "<b>✅ 历史扫描完成</b>\\n\\n"+
+      "📦 <b>资源仓库</b>："+escapeHtml(r.title)+"\\n"+
+      "🔎 <b>扫描消息</b>："+scanned+" 条\\n"+
+      "📚 <b>新增 / 更新</b>："+indexed+" 条\\n"+
+      "📊 <b>当前资源</b>："+db.resources.length+" 条\\n"+
+      "⏱️ <b>耗时</b>："+elapsedText()+"\\n\\n"+
+      "━━━━━━━━━━━━━━\\n"+
+      "✨ <i>历史消息已建立索引</i>\\n"+
+      "现在可以直接使用搜索、随机获取和最新资源功能。";
+
+    if(progressMessage){
+      await safeEdit(TOKEN,{
+        chat_id:uid,
+        message_id:progressMessage.message_id,
+        text:doneText,
+        parse_mode:"HTML",
+        reply_markup:adminMenu().reply_markup
+      });
+      return progressMessage;
+    }
+    return sendHtml(TOKEN,uid,doneText,adminMenu());
   } catch(e) {
     db.settings.historyScan.status="error";
     db.settings.historyScan.error=e.message;
     db.settings.historyScan.finishedAt=Date.now();
     saveDb();
     console.error("❌ HISTORY SCAN:",e);
-    return sendHtml(TOKEN,uid,"<b>❌ 历史扫描失败</b>\\n\\n"+e.message+"\\n\\n<i>如果扫描账号已经加入仓库，请重点检查 Telegram 登录状态、频道权限和历史消息读取权限。</i>",adminMenu());
+
+    const errorText =
+      "<b>❌ 历史扫描失败</b>\\n\\n"+
+      "📦 <b>资源仓库</b>："+escapeHtml(r.title)+"\\n"+
+      "🔎 已扫描："+Number(db.settings.historyScan.scanned||0)+" 条\\n"+
+      "📚 已发现："+Number(db.settings.historyScan.indexed||0)+" 条\\n"+
+      "⏱️ 已运行："+elapsedText()+"\\n\\n"+
+      "⚠️ "+escapeHtml(e.message||"未知错误")+"\\n\\n"+
+      "<i>如果扫描账号已经加入仓库，请重点检查 Telegram 登录状态、频道权限和历史消息读取权限。</i>";
+
+    if(progressMessage){
+      await safeEdit(TOKEN,{
+        chat_id:uid,
+        message_id:progressMessage.message_id,
+        text:errorText,
+        parse_mode:"HTML",
+        reply_markup:adminMenu().reply_markup
+      });
+      return progressMessage;
+    }
+    return sendHtml(TOKEN,uid,errorText,adminMenu());
   }
 }
-
 const isSuperAdmin = id => ADMIN_IDS.has(String(id));
 const isAdmin = id => isSuperAdmin(id) || db.settings.admins.includes(String(id));
 const group = () => db.settings.requiredGroup;
