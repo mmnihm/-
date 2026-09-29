@@ -2090,7 +2090,7 @@ async function binding(msg) {
 }
 
 async function mainMessage(msg) {
-  await refreshSharedData();
+  // Telegram 消息处理不能等待 Baserow；共享数据在后台同步。
   if(await binding(msg)) return;
   if(msg.chat?.type!=="private") { indexResource(msg); return; }
 
