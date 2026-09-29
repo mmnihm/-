@@ -934,7 +934,7 @@ function sendDirectoryBatch(token, chatId, items) {
 }
 function directoryText() {
   const dirs = Array.isArray(db.directories) ? db.directories : [];
-  return ["📂 <b>资源目录</b>","","请选择下面的文件夹：","","📚 总资源："+db.resources.length+" 条","📁 文件夹："+db.directories.length+" 个"].join("\n");
+  return ["📂 <b>资源目录</b>","━━━━━━━━━━━━━━","","📚 总资源：<b>"+db.resources.length+"</b> 条","📁 文件夹：<b>"+db.directories.length+"</b> 个","","👇 <i>请选择文件夹查看资源</i>"].join("\n");
 }
 function configText() {
   const g = group(), r = repo(), scan = db.settings.historyScan || {};
@@ -1136,7 +1136,22 @@ async function deliverFromHistory(token,chatId,userId,items) {
   }
 }
 
-async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
+function batchNavigation(mode,offset,total){
+  const rows=[];
+  const next=Number(offset||0)+10;
+  if(mode==="random"){
+    rows.push([{text:"🎲 再来10个",callback_data:"batch:random"}]);
+  } else if(mode==="latest"){
+    const nav=[];
+    if(Number(offset||0)>0) nav.push({text:"⬅️ 上一批",callback_data:"batch:latest:"+Math.max(0,Number(offset||0)-10)});
+    if(next<Number(total||0)) nav.push({text:"下一批 ➡️",callback_data:"batch:latest:"+next});
+    if(nav.length) rows.push(nav);
+  }
+  rows.push([{text:"🏠 返回首页",callback_data:"batch:home"}]);
+  return {reply_markup:{inline_keyboard:rows}};
+}
+
+async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   if(!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
   if(!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
 
@@ -1208,10 +1223,17 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
   }
 
   return send(token,chatId,
-    "✅ <b>本批获取完成</b>\\n\\n"+
-    "📦 本组："+valid.length+" 个资源\\n"+
-    "📤 已发送："+ok+" 个",
-    {parse_mode:"HTML"});
+    "✅ <b>本批获取完成</b>\\n"+
+    "━━━━━━━━━━━━━━\\n\\n"+
+    "📦 本次资源：<b>"+valid.length+"</b> 个\\n"+
+    "📤 已发送：<b>"+ok+"</b> 个\\n\\n"+
+    "━━━━━━━━━━━━━━\\n"+
+    (options.mode==="latest"
+      ? "🆕 <i>这是最新资源的一批</i>"
+      : options.mode==="random"
+        ? "🎲 <i>这是本次随机获取的一批</i>"
+        : "✨ <i>资源已发送完成</i>"),
+    {parse_mode:"HTML",...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length):{})});
 }
 const states=new Map();
 
@@ -1451,8 +1473,8 @@ async function mainMessage(msg) {
       {reply_markup:{keyboard:[["❌ 取消搜索"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"请输入搜索关键词"}}
     );
   }
-  if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10(uid));
-  if(t==="🆕 最新资源") return deliver(TOKEN,uid,uid,db.resources.slice(0,10));
+  if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10(uid),TOKEN,{mode:"random",offset:0,total:db.resources.length});
+  if(t==="🆕 最新资源") return deliver(TOKEN,uid,uid,db.resources.slice(0,10),TOKEN,{mode:"latest",offset:0,total:db.resources.length});
   if(s?.step==="search") {
     if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
       states.delete(key);
@@ -1467,10 +1489,13 @@ async function mainMessage(msg) {
     );
     states.set(key,{step:"search_results",query,results,page:0});
     return sendHtml(TOKEN,uid,
-      "🔎 <b>搜索结果</b>\\n\\n"+
-      "关键词：<code>"+escapeHtml(query)+"</code>\\n"+
-      "📚 共找到 <b>"+results.length+"</b> 个资源\\n\\n"+
-      "👇 点击资源名称即可获取",
+      "🔎 <b>搜索结果</b>\\n"+
+      "━━━━━━━━━━━━━━\\n\\n"+
+      "🔍 关键词：<code>"+escapeHtml(query)+"</code>\\n"+
+      "📚 共找到：<b>"+results.length+"</b> 个资源\\n"+
+      "📄 当前页面：<b>1 / "+Math.max(1,Math.ceil(results.length/10))+"</b>\\n\\n"+
+      "━━━━━━━━━━━━━━\\n"+
+      "👇 <i>点击资源名称获取</i>",
       resourceInlineKeyboard(results,0)
     );
   }
@@ -1891,6 +1916,30 @@ async function handleDirectoryCallback(token, q, child=false) {
       await tg(token,"answerCallbackQuery",body);
     } catch {}
   };
+
+  if(data==="batch:random" || data.startsWith("batch:latest:") || data==="batch:home"){
+    if(!(await allowed(TOKEN,uid))){ await answer("🔐 请先加入指定群",true); return; }
+    if(data==="batch:home"){
+      await answer("返回首页");
+      return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
+    }
+    if(child){
+      if(data==="batch:random"){
+        await answer("正在随机获取…");
+        return deliverFromHistory(token,uid,uid,random10(uid));
+      }
+      const offset=Math.max(0,Number(data.split(":")[2])||0);
+      await answer("正在获取最新资源…");
+      return deliverFromHistory(token,uid,uid,db.resources.slice(offset,offset+10));
+    }
+    if(data==="batch:random"){
+      await answer("正在随机获取…");
+      return deliver(token,uid,uid,random10(uid),TOKEN,{mode:"random",offset:0,total:db.resources.length});
+    }
+    const offset=Math.max(0,Number(data.split(":")[2])||0);
+    await answer("正在获取最新资源…");
+    return deliver(token,uid,uid,db.resources.slice(offset,offset+10),TOKEN,{mode:"latest",offset,total:db.resources.length});
+  }
 
   // 用户搜索结果使用内联按钮：两列排列，结果多时分页，不再占用底部键盘。
   if(data==="src" || data.startsWith("srp:") || data.startsWith("sr:")) {
