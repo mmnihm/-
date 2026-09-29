@@ -71,7 +71,7 @@ console.log("🚀 Telegram Clone Platform v2 starting...");
 console.log("📦 Node:", process.version);
 console.log("🔐 BOT_TOKEN:", TOKEN ? "已配置" : "❌ 未配置");
 console.log("👑 ADMIN_IDS:", ADMIN_IDS.size ? "已配置" : "❌ 未配置");
-setTimeout(() => checkBaserowConnection().catch(e => console.error("BASEROW CHECK:", e.message)), 1500);
+// Baserow 连接检查仅在机器人启动完成后异步执行，不阻塞主进程启动。\nPromise.resolve().then(() => checkBaserowConnection()).catch(e => console.error("BASEROW CHECK:", e.message));
 
 process.on("uncaughtException", e => console.error("UNCAUGHT:", e));
 process.on("unhandledRejection", e => console.error("UNHANDLED:", e));
