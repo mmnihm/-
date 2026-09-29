@@ -56,7 +56,14 @@ function runtimeStatus() {
     dataFile: DATA_FILE,
     backupFile: BACKUP_FILE,
     dataFileExists: fs.existsSync(DATA_FILE),
-    backupFileExists: fs.existsSync(BACKUP_FILE)
+    backupFileExists: fs.existsSync(BACKUP_FILE),
+    baserow: {
+      enabled: baserow.enabled,
+      connected: baserow.connected,
+      tableId: BASEROW_TABLE_ID || null,
+      lastOkAt: baserow.lastOkAt ? new Date(baserow.lastOkAt).toISOString() : null,
+      lastError: baserow.lastError || null
+    }
   };
 }
 
@@ -64,6 +71,7 @@ console.log("🚀 Telegram Clone Platform v2 starting...");
 console.log("📦 Node:", process.version);
 console.log("🔐 BOT_TOKEN:", TOKEN ? "已配置" : "❌ 未配置");
 console.log("👑 ADMIN_IDS:", ADMIN_IDS.size ? "已配置" : "❌ 未配置");
+setTimeout(() => checkBaserowConnection().catch(e => console.error("BASEROW CHECK:", e.message)), 1500);
 
 process.on("uncaughtException", e => console.error("UNCAUGHT:", e));
 process.on("unhandledRejection", e => console.error("UNHANDLED:", e));
@@ -208,6 +216,69 @@ async function tg(token, method, body = {}) {
   throw new Error(method + " failed after retries");
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
+
+const BASEROW_API_URL = String(process.env.BASEROW_API_URL || "https://api.baserow.io").replace(/\\/$/, "");
+const BASEROW_TOKEN = String(process.env.BASEROW_TOKEN || "").trim();
+const BASEROW_TABLE_ID = String(process.env.BASEROW_TABLE_ID || "1229166").trim();
+
+const baserow = {
+  enabled: Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID),
+  connected: false,
+  lastError: "",
+  lastOkAt: 0
+};
+
+async function baserowRequest(method, pathName, body) {
+  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID) {
+    throw new Error("Baserow 环境变量未配置");
+  }
+  const options = {
+    method,
+    headers: {
+      "Authorization": "Token " + BASEROW_TOKEN,
+      "Accept": "application/json"
+    }
+  };
+  if (body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  const r = await fetch(BASEROW_API_URL + pathName, options);
+  const text = await r.text();
+  let data = {};
+  try { data = JSON.parse(text || "{}"); } catch {}
+  if (!r.ok) {
+    throw new Error("Baserow " + r.status + ": " + String(data?.detail || data?.error || text || "请求失败").slice(0, 300));
+  }
+  return data;
+}
+
+async function checkBaserowConnection() {
+  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID) {
+    baserow.enabled = false;
+    baserow.connected = false;
+    baserow.lastError = "未配置 BASEROW_TOKEN / BASEROW_TABLE_ID";
+    return false;
+  }
+  try {
+    await baserowRequest(
+      "GET",
+      "/api/database/rows/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/?user_field_names=true&size=1"
+    );
+    baserow.enabled = true;
+    baserow.connected = true;
+    baserow.lastError = "";
+    baserow.lastOkAt = Date.now();
+    console.log("🗄️ Baserow: 已连接，table=" + BASEROW_TABLE_ID);
+    return true;
+  } catch (e) {
+    baserow.enabled = true;
+    baserow.connected = false;
+    baserow.lastError = String(e?.message || e);
+    console.error("❌ Baserow 连接失败:", baserow.lastError);
+    return false;
+  }
+}
 
 async function ensureStartCommand(token) {
   try {
