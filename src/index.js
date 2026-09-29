@@ -624,16 +624,33 @@ async function initializeSharedBaserow() {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
   try {
     normalizeSharedDirectories();
-    // 先读取共享表，再把本地缺失资源补进去，避免首次启用时覆盖已有本地数据。
+    // 首次切换共享模式时，先保留本地快照，再与 Baserow 做并集合并，绝不因为远端为空而丢失本地资源。
+    const localResources=(db.resources||[]).map(x=>({...x}));
+    const localDirectories=(db.directories||[]).map(x=>({...x}));
     await pullBaserowSharedData();
-    const remoteKeys=new Set(baserowRowsCache.values()
-      .map(row=>baserowRowKey(row,getBaserowFieldsCacheForSync()))
-      .filter(Boolean));
-    for(const item of db.resources||[]) {
+
+    const remoteKeys=new Set(db.resources.map(x=>String(x.chatId)+":"+String(x.messageId)));
+    for(const item of localResources) {
       const key=String(item.chatId)+":"+String(item.messageId);
-      if(!remoteKeys.has(key)) queueBaserowResourceSync(item);
+      if(!remoteKeys.has(key)) {
+        db.resources.push(item);
+        queueBaserowResourceSync(item);
+      }
     }
-    for(const d of db.directories||[]) queueBaserowDirectorySync(d);
+
+    const dirMap=new Map(db.directories.map(d=>[sharedDirectoryId(d.name),d]));
+    for(const d of localDirectories) {
+      const id=sharedDirectoryId(d.name);
+      if(!dirMap.has(id)) {
+        const nd={...d,id};
+        db.directories.push(nd);
+        dirMap.set(id,nd);
+      }
+      queueBaserowDirectorySync(dirMap.get(id));
+    }
+
+    db.resources=db.resources.slice(0,MAX_RESOURCES);
+    saveDb();
     await waitBaserowSyncQueue();
     await pullBaserowSharedData();
   } catch(e) {
