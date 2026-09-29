@@ -560,13 +560,14 @@ async function scanHistory(uid) {
     db.settings.historyScan.lastMessageId=boundary;
     saveDb();
     const text =
-      "<b>🔍 正在扫描资源仓库</b>\\n\\n"+
-      "📦 已扫描：<b>"+scanned+"</b> 条\\n"+
-      "📚 已发现资源：<b>"+indexed+"</b> 条\\n"+
-      "⏱️ 已运行：<b>"+elapsedText()+"</b>\\n"+
-      "🆔 当前消息：<code>"+boundary+"</code>\\n\\n"+
+      "🔍 <b>历史资源扫描</b>\\n\\n"+
+      "━━━━━━━━━━━━━━\\n\\n"+
+      "📦 消息：<b>"+scanned+"</b> 条\\n"+
+      "📚 资源：<b>"+indexed+"</b> 条\\n"+
+      "⏱️ 用时：<b>"+elapsedText()+"</b>\\n"+
+      "🆔 位置：<code>"+boundary+"</code>\\n\\n"+
       "━━━━━━━━━━━━━━\\n"+
-      "🔄 正在继续扫描……";
+      "⏳ <i>正在扫描资源仓库…</i>";
     if(!progressMessage || force){
       if(!progressMessage){
         try {
