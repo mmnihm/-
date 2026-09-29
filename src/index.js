@@ -2904,7 +2904,6 @@ async function childMessage(child,msg,token) {
   }
 }
 async function handleDirectoryCallback(token, q, child=false) {
-  await refreshSharedData();
   const uid=q.from?.id;
   const data=String(q.data||"");
   const callbackId=q.id;
@@ -2913,6 +2912,7 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(!uid || !callbackId || !chatId || !messageId) return;
 
+  // 先立即确认 Telegram 按钮点击，避免共享数据库刷新导致按钮一直转圈/看起来没反应。
   const answer=async(text="",showAlert=false)=>{
     try {
       const body={callback_query_id:callbackId};
@@ -2920,6 +2920,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       await tg(token,"answerCallbackQuery",body);
     } catch {}
   };
+  await answer();
+  await refreshSharedData();
 
 
   if(data==="hub"||data.startsWith("hub:")){await answer();
