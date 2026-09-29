@@ -252,7 +252,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{}}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{}}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -357,6 +357,8 @@ if (!Array.isArray(db.settings.logs)) db.settings.logs = [];
 if (!("historyAuth" in db.settings)) db.settings.historyAuth = null;
 if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:"",lastMessageId:0};
 if (!("lastMessageId" in db.settings.historyScan)) db.settings.historyScan.lastMessageId = 0;
+if (!db.settings.userFavorites || typeof db.settings.userFavorites!=="object") db.settings.userFavorites={};
+if (!db.settings.userRecent || typeof db.settings.userRecent!=="object") db.settings.userRecent={};
 if (!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:"system"};
 if (!Number.isFinite(Number(db.settings.sharedData.version))) db.settings.sharedData.version=1;
 if (!db.settings.sharedData.lastChangedAt) db.settings.sharedData.lastChangedAt=Date.now();
@@ -774,6 +776,59 @@ async function sendNonMemberNotice(token, chatId, menu) {
   return sendHtml(token, chatId, n.text, n.extra);
 }
 
+
+function resourceKey(item){return String(item?.chatId??"")+":"+String(item?.messageId??"");}
+function resourceByKey(key){const s=String(key||"");const p=s.lastIndexOf(":");if(p<1)return null;const chatId=s.slice(0,p),messageId=Number(s.slice(p+1));return db.resources.find(x=>String(x.chatId)===chatId&&Number(x.messageId)===messageId)||null;}
+function userFavorites(uid){const k=String(uid);const a=Array.isArray(db.settings.userFavorites?.[k])?db.settings.userFavorites[k]:[];const v=a.filter(x=>!!resourceByKey(x));db.settings.userFavorites[k]=v.slice(0,500);return db.settings.userFavorites[k];}
+function isFavorite(uid,item){return userFavorites(uid).includes(resourceKey(item));}
+function toggleFavorite(uid,item){const k=String(uid),rk=resourceKey(item),a=userFavorites(uid),i=a.indexOf(rk);if(i>=0)a.splice(i,1);else a.unshift(rk);db.settings.userFavorites[k]=a.slice(0,500);saveDb();return i<0;}
+function recordRecent(uid,item){if(!item)return;const k=String(uid),rk=resourceKey(item),a=Array.isArray(db.settings.userRecent?.[k])?db.settings.userRecent[k]:[];db.settings.userRecent[k]=[rk,...a.filter(x=>x!==rk)].slice(0,30);}
+function recordResourceDownload(item){if(item)item.downloads=Number(item.downloads||0)+1;}
+function resourceTags(item){const a=[];const d=db.directories.find(x=>String(x.id)===String(item?.directoryId));if(d?.name)a.push(String(d.name));if(item?.fileType)a.push(String(item.fileType));const m=String(item?.title||"").match(/\.([a-z0-9]{1,8})(?:\s|$)/i);if(m)a.push("."+m[1].toLowerCase());return [...new Set(a)].slice(0,4);}
+function allResourceTags(){const m={};for(const x of db.resources)for(const t of resourceTags(x))(m[t]??=[]).push(x);return m;}
+function userFeatureKeyboard(){return{inline_keyboard:[
+ [{text:"⭐ 我的收藏",callback_data:"hub:fav"},{text:"🕘 最近浏览",callback_data:"hub:recent"}],
+ [{text:"🔥 热门资源",callback_data:"hub:hot"},{text:"🏷️ 标签分类",callback_data:"hub:tags"}],
+ [{text:"⬅️ 返回资源目录",callback_data:"dirs"}]
+]};}
+function userFeatureText(){return"✨ <b>我的资源</b>\n━━━━━━━━━━━━━━\n\n⭐ 收藏、🕘 最近浏览、🔥 热门资源、🏷️ 标签分类\n\n👇 请选择功能";}
+function userFeatureListKeyboard(items,prefix,back="hub"){const rows=[];const list=items.slice(0,20);for(let i=0;i<list.length;i+=2){const row=[];for(let j=i;j<i+2&&j<list.length;j++){const x=list[j];row.push({text:(j+1)+". "+String(x.title||"未命名资源").slice(0,24),callback_data:prefix+resourceKey(x)});}rows.push(row);}if(!rows.length)rows.push([{text:"📭 暂无资源",callback_data:"noop"}]);rows.push([{text:"⬅️ 返回",callback_data:back}]);return{inline_keyboard:rows};}
+function userFeatureListText(title,items,extra=""){return"<b>"+title+"</b>\n━━━━━━━━━━━━━━\n\n📚 共 <b>"+items.length+"</b> 个资源"+(extra?"\n"+extra:"")+"\n\n👇 点击资源名称获取";}
+function adminMaintenanceMenu(){return{inline_keyboard:[
+ [{text:"🔄 重复资源检查",callback_data:"admin:dupes"},{text:"🧹 仓库健康检查",callback_data:"admin:health"}],
+ [{text:"🏷️ 标签统计",callback_data:"admin:tags"}],
+ [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+]};}
+function adminRootInline(){return{inline_keyboard:[
+ [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"📦 资源管理",callback_data:"admin:resource"}],
+ [{text:"📊 数据与运营",callback_data:"admin:ops"},{text:"⚙️ 系统设置",callback_data:"admin:settings"}],
+ [{text:"🤖 机器人管理",callback_data:"admin:bot"}],
+ [{text:"🏠 返回首页",callback_data:"admin:home"}]
+]};}
+function adminResourceInline(){return{inline_keyboard:[
+ [{text:"✏️ 文件夹管理",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
+ [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
+ [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
+ [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
+ [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
+]};}
+function adminSettingsInline(){return{inline_keyboard:[
+ [{text:"🔐 指定群管理",callback_data:"adm:group"},{text:"👥 管理员管理",callback_data:"adm:admins"}],
+ [{text:"🎁 会员/配额设置",callback_data:"adm:quota"}],
+ [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
+]};}
+function adminOpsInline(){return{inline_keyboard:[
+ [{text:"📊 数据统计",callback_data:"adm:stats"},{text:"📢 广播消息",callback_data:"adm:broadcast"}],
+ [{text:"📜 操作日志",callback_data:"adm:logs"},{text:"📌 广播后置顶",callback_data:"adm:pin"}],
+ [{text:"📝 用户提示",callback_data:"admin:prompts"},{text:"📣 获取后推广",callback_data:"adm:post"}],
+ [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
+]};}
+function adminBotInline(){return{inline_keyboard:[
+ [{text:"🤖 克隆机器人",callback_data:"adm:clone"}],
+ [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
+]};}
+function quotaSettingsText(){return"<b>🎁 会员 / 非会员额度</b>\n━━━━━━━━━━━━━━\n\n👤 非会员每日免费：<b>"+nonMemberDailyLimit()+"</b> 个资源\n💎 会员：不限量\n\n👇 修改额度";}
+
 function userMenu() {
   return {reply_markup:{keyboard:[
     ["📂 资源目录","🔎 搜索资源"],
@@ -793,43 +848,11 @@ function backMenu(admin=false) {
     ? {reply_markup:{keyboard:[["⬅️ 返回管理","🏠 开始"]],resize_keyboard:true,input_field_placeholder:"返回上一级"}}
     : userMenu();
 }
-function adminMenu() {
-  return {reply_markup:{keyboard:[
-    ["📤 上传资源","📦 资源管理"],
-    ["📊 数据与运营","⚙️ 平台设置"],
-    ["🤖 机器人管理"],
-    ["🏠 返回首页"]
-  ],resize_keyboard:true,input_field_placeholder:"选择管理功能"}};
-}
-function adminResourceMenu() {
-  return {reply_markup:{keyboard:[
-    ["✏️ 修改文件夹名称","🗑️ 删除资源"],
-    ["🔄 移动资源","📦 批量管理"],
-    ["🔗 分享资源","📦 资源仓库"],
-    ["🔍 仓库扫描"],
-    ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"选择资源管理功能"}};
-}
-function adminSettingsMenu() {
-  return {reply_markup:{keyboard:[
-    ["🔐 指定群管理","👥 管理员管理"],
-    ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
-}
-function adminOpsMenu() {
-  return {reply_markup:{keyboard:[
-    ["📊 数据统计","📢 广播消息"],
-    ["📜 操作日志","📌 广播后置顶"],
-    ["✏️ 非会员提示","📣 获取后推广"],
-    ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"数据与运营"}};
-}
-function adminBotMenu() {
-  return {reply_markup:{keyboard:[
-    ["🤖 克隆机器人"],
-    ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"机器人管理"}};
-}
+function adminMenu(){return{reply_markup:adminRootInline()};}
+function adminResourceMenu(){return{reply_markup:adminResourceInline()};}
+function adminSettingsMenu(){return{reply_markup:adminSettingsInline()};}
+function adminOpsMenu(){return{reply_markup:adminOpsInline()};}
+function adminBotMenu(){return{reply_markup:adminBotInline()};}
 function uploadFolderInlineMenu() {
   const rows=[];
   let row=[];
@@ -1053,6 +1076,7 @@ function directoryInlineKeyboard(page=0) {
   if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"dirsp:"+(page-1)});
   if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"dirsp:"+(page+1)});
   if(nav.length) rows.push(nav);
+  rows.push([{text:"⭐ 我的资源",callback_data:"hub"},{text:"🔥 热门",callback_data:"hub:hot"}]);
   return {inline_keyboard:rows};
 }
 function folderSummaryKeyboard(directoryId,count,offset=0) {
@@ -1125,7 +1149,8 @@ function indexResource(msg) {
     directoryId:null,
     fileType,
     fileId,
-    textOnly:!media
+    textOnly:!media,
+    downloads:0
   };
   const i=db.resources.findIndex(x=>x.chatId===item.chatId&&x.messageId===item.messageId);
   if(i>=0) {
@@ -1255,6 +1280,8 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
         const method=mime.startsWith("video")?"sendVideo":"sendDocument";
         await tgUploadBuffer(token,method,chatId,buffer,name,item.caption||"");
         ok++;
+        recordResourceDownload(item);
+        recordRecent(userId,item);
       }catch(e){fail++;console.error("HISTORY SEND:",e.message,"message=",item.messageId);}
       await sleep(150);
     }
@@ -1491,6 +1518,8 @@ async function mainMessage(msg) {
     try {
       await sendIndexedResource(TOKEN,uid,item);
       recordStat(uid,"download",1);
+      recordResourceDownload(item);
+      recordRecent(uid,item);
       saveDb();
       return sendHtml(TOKEN,uid,
         "<b>🔗 分享资源</b>\n"+
@@ -2197,6 +2226,8 @@ async function childMessage(child,msg,token) {
     try {
       await sendIndexedResource(token,uid,item);
       recordStat(uid,"download",1);
+      recordResourceDownload(item);
+      recordRecent(uid,item);
       saveDb();
       return sendHtml(token,uid,"<b>🔗 分享资源</b>\n━━━━━━━━━━━━━━\n\n📦 <b>"+escapeHtml(item.title||"未命名资源")+"</b>\n📁 文件夹：<b>"+escapeHtml(db.directories.find(d=>String(d.id)===String(item.directoryId))?.name||"未分类")+"</b>\n\n✅ 资源已发送。",childMenu());
     } catch {
@@ -2219,6 +2250,14 @@ async function childMessage(child,msg,token) {
   }
   if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10(uid),{mode:"random",offset:0,total:db.resources.length});
   if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10),{mode:"latest",offset:0,total:db.resources.length});
+  if(s?.step==="nonmember_quota_edit"){
+    if(t==="/cancel"){states.delete(key);return sendHtml(token,uid,"<b>↩️ 已取消修改</b>",adminMenu());}
+    if(!isAdmin(uid)){states.delete(key);return;}
+    const n=Number(t);if(!Number.isInteger(n)||n<0||n>100)return sendHtml(token,uid,"❌ 请输入 0～100 的整数。",adminMenu());
+    db.settings.nonMemberDailyLimit=n;states.delete(key);saveDb();logAdmin(uid,"修改非会员额度","每日 "+n+" 个");
+    return sendHtml(token,uid,"<b>✅ 非会员每日额度已修改</b>\n\n📦 每日免费：<b>"+n+"<\/b> 个资源",adminMenu());
+  }
+
   if(s?.step==="search"){
     if(t==="/cancel"){states.delete(key);return sendHtml(token,uid,"<b>↩️ 已退出搜索</b>\n\n👇 请选择其他功能。",childMenu());}
     recordStat(uid,"search",1);
@@ -2247,6 +2286,84 @@ async function handleDirectoryCallback(token, q, child=false) {
       await tg(token,"answerCallbackQuery",body);
     } catch {}
   };
+
+
+  if(data==="hub"||data.startsWith("hub:")){
+    const mode=data.split(":")[1]||"home";
+    if(mode==="home")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureText(),parse_mode:"HTML",reply_markup:userFeatureKeyboard()});
+    if(mode==="fav"){const items=userFavorites(uid).map(resourceByKey).filter(Boolean);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("⭐ 我的收藏",items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"getfav:")});}
+    if(mode==="recent"){const ids=Array.isArray(db.settings.userRecent?.[String(uid)])?db.settings.userRecent[String(uid)]:[];const items=ids.map(resourceByKey).filter(Boolean);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🕘 最近浏览",items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"getrecent:")});}
+    if(mode==="hot"){const items=[...db.resources].sort((a,b)=>Number(b.downloads||0)-Number(a.downloads||0)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🔥 热门资源",items,"按获取次数排序"),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gethot:")});}
+    if(mode==="tags"){const map=allResourceTags();const tags=Object.keys(map).sort((a,b)=>map[b].length-map[a].length).slice(0,30);const rows=[];for(let i=0;i<tags.length;i+=2)rows.push(tags.slice(i,i+2).map(t=>({text:"🏷️ "+t.slice(0,18)+" · "+map[t].length,callback_data:"tag:"+t.slice(0,40)})));if(!rows.length)rows.push([{text:"📭 暂无标签",callback_data:"noop"}]);rows.push([{text:"⬅️ 返回",callback_data:"hub"}]);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签分类</b>\n━━━━━━━━━━━━━━\n\n📚 标签数：<b>"+tags.length+"</b>\n\n👇 请选择标签",parse_mode:"HTML",reply_markup:{inline_keyboard:rows}});}
+  }
+  if(data.startsWith("tag:")){const tag=data.slice(4),items=db.resources.filter(x=>resourceTags(x).includes(tag)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🏷️ "+escapeHtml(tag),items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gettag:","hub:tags")});}
+  if(data.startsWith("favtoggle:")){const item=resourceByKey(data.slice(10));if(!item){await answer("资源不存在",true);return;}const on=toggleFavorite(uid,item);await answer(on?"⭐ 已收藏":"☆ 已取消收藏");return;}
+  for(const prefix of ["getfav:","getrecent:","gethot:","gettag:"]){
+    if(data.startsWith(prefix)){
+      const item=resourceByKey(data.slice(prefix.length));if(!item){await answer("资源不存在或已删除",true);return;}
+      const member=await allowed(TOKEN,uid);if(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0){await answer("今日免费额度已用完",true);return sendQuotaNotice(token,chatId,uid,userMenu());}
+      try{await answer("正在获取资源…");await sendIndexedResource(token,chatId,item);recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);if(!member&&!isAdmin(uid))consumeNonMemberQuota(uid,1);else saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\n\n📦 "+escapeHtml(item.title||"未命名资源")+"\n\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+        [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
+        [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
+      ]}});}catch(e){await answer("获取失败："+String(e.message||e),true);return;}
+    }
+  }
+  if(data.startsWith("admin:")||data.startsWith("adm:")){
+    if(child||!isAdmin(uid)){await answer("无权限",true);return;}
+    const route=data.slice(data.indexOf(":")+1);
+    if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
+    if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
+    if(data==="admin:resource")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 资源管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminResourceInline()});
+    if(data==="admin:ops")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📊 数据与运营</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminOpsInline()});
+    if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
+    if(data==="admin:bot")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🤖 机器人管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminBotInline()});
+    if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
+    if(data==="admin:upload")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+    if(data==="admin:prompts")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📝 用户提示</b>\n━━━━━━━━━━━━━━\n\n👇 请选择要编辑的提示",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+      [{text:"✏️ 非会员提示",callback_data:"adm:nonmember"},{text:"✏️ 获取后提示",callback_data:"adm:post"}],
+      [{text:"⬅️ 返回",callback_data:"admin:ops"}]
+    ]}});
+    if(data==="adm:nonmember")return mainMessage({chat:{id:chatId},from:{id:uid},text:"✏️ 非会员提示"});
+    if(data==="adm:post")return mainMessage({chat:{id:chatId},from:{id:uid},text:"📣 获取后推广"});
+    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人"};
+    if(syn[route])return mainMessage({chat:{id:chatId},from:{id:uid},text:syn[route]});
+    if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
+      [{text:"➕ +1",callback_data:"quota:+1"},{text:"➖ -1",callback_data:"quota:-1"}],
+      [{text:"✏️ 自定义",callback_data:"quota:set"}],
+      [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
+    ]}});
+    if(route==="dupes"){
+      const map={};for(const x of db.resources){const k=x.fileId?"file:"+x.fileId:"name:"+String(x.title||"").trim().toLowerCase();(map[k]??=[]).push(x);}
+      const groups=Object.values(map).filter(x=>x.length>1),dup=groups.reduce((n,g)=>n+g.length-1,0);
+      const kb={inline_keyboard:[]};if(groups.length)kb.inline_keyboard.push([{text:"🧹 清理重复索引",callback_data:"admin:dupeclean"}]);kb.inline_keyboard.push([{text:"⬅️ 返回资源维护",callback_data:"admin:maintenance"}]);
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔄 重复资源检查</b>\n━━━━━━━━━━━━━━\n\n📚 资源总数："+db.resources.length+"\n♻️ 重复组："+groups.length+"\n🗑️ 可清理："+dup+"\n\n"+(groups.length?"清理只影响数据库索引，不删除仓库消息。":"✅ 暂未发现重复资源。"),parse_mode:"HTML",reply_markup:kb});
+    }
+    if(route==="dupeclean"){
+      const seen=new Set(),before=db.resources.length;db.resources=[...db.resources].filter(x=>{const k=x.fileId?"file:"+x.fileId:"name:"+String(x.title||"").trim().toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});touchSharedData(uid);saveDb();logAdmin(uid,"清理重复索引","移除 "+(before-db.resources.length)+" 条");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 重复索引清理完成</b>\n\n🗑️ 移除："+(before-db.resources.length)+" 条\n📚 剩余："+db.resources.length+"\n\n⚠️ Telegram 仓库消息未删除。",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
+    }
+    if(route==="health"){
+      const rr=repo(),orphan=db.resources.filter(x=>x.directoryId&&!db.directories.some(d=>String(d.id)===String(x.directoryId))).length,empty=db.directories.filter(d=>!db.resources.some(x=>String(x.directoryId)===String(d.id))).length,missing=db.resources.filter(x=>!x.chatId||!x.messageId).length;
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 仓库健康检查</b>\n━━━━━━━━━━━━━━\n\n📚 资源索引："+db.resources.length+"\n📁 文件夹："+db.directories.length+"\n🏠 仓库："+(rr?"已绑定":"未绑定")+"\n⚠️ 孤立资源："+orphan+"\n📭 空文件夹："+empty+"\n🔗 无消息指针："+missing+"\n\n<i>不会自动删除 Telegram 仓库消息。</i>",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+        [{text:"🔄 重新检查",callback_data:"admin:health"}],
+        [{text:"⬅️ 返回资源维护",callback_data:"admin:maintenance"}]
+      ]}});
+    }
+    if(route==="tags"){
+      const map=allResourceTags(),tags=Object.entries(map).sort((a,b)=>b[1].length-a[1].length).slice(0,20),body=tags.length?tags.map(([k,v])=>"🏷️ "+escapeHtml(k)+"：<b>"+v.length+"</b>").join("\n"):"📭 暂无标签";
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签统计</b>\n━━━━━━━━━━━━━━\n\n"+body,parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
+    }
+  }
+  if(data.startsWith("quota:")){
+    if(child||!isAdmin(uid)){await answer("无权限",true);return;}
+    const op=data.slice(6);
+    if(op==="+1"||op==="-1"){db.settings.nonMemberDailyLimit=Math.max(0,nonMemberDailyLimit()+(op==="+1"?1:-1));saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
+      [{text:"➕ +1",callback_data:"quota:+1"},{text:"➖ -1",callback_data:"quota:-1"}],
+      [{text:"✏️ 自定义",callback_data:"quota:set"}],
+      [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
+    ]}});}
+    if(op==="set"){states.set("m:"+uid,{step:"nonmember_quota_edit"});await answer("请输入新的每日额度");return sendHtml(token,uid,"<b>🎁 修改非会员每日额度</b>\n\n请发送 0～100 的整数。",adminMenu());}
+  }
 
   if(data==="move_cancel" || data.startsWith("move_to:")) {
     if(!isAdmin(uid) || child) { await answer("无权限",true); return; }
@@ -2409,6 +2526,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     try {
       await sendIndexedResource(token,chatId,item);
       recordStat(uid,"download",1);
+      recordResourceDownload(item);
+      recordRecent(uid,item);
       if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
       return safeEdit(token,{
         chat_id:chatId,
