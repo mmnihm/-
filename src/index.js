@@ -252,7 +252,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"}}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。"}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -728,6 +728,17 @@ async function allowed(token, userId) {
     return ["creator","administrator","member"].includes(m.status) || (m.status === "restricted" && m.is_member === true);
   } catch { return false; }
 }
+function nonMemberMessage(menu) {
+  const text = String(db.settings.nonMemberMessage || "").trim() || "🔐 <b>请先加入指定会员群</b>\\n\\n加入后即可继续使用资源功能。";
+  return {text, extra:menu||{}};
+}
+function postResourceMessage() {
+  return String(db.settings.postResourceMessage || "").trim();
+}
+async function sendNonMemberNotice(token, chatId, menu) {
+  const n = nonMemberMessage(menu);
+  return sendHtml(token, chatId, n.text, n.extra);
+}
 
 function userMenu() {
   return {reply_markup:{keyboard:[
@@ -768,6 +779,7 @@ function adminResourceMenu() {
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
     ["🔐 指定群管理","👥 管理员管理"],
+    ["✏️ 非会员提示","📣 获取后推广"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
@@ -1187,7 +1199,7 @@ function escapeHtml(value) {
 }
 
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
-  if (!(await allowed(TOKEN,userId))) return sendHtml(token,chatId,"<b>🔐 请先加入指定群</b>\n\n加入后即可继续使用资源功能。",childMenu());
+  if (!(await allowed(TOKEN,userId))) return sendNonMemberNotice(token,chatId,childMenu());
   if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\n\n暂时没有找到可用内容。",childMenu());
   try {
     const client=await ensureHistoryClient(userId);
@@ -1215,6 +1227,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
       "<b>📦 本批资源获取完成</b>\n━━━━━━━━━━━━━━\n\n📤 成功发送：<b>"+ok+"</b> 条\n⚠️ 失败："+fail+" 条\n📚 本批："+items.length+" 条\n\n"+
       (mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。"),
       batchNavigation(mode,offset,total));
+    if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
   }catch(e){
     console.error("HISTORY DELIVERY:",e);
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\n\n原因："+escapeHtml(e.message||e),childMenu());
@@ -1236,7 +1249,7 @@ function batchNavigation(mode,offset,total){
 }
 
 async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
-  if(!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
+  if(!(await allowed(TOKEN,userId))) return sendNonMemberNotice(token,chatId);
   if(!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
 
   const valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
@@ -1320,6 +1333,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
         ? "🎲 <i>这是本次随机获取的一批</i>"
         : "✨ <i>资源已发送完成</i>"),
     {parse_mode:"HTML",...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length):{})});
+  if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
 }
 const states=new Map();
 
@@ -1528,6 +1542,60 @@ async function mainMessage(msg) {
       "把主机器人加入目标群，然后在群里发送：\\n"+
       "/绑定指定群\\n\\n"+
       "当前： "+(group()?"✅ "+group().title:"❌ 未绑定"));
+
+  if(t==="✏️ 非会员提示" && admin) {
+    states.set(key,{step:"edit_nonmember_message"});
+    return sendHtml(TOKEN,uid,
+      "<b>✏️ 编辑非会员提示</b>\\n\\n"+
+      "用户不在指定会员群时，会看到下面这条消息：\\n\\n"+
+      (db.settings.nonMemberMessage || "🔐 <b>请先加入指定会员群</b>\\n\\n加入后即可继续使用资源功能。")+
+      "\\n\\n请直接发送新的消息内容。\\n发送 /cancel 可取消。",
+      {reply_markup:{remove_keyboard:true}});
+  }
+
+  if(t==="📣 获取后推广" && admin) {
+    states.set(key,{step:"edit_post_resource_message"});
+    return sendHtml(TOKEN,uid,
+      "<b>📣 编辑获取资源后的推广消息</b>\\n\\n"+
+      "用户成功获取资源后，会额外收到这条消息：\\n\\n"+
+      (db.settings.postResourceMessage || "✨ <b>更多资源</b>\\n\\n欢迎继续浏览资源库。")+
+      "\\n\\n请直接发送新的消息内容。\\n发送 /cancel 可取消。",
+      {reply_markup:{remove_keyboard:true}});
+  }
+
+  if(s?.step==="edit_nonmember_message" && admin) {
+    if(t==="/cancel") {
+      states.delete(key);
+      return send(TOKEN,uid,"❌ 已取消编辑。",adminSettingsMenu());
+    }
+    const value=String(t||"").trim();
+    if(!value) return send(TOKEN,uid,"⚠️ 消息不能为空，请重新发送。");
+    db.settings.nonMemberMessage=value.slice(0,4000);
+    saveDb();
+    logAdmin(uid,"修改非会员提示");
+    states.delete(key);
+    return sendHtml(TOKEN,uid,
+      "<b>✅ 非会员提示已更新</b>\\n\\n"+
+      db.settings.nonMemberMessage,
+      adminSettingsMenu());
+  }
+
+  if(s?.step==="edit_post_resource_message" && admin) {
+    if(t==="/cancel") {
+      states.delete(key);
+      return send(TOKEN,uid,"❌ 已取消编辑。",adminSettingsMenu());
+    }
+    const value=String(t||"").trim();
+    if(!value) return send(TOKEN,uid,"⚠️ 消息不能为空，请重新发送。");
+    db.settings.postResourceMessage=value.slice(0,4000);
+    saveDb();
+    logAdmin(uid,"修改获取后推广消息");
+    states.delete(key);
+    return sendHtml(TOKEN,uid,
+      "<b>✅ 获取后推广消息已更新</b>\\n\\n"+
+      db.settings.postResourceMessage,
+      adminSettingsMenu());
+  }
 
   if(t==="🔍 仓库扫描" && admin) {
     const scan=db.settings.historyScan;
