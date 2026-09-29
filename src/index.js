@@ -217,7 +217,7 @@ async function tg(token, method, body = {}) {
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
 
-const BASEROW_API_URL = String(process.env.BASEROW_API_URL || "https://api.baserow.io").replace(/\\/$/, "");
+const BASEROW_API_URL = String(process.env.BASEROW_API_URL || "https://api.baserow.io").replace(/\/$/, "");
 const BASEROW_TOKEN = String(process.env.BASEROW_TOKEN || "").trim();
 const BASEROW_TABLE_ID = String(process.env.BASEROW_TABLE_ID || "1229166").trim();
 
