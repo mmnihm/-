@@ -2377,8 +2377,8 @@ async function binding(msg) {
 }
 
 async function mainMessage(msg) {
-  // 主机器人与其他机器人实例共享目录/资源索引。
-  await refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
+  // 共享数据刷新放到后台，绝不能阻塞 Telegram 菜单响应；后台每 5 秒也会自动同步。
+  refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
   // Telegram 消息处理不能等待 Baserow；共享数据在后台同步。
   if(await binding(msg)) return;
   if(msg.chat?.type!=="private") { indexResource(msg); return; }
@@ -2645,9 +2645,14 @@ async function mainMessage(msg) {
   }
 
   if(t==="📂 资源目录") {
-
     states.delete(key);
-    return sendHtml(TOKEN,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
+    console.log("📂 资源目录：用户="+uid+" 文件夹="+db.directories.length+" 资源="+db.resources.length);
+    try {
+      return await sendHtml(TOKEN,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
+    } catch(e) {
+      console.error("❌ 资源目录发送失败:",String(e?.telegramDescription||e?.message||e));
+      return send(TOKEN,uid,"❌ 资源目录暂时无法打开，请稍后再试。");
+    }
   }
   if(t==="🏠 开始" && s?.step==="directory") {
     states.delete(key);
@@ -3176,8 +3181,8 @@ async function mainMessage(msg) {
 }
 
 async function childMessage(child,msg,token) {
-  // 目录/资源以 Baserow 为跨机器人共享源；本地缓存只负责加速显示。
-  await refreshSharedData(false).catch(e=>console.warn("⚠️ 子机器人共享目录刷新失败:",String(e?.message||e)));
+  // 目录/资源以 Baserow 为跨机器人共享源；刷新放后台，不能阻塞 /start 和菜单按钮。
+  refreshSharedData(false).catch(e=>console.warn("⚠️ 子机器人共享目录刷新失败:",String(e?.message||e)));
   // 子机器人消息处理同样不能等待 Baserow，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
