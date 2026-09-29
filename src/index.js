@@ -252,7 +252,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。"}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{}}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -728,6 +728,40 @@ async function allowed(token, userId) {
     return ["creator","administrator","member"].includes(m.status) || (m.status === "restricted" && m.is_member === true);
   } catch { return false; }
 }
+function quotaDateKey() {
+  const d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function nonMemberDailyLimit() {
+  const n=Number(db.settings.nonMemberDailyLimit);
+  return Number.isFinite(n) && n>=0 ? Math.floor(n) : 3;
+}
+function nonMemberDailyUsed(uid) {
+  if(!db.settings.nonMemberDailyUsage || typeof db.settings.nonMemberDailyUsage!=="object") db.settings.nonMemberDailyUsage={};
+  const row=db.settings.nonMemberDailyUsage[String(uid)];
+  if(!row || row.date!==quotaDateKey()) return 0;
+  return Math.max(0,Number(row.used)||0);
+}
+function nonMemberDailyRemaining(uid) {
+  if(isAdmin(uid)) return Infinity;
+  return Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid));
+}
+function consumeNonMemberQuota(uid,count) {
+  if(isAdmin(uid) || !(Number(count)>0)) return;
+  if(!db.settings.nonMemberDailyUsage || typeof db.settings.nonMemberDailyUsage!=="object") db.settings.nonMemberDailyUsage={};
+  const id=String(uid), today=quotaDateKey(), row=db.settings.nonMemberDailyUsage[id];
+  if(!row || row.date!==today) db.settings.nonMemberDailyUsage[id]={date:today,used:Number(count)||0};
+  else row.used=Math.max(0,Number(row.used)||0)+(Number(count)||0);
+  saveDb();
+}
+function quotaNoticeText() {
+  return "🎁 <b>今日免费额度已用完</b>\\n\\n非会员每天可免费获取 <b>"+nonMemberDailyLimit()+" 个资源</b>。\\n今日剩余：<b>0</b> 个\\n\\n加入指定会员群后即可继续无限获取。";
+}
+async function sendQuotaNotice(token,chatId,uid,menu) {
+  const remaining=nonMemberDailyRemaining(uid);
+  if(remaining<=0) return sendHtml(token,chatId,quotaNoticeText(),menu||{});
+  return sendHtml(token,chatId,"🎁 <b>非会员免费额度</b>\\n\\n今日还可以免费获取 <b>"+remaining+"</b> 个资源。\\n加入指定会员群后可不限量获取。",menu||{});
+}
 function nonMemberMessage(menu) {
   const text = String(db.settings.nonMemberMessage || "").trim() || "🔐 <b>请先加入指定会员群</b>\\n\\n加入后即可继续使用资源功能。";
   return {text, extra:menu||{}};
@@ -1199,8 +1233,13 @@ function escapeHtml(value) {
 }
 
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
-  if (!(await allowed(TOKEN,userId))) return sendNonMemberNotice(token,chatId,childMenu());
+  const member=await allowed(TOKEN,userId);
   if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\n\n暂时没有找到可用内容。",childMenu());
+  if(!member && !isAdmin(userId)) {
+    const remaining=nonMemberDailyRemaining(userId);
+    if(remaining<=0) return sendQuotaNotice(token,chatId,userId,childMenu());
+    items=items.slice(0,remaining);
+  }
   try {
     const client=await ensureHistoryClient(userId);
     const entity=await findHistoryEntity(client);
@@ -1219,7 +1258,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
       }catch(e){fail++;console.error("HISTORY SEND:",e.message,"message=",item.messageId);}
       await sleep(150);
     }
-    if(ok>0){recordStat(userId,"download",ok);saveDb();}
+    if(ok>0){recordStat(userId,"download",ok); if(!member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok); else saveDb();}
     const mode=options.mode==="random"?"random":"latest";
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
@@ -1250,10 +1289,15 @@ function batchNavigation(mode,offset,total){
 }
 
 async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
-  if(!(await allowed(TOKEN,userId))) return sendNonMemberNotice(token,chatId);
+  const member=await allowed(TOKEN,userId);
   if(!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
 
-  const valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
+  let valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
+  if(!member && !isAdmin(userId)) {
+    const remaining=nonMemberDailyRemaining(userId);
+    if(remaining<=0) return sendQuotaNotice(token,chatId,userId);
+    valid=valid.slice(0,remaining);
+  }
   if(!valid.length) return send(token,chatId,"📭 <b>暂无可发送的资源</b>\\n\\n请稍后再试。");
 
   let ok = 0, fail = 0, lastError = "";
@@ -1297,6 +1341,8 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
       if(offset+batchSize<group.items.length) await sleep(300);
     }
   }
+
+  if(ok>0 && !member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok);
 
   if(fail>0) {
     const total=valid.length;
@@ -1622,7 +1668,7 @@ async function mainMessage(msg) {
 
 
   if(t==="📂 资源目录") {
-    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
+
     states.delete(key);
     return sendHtml(TOKEN,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
@@ -1660,7 +1706,7 @@ async function mainMessage(msg) {
   }
 
   if(t==="🔎 搜索资源") {
-    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
+
     states.set(key,{step:"search"});
     return sendHtml(TOKEN,uid,
       "<b>🔎 搜索资源</b>\\n\\n"+
@@ -2296,7 +2342,6 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   if(data==="batch:random" || data.startsWith("batch:latest:") || data==="batch:home"){
-    if(!(await allowed(TOKEN,uid))){ await answer("🔐 请先加入指定群",true); return; }
     if(data==="batch:home"){
       await answer("返回首页");
       return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
@@ -2321,10 +2366,6 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   // 用户搜索结果使用内联按钮：两列排列，结果多时分页，不再占用底部键盘。
   if(data==="src" || data.startsWith("srp:") || data.startsWith("sr:")) {
-    if(!(await allowed(TOKEN,uid))) {
-      await answer("🔐 请先加入指定群",true);
-      return;
-    }
     const key=(child ? "c:" : "m:")+uid;
     const s=states.get(key);
     if(!s || s.step!=="search_results") {
@@ -2359,11 +2400,16 @@ async function handleDirectoryCallback(token, q, child=false) {
       await answer("这个搜索结果不存在或已更新",true);
       return;
     }
+    const member=await allowed(TOKEN,uid);
+    if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0) {
+      await answer("今日免费额度已用完",true);
+      return sendQuotaNotice(token,chatId,uid,child ? childMenu() : userMenu());
+    }
     await answer("正在获取资源…");
     try {
       await sendIndexedResource(token,chatId,item);
       recordStat(uid,"download",1);
-      saveDb();
+      if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -2484,10 +2530,6 @@ async function handleDirectoryCallback(token, q, child=false) {
     });
   }
 
-  if(!(await allowed(TOKEN,uid))) {
-    await answer("🔐 请先加入指定群",true);
-    return;
-  }
   await answer();
 
   console.log("🔘 DIRECTORY CALLBACK:", {
@@ -2572,7 +2614,16 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(offset>=all.length) return;
 
-  const batch=all.slice(offset,offset+10);
+  const member=await allowed(TOKEN,uid);
+  let batch=all.slice(offset,offset+10);
+  if(!member && !isAdmin(uid)) {
+    const remaining=nonMemberDailyRemaining(uid);
+    if(remaining<=0) {
+      await answer("今日免费额度已用完",true);
+      return sendQuotaNotice(token,chatId,uid);
+    }
+    batch=batch.slice(0,remaining);
+  }
   let sent=0;
   for(const item of batch) {
     try {
@@ -2585,8 +2636,11 @@ async function handleDirectoryCallback(token, q, child=false) {
     await sleep(80);
   }
 
-  const next=Math.min(offset+10,all.length);
-  if(sent) saveDb();
+  const next=Math.min(offset+batch.length,all.length);
+  if(sent) {
+    if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,sent);
+    else saveDb();
+  }
   return safeEdit(token,{
     chat_id:chatId,
     message_id:messageId,
