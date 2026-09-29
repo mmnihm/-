@@ -180,20 +180,17 @@ async function tg(token, method, body = {}) {
         continue;
       }
 
-      // 4xx 是 Telegram 明确拒绝请求，不属于网络故障，不再重复重试。
-      // 特别是“message can't be edited”通常表示消息已过期、已删除、
-      // 内容没有变化或该消息不是机器人可编辑的消息。
+      // Telegram 明确拒绝的 4xx 不应当按网络故障重复重试。
+      // callback_query 特别敏感：查询过期/ID 无效后重试只会继续失败。
       if (r.status >= 400 && r.status < 500) {
-        const err = new Error(j.description || method + " failed");
+        const description = String(j.description || "");
+        const err = new Error(description || method + " failed");
         err.telegramStatus = r.status;
-        err.telegramDescription = j.description || "";
-        // Telegram 对 editMessageText 的“消息无法编辑”属于业务状态，
-        // 不是网络故障：立即交给 safeEdit 处理，绝不重试 4 次。
+        err.telegramDescription = description;
         if (
-          method === "editMessageText" &&
-          /message.*(can't|cannot).*edit|message is not modified|MESSAGE_ID_INVALID|message to edit not found/i.test(
-            String(j.description || "")
-          )
+          method === "answerCallbackQuery" ||
+          (method === "editMessageText" &&
+            /message.*(can't|cannot).*edit|message is not modified|MESSAGE_ID_INVALID|message to edit not found/i.test(description))
         ) {
           err.noRetry = true;
         }
@@ -2919,7 +2916,10 @@ async function handleDirectoryCallback(token, q, child=false) {
       const body={callback_query_id:callbackId};
       if(text) { body.text=text; body.show_alert=showAlert; }
       await tg(token,"answerCallbackQuery",body);
-    } catch {}
+    } catch(e) {
+      // 查询过期/ID无效属于 Telegram 正常业务拒绝，不影响按钮后续逻辑。
+      console.warn("⚠️ callback确认失败（继续处理按钮）:", String(e?.telegramDescription || e?.message || e));
+    }
   };
   await answer();
 
