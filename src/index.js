@@ -2501,7 +2501,6 @@ async function mainMessage(msg) {
     const existing=getDirectoryByName(newName);
     if(existing && String(existing.id)!==String(d.id)) return send(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
     d.name=newName;
-    const oldDirectoryId=String(d.id);
     d.id=sharedDirectoryId(newName);
     for(const item of db.resources) if(String(item.directoryId)===oldDirectoryId) item.directoryId=d.id;
     touchSharedData(uid);
