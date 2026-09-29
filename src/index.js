@@ -2844,7 +2844,7 @@ async function mainMessage(msg) {
 }
 
 async function childMessage(child,msg,token) {
-  await refreshSharedData();
+  // 子机器人消息处理同样不能等待 Baserow，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
   const startCommand=t.split(" ")[0].split("@")[0];
@@ -3460,7 +3460,10 @@ async function pollMain() {
           indexResource(u.edited_channel_post);
         }
         if(u.callback_query) { console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||"")); await handleDirectoryCallback(TOKEN,u.callback_query,false); }
-        if(u.message) mainMessage(u.message).catch(e=>console.error("MAIN MESSAGE:",e.message));
+        if(u.message) {
+          console.log("📨 MAIN MESSAGE RECEIVED:", String(u.message.text||u.message.caption||"").slice(0,80));
+          mainMessage(u.message).catch(e=>console.error("MAIN MESSAGE:",e.message));
+        }
         db.offset=u.update_id+1;
       }
       saveDb();
