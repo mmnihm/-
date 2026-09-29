@@ -3794,6 +3794,7 @@ async function pollMain() {
       runtime.lastPollAt = Date.now();
       const updates=await main("getUpdates",{offset:db.offset,timeout:25,allowed_updates:["message","callback_query","channel_post","edited_channel_post"]});
       runtime.lastTelegramOkAt = Date.now();
+      runtime.mainConnected = true;
       runtime.lastError = "";
       if (updates.length) runtime.lastUpdateAt = Date.now();
       for(const u of updates){
@@ -3832,6 +3833,8 @@ async function pollMain() {
       }
       saveDb();
     }catch(e){
+      // 长轮询/网络异常时不要继续显示“真实连接”，否则心跳会产生假在线状态。
+      runtime.mainConnected = false;
       runtime.lastError = String(e.message || e);
       console.error("MAIN POLLING:", e.message);
       console.error("MAIN POLLING DETAIL:", e?.cause || e);
