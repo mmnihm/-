@@ -252,7 +252,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}}}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"}}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -356,7 +356,7 @@ if (!Array.isArray(db.settings.admins)) db.settings.admins = [];
 if (!Array.isArray(db.settings.logs)) db.settings.logs = [];
 if (!("historyAuth" in db.settings)) db.settings.historyAuth = null;
 if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:"",lastMessageId:0};
-if (!("lastMessageId" in db.settings.historyScan)) db.settings.historyScan.lastMessageId = 0;
+if (!("lastMessageId" in db.settings.historyScan)) db.settings.historyScan.lastMessageId = 0;\nif (!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:"system"};\nif (!Number.isFinite(Number(db.settings.sharedData.version))) db.settings.sharedData.version=1;\nif (!db.settings.sharedData.lastChangedAt) db.settings.sharedData.lastChangedAt=Date.now();\nfunction touchSharedData(uid="system") { if(!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:String(uid)}; db.settings.sharedData.version=Number(db.settings.sharedData.version||0)+1; db.settings.sharedData.lastChangedAt=Date.now(); db.settings.sharedData.lastChangedBy=String(uid||"system"); }
 
 let historyClient = null;
 let historyConnecting = null;
@@ -1176,64 +1176,40 @@ function escapeHtml(value) {
   return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
-async function deliverFromHistory(token,chatId,userId,items) {
-  if (!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
-  if (!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
-
+async function deliverFromHistory(token,chatId,userId,items,options={}) {
+  if (!(await allowed(TOKEN,userId))) return sendHtml(token,chatId,"<b>🔐 请先加入指定群</b>\n\n加入后即可继续使用资源功能。",childMenu());
+  if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\n\n暂时没有找到可用内容。",childMenu());
   try {
-    const client = await ensureHistoryClient(userId);
-    const entity = await findHistoryEntity(client);
-    let ok = 0, fail = 0;
-
-
-
-    for (const item of items) {
-      try {
-        const found = await client.getMessages(entity,{ids:[Number(item.messageId)]});
-        const message = Array.isArray(found) ? found[0] : found;
-        if (!message || !message.media) throw new Error("历史消息或媒体不存在");
-
-        const buffer = await client.downloadMedia(message,{});
-        if (!buffer || !buffer.length) throw new Error("媒体下载失败");
-
-        const file = message.file || {};
-        const mime = String(file.mimeType || "");
-        const name = String(file.name || item.title || "resource");
-        const method = mime.startsWith("video") ? "sendVideo" : "sendDocument";
-        await tgUploadBuffer(token,method,chatId,buffer,name,item.caption || "");
+    const client=await ensureHistoryClient(userId);
+    const entity=await findHistoryEntity(client);
+    let ok=0,fail=0;
+    for(const item of items){
+      try{
+        const found=await client.getMessages(entity,{ids:[Number(item.messageId)]});
+        const message=Array.isArray(found)?found[0]:found;
+        if(!message||!message.media) throw new Error("历史消息或媒体不存在");
+        const buffer=await client.downloadMedia(message,{});
+        if(!buffer||!buffer.length) throw new Error("媒体下载失败");
+        const file=message.file||{},mime=String(file.mimeType||""),name=String(file.name||item.title||"resource");
+        const method=mime.startsWith("video")?"sendVideo":"sendDocument";
+        await tgUploadBuffer(token,method,chatId,buffer,name,item.caption||"");
         ok++;
-      } catch (e) {
-        fail++;
-        console.error("HISTORY SEND:",e.message,"message=",item.messageId);
-      }
+      }catch(e){fail++;console.error("HISTORY SEND:",e.message,"message=",item.messageId);}
       await sleep(150);
     }
-
-    if (ok > 0) {
-      recordStat(userId,"download",ok);
-      saveDb();
-      return send(token,chatId,
-        "✅ <b>资源获取完成</b>\\n\\n"+
-        "📤 成功发送："+ok+" 条\\n"+
-        "⚠️ 失败："+fail+" 条",
-        {parse_mode:"HTML"});
-    }
-    return send(token,chatId,
-      "❌ <b>资源发送失败</b>\\n\\n"+
-      "📦 尝试获取："+items.length+" 条\\n"+
-      "📤 成功发送：0 条\\n"+
-      "⚠️ 失败："+fail+" 条\\n\\n"+
-      "请检查扫描账号是否仍然可以访问资源仓库。",
-      {parse_mode:"HTML"});
-  } catch (e) {
+    if(ok>0){recordStat(userId,"download",ok);saveDb();}
+    const mode=options.mode==="random"?"random":"latest";
+    const offset=Math.max(0,Number(options.offset)||0);
+    const total=Math.max(0,Number(options.total)||db.resources.length);
+    return sendHtml(token,chatId,
+      "<b>📦 本批资源获取完成</b>\n━━━━━━━━━━━━━━\n\n📤 成功发送：<b>"+ok+"</b> 条\n⚠️ 失败："+fail+" 条\n📚 本批："+items.length+" 条\n\n"+
+      (mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。"),
+      batchNavigation(mode,offset,total));
+  }catch(e){
     console.error("HISTORY DELIVERY:",e);
-    return send(token,chatId,
-      "❌ <b>资源获取失败</b>\\n\\n"+
-      "原因："+String(e.message || e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),
-      {parse_mode:"HTML"});
+    return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\n\n原因："+escapeHtml(e.message||e),childMenu());
   }
 }
-
 function batchNavigation(mode,offset,total){
   const rows=[];
   const next=Number(offset||0)+10;
@@ -2082,39 +2058,50 @@ async function mainMessage(msg) {
 async function childMessage(child,msg,token) {
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
-  if((t.split(" ")[0].split("@")[0])==="/start" || t==="🏠 开始") return sendHtml(token,uid,
-    "<b>👋 欢迎使用资源机器人</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能</i>",
-    childMenu());
-  // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。
-  if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
+  const startCommand=t.split(" ")[0].split("@")[0];
+
+  // 主机器人和所有子机器人共用同一个 db.resources / db.directories。
+  if(startCommand==="/start" && t.startsWith("/start share_")) {
+    const shareToken=t.slice("/start share_".length).trim();
+    const item=getResourceByShareToken(shareToken);
+    if(!item) return sendHtml(token,uid,"<b>🔗 分享资源</b>\n\n❌ 这个分享链接已失效或资源不存在。",childMenu());
+    try {
+      await sendIndexedResource(token,uid,item);
+      recordStat(uid,"download",1);
+      saveDb();
+      return sendHtml(token,uid,"<b>🔗 分享资源</b>\n━━━━━━━━━━━━━━\n\n📦 <b>"+escapeHtml(item.title||"未命名资源")+"</b>\n📁 文件夹：<b>"+escapeHtml(db.directories.find(d=>String(d.id)===String(item.directoryId))?.name||"未分类")+"</b>\n\n✅ 资源已发送。",childMenu());
+    } catch {
+      return sendHtml(token,uid,"<b>❌ 资源获取失败</b>\n\n请稍后重试。",childMenu());
+    }
+  }
+
+  if(startCommand==="/start" || t==="🏠 开始") return sendHtml(token,uid,
+    "<b>👋 欢迎使用资源机器人</b>\n\n📚 <b>共享资源功能</b>：目录 · 搜索 · 随机 · 最新\n\n👇 <i>请选择下方功能</i>",childMenu());
+
+  if(!(await allowed(TOKEN,uid))) return sendHtml(token,uid,"<b>🔐 请先加入指定群</b>\n\n加入后即可继续使用资源功能。",childMenu());
+
   if(t==="📂 资源目录") {
-    if(!db.directories.length) return send(token,uid,"📂 暂无资源目录。",childMenu());
+    if(!db.directories.length) return sendHtml(token,uid,"<b>📂 暂无资源目录</b>\n\n管理员创建目录后，所有机器人会自动同步看到。",childMenu());
     return sendHtml(token,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
-  if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 <b>搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});}
-  if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10(uid));
-  if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
+  if(t==="🔎 搜索资源"){
+    states.set(key,{step:"search"});
+    return sendHtml(token,uid,"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。");
+  }
+  if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10(uid),{mode:"random",offset:0,total:db.resources.length});
+  if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10),{mode:"latest",offset:0,total:db.resources.length});
   if(s?.step==="search"){
-    if(t==="/cancel"){states.delete(key);return send(token,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",childMenu());}
+    if(t==="/cancel"){states.delete(key);return sendHtml(token,uid,"<b>↩️ 已退出搜索</b>\n\n👇 请选择其他功能。",childMenu());}
     recordStat(uid,"search",1);
     saveDb();
     const results=search(t);
-    if(!results.length) return sendHtml(token,uid,
-      "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
-      childMenu());
+    if(!results.length) return sendHtml(token,uid,"<b>📭 没有找到相关资源</b>\n\n关键词：<code>"+escapeHtml(t)+"</code>\n\n💡 可以换一个更短的关键词再试。",childMenu());
     states.set(key,{step:"search_results",query:t,results,page:0});
     return sendHtml(token,uid,
-      "🔎 <b>搜索资源</b>\\n"+
-      "━━━━━━━━━━━━━━\\n"+
-      "🔍 关键词：<b>"+escapeHtml(t)+"</b>\\n"+
-      "📚 共找到 <b>"+results.length+"</b> 个结果\\n"+
-      "📄 第 <b>1 / "+Math.max(1,Math.ceil(results.length/10))+"</b> 页\\n\\n"+
-      "👇 <b>点击下方资源名称获取</b>",
-      resourceInlineKeyboard(results,0)
-    );
+      "🔎 <b>搜索资源</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(t)+"</b>\n📚 共找到 <b>"+results.length+"</b> 个结果\n📄 第 <b>1 / "+Math.max(1,Math.ceil(results.length/10))+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
+      resourceInlineKeyboard(results,0));
   }
 }
-
 async function handleDirectoryCallback(token, q, child=false) {
   const uid=q.from?.id;
   const data=String(q.data||"");
@@ -2189,11 +2176,11 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(child){
       if(data==="batch:random"){
         await answer("正在随机获取…");
-        return deliverFromHistory(token,uid,uid,random10(uid));
+        return deliverFromHistory(token,uid,uid,random10(uid),{mode:"random",offset:0,total:db.resources.length});
       }
       const offset=Math.max(0,Number(data.split(":")[2])||0);
       await answer("正在获取最新资源…");
-      return deliverFromHistory(token,uid,uid,db.resources.slice(offset,offset+10));
+      return deliverFromHistory(token,uid,uid,db.resources.slice(offset,offset+10),{mode:"latest",offset,total:db.resources.length});
     }
     if(data==="batch:random"){
       await answer("正在随机获取…");
