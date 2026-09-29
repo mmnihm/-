@@ -797,7 +797,23 @@ function indexHistoryMessage(message, chatId) {
 }
 
 async function scanHistory(uid) {
-  if (db.settings.historyScan.status === "running") return send(TOKEN,uid,"🔍 历史扫描已经在进行中，请稍候。");
+  const historyState = db.settings.historyScan || {};
+  if (historyState.status === "running") {
+    const started = Number(historyState.startedAt || 0);
+    const stale = started > 0 && (Date.now() - started) > 10 * 60 * 1000;
+    if (!stale) return send(TOKEN,uid,"🔍 历史扫描已经在进行中，请稍候。");
+    console.warn("⚠️ 检测到上一次历史扫描状态卡住，自动恢复扫描：", {
+      startedAt: started ? new Date(started).toISOString() : null,
+      scanned: Number(historyState.scanned || 0),
+      indexed: Number(historyState.indexed || 0),
+      lastMessageId: Number(historyState.lastMessageId || 0)
+    });
+    historyState.status = "error";
+    historyState.error = "上一次扫描进程已中断，已自动恢复。";
+    historyState.finishedAt = Date.now();
+    db.settings.historyScan = historyState;
+    saveDb();
+  }
   const r = repo();
   if (!r) return send(TOKEN,uid,"❌ <b>尚未绑定资源仓库</b>\\n\\n请先进入「📦 资源仓库」完成绑定。",adminMenu());
 
@@ -853,14 +869,19 @@ async function scanHistory(uid) {
   };
 
   try {
-    console.log("🔎 HISTORY SCAN START:", { uid:String(uid), repoId:String(r.chatId||""), repoTitle:String(r.title||""), checkpoint:previousCheckpoint, baserow:Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID) });
+    console.log("🔎 HISTORY SCAN START:", { uid:String(uid), repoId:String(r.chatId||""), repoTitle:String(r.title||""), repoUsername:String(r.username||""), checkpoint:previousCheckpoint, baserow:Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID) });
     await updateProgress(0,0,previousCheckpoint,true);
+    try {
+      await sendHtml(TOKEN,uid,"<b>🚀 扫描任务已启动</b>\\n\\n📦 仓库："+escapeHtml(r.title||String(r.chatId))+"\\n🔐 正在连接扫描账号，请稍候…");
+    } catch {}
     console.log("🔎 HISTORY SCAN: progress message sent, connecting MTProto...");
     const client = await ensureHistoryClient(uid);
     console.log("🔎 HISTORY SCAN: MTProto ready, locating repository...");
     const entity = await findHistoryEntity(client);
     console.log("🔎 HISTORY SCAN: repository located, starting history iteration");
     let scanned = 0, indexed = 0, boundary = previousCheckpoint;
+    let lastProgressAt = Date.now();
+    console.log("🔎 HISTORY SCAN: iterMessages 开始，checkpoint=", previousCheckpoint);
     for await (const message of client.iterMessages(entity,{limit:undefined})) {
       const messageId=Number(message?.id||0);
       if (previousCheckpoint > 0 && messageId > 0 && messageId <= previousCheckpoint) break;
@@ -868,7 +889,8 @@ async function scanHistory(uid) {
       if (indexHistoryMessage(message,r.chatId)) indexed++;
       if (messageId > 0) boundary=messageId;
 
-      if (scanned % 100 === 0) {
+      if (scanned % 100 === 0 || Date.now() - lastProgressAt >= 15000) {
+        lastProgressAt = Date.now();
         await updateProgress(scanned,indexed,boundary);
         console.log("🔎 HISTORY SCAN:", scanned, "indexed=", indexed, "checkpoint=", boundary);
       }
