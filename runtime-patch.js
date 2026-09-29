@@ -11,8 +11,8 @@ if (!s.includes("BACKGROUND_REPOSITORY_SYNC_V2")) {
   s = s.replace(marker, marker + "\n\n" + snippet);
 
   s = s.replace(
-    '["📤 上传资源","📂 资源目录"],\n    ["✏️ 修改文件夹名称","🗑️ 删除资源"],\\n    ["📦 资源仓库","🔍 仓库扫描"],',
-    '["📂 资源目录","✏️ 修改文件夹名称"],\\n    ["🗑️ 删除资源"],\\n    ["🔗 绑定新仓库","🔄 迁移旧仓库"],'
+    '["📤 上传资源","📂 资源目录"],\n    ["✏️ 修改文件夹名称","🗑️ 删除资源"],\n    ["📦 资源仓库","🔍 仓库扫描"],',
+    '["📂 资源目录","✏️ 修改文件夹名称"],\n    ["🗑️ 删除资源"],\n    ["🔗 绑定新仓库","🔄 迁移旧仓库"],'
   );
 
   const oldForward = /  if\(msg\.chat\?\.type==="private" && msg\.forward_origin\?\.chat\) \{[\s\S]*?    saveDb\(\);\n/;
