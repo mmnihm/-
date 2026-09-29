@@ -2176,6 +2176,19 @@ async function mainMessage(msg) {
     states.delete(key);
     return sendHtml(TOKEN,uid,"<b>👑 管理后台</b>\\n\\n📦 资源：上传、目录、仓库与扫描\\n📊 运营：数据、广播与日志\\n⚙️ 设置：指定群、管理员与系统\\n🤖 机器人：克隆机器人\\n\\n👇 <i>请选择管理模块</i>",adminMenu());
   }
+  if (admin && s?.step === "scan_target") {
+    if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消历史扫描。",adminMenu()); }
+    const target=String(t||"").trim();
+    if(!target) return send(TOKEN,uid,"⚠️ 请输入仓库 Chat ID 或 @用户名。");
+    states.delete(key);
+    try {
+      const chat=await main("getChat",{chat_id:target});
+      return await scanHistory(uid,{chatId:String(chat.id),title:String(chat.title||chat.username||chat.id),username:String(chat.username||""),type:String(chat.type||"")});
+    } catch(e) {
+      return sendHtml(TOKEN,uid,"<b>❌ 历史扫描失败</b>\n\n⚠️ "+escapeHtml(e?.telegramDescription||e?.message||e)+"\n\n请确认机器人/扫描账号可以访问这个仓库。",adminMenu());
+    }
+  }
+
   if (admin && s?.step === "migration_source") {
     if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消仓库迁移。",adminMenu()); }
     const source=String(t||"").trim();
@@ -2371,27 +2384,36 @@ async function mainMessage(msg) {
     return sendHtml(TOKEN,uid,"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{"text":"❌ 取消","callback_data":"admin:root"}]]}});
   }
 
+  if(t==="🔄 迁移仓库" && admin) {
+    states.set(key,{step:"migration_source"});
+    return sendHtml(TOKEN,uid,"<b>🔄 旧仓库 → 新仓库</b>\n━━━━━━━━━━━━━━\n\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\n\n例如：<code>-1001234567890</code>\n\n⚠️ 机器人必须同时在旧仓库和新仓库里。\n📌 旧仓库不会删除。\n📁 文件夹归属会保留。\n\n发送 /cancel 可取消。",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{"text":"❌ 取消","callback_data":"admin:root"}]]}});
+  }
+
   if(t==="🔍 仓库扫描" && admin) {
     const scan=db.settings.historyScan;
     const auth=db.settings.historyAuth;
+    const scanTargetButton=repo() ? "🔍 开始历史扫描" : "🔎 扫描指定仓库";
     return send(TOKEN,uid,
-      "🔍 仓库扫描\\n\\n"+
-      "📦 当前仓库： "+(repo()?repo().title:"❌ 未绑定")+"\\n"+
-      "📚 当前索引： "+db.resources.length+" 条\\n"+
-      "🕘 历史扫描： "+(scan.status==="completed"?"✅ 已完成":scan.status==="running"?"⏳ 扫描中":scan.status==="error"?"⚠️ 上次失败":"未执行")+"\\n"+
-      (scan.scanned?`\\n最近一次：扫描 ${scan.scanned} 条，索引 ${scan.indexed} 条`:"")+"\\n\\n"+
-      (auth?.session?"🔐 扫描账号：已授权":"🔐 扫描账号：首次使用需授权")+"\\n\\n"+
-      "点击「🔍 开始历史扫描」即可把频道已有历史消息全部建立索引。",
-      {reply_markup:{keyboard:[["🔍 开始历史扫描","🔐 扫描授权"],["📦 资源仓库","📊 数据统计"],["⚙️ 平台设置"]],resize_keyboard:true}});
+      "🔍 仓库扫描\n\n"+
+      "📦 当前仓库： "+(repo()?repo().title:"❌ 未绑定")+"\n"+
+      "📚 当前索引： "+db.resources.length+" 条\n"+
+      "🕘 历史扫描： "+(scan.status==="completed"?"✅ 已完成":scan.status==="running"?"⏳ 扫描中":scan.status==="error"?"⚠️ 上次失败":"未执行")+"\n"+
+      (scan.scanned?("\n最近一次：扫描 "+scan.scanned+" 条，索引 "+scan.indexed+" 条"):"")+"\n\n"+
+      (auth?.session?"🔐 扫描账号：已授权":"🔐 扫描账号：首次使用需授权")+"\n\n"+
+      (repo()?"点击「🔍 开始历史扫描」即可扫描当前仓库历史消息。":"未绑定仓库时也可以直接指定要扫描的仓库。"),
+      {reply_markup:{keyboard:[[scanTargetButton,"🔐 扫描授权"],["📦 资源仓库","📊 数据统计"],["⚙️ 平台设置"]],resize_keyboard:true}});
+  }
+
+  if(t==="🔎 扫描指定仓库" && admin) {
+    states.set(key,{step:"scan_target"});
+    return sendHtml(TOKEN,uid,"<b>🔎 扫描指定仓库</b>\n\n请输入仓库 Chat ID 或 @用户名。\n\n例如：<code>-1001234567890</code>\n\n发送 /cancel 可取消。");
   }
 
   if(t==="🔍 开始历史扫描" && admin) return scanHistory(uid);
   if(t==="🔐 扫描授权" && admin) {
     try { await ensureHistoryClient(uid); return send(TOKEN,uid,"✅ MTProto 扫描账号已授权。现在可以点击「🔍 开始历史扫描」。",adminMenu()); }
-    catch(e) { return send(TOKEN,uid,"❌ 扫描授权失败：\\n\\n"+e.message,adminMenu()); }
+    catch(e) { return send(TOKEN,uid,"❌ 扫描授权失败：\n\n"+e.message,adminMenu()); }
   }
-
-
 
   if(t==="📂 资源目录") {
 
