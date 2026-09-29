@@ -356,7 +356,16 @@ if (!Array.isArray(db.settings.admins)) db.settings.admins = [];
 if (!Array.isArray(db.settings.logs)) db.settings.logs = [];
 if (!("historyAuth" in db.settings)) db.settings.historyAuth = null;
 if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:"",lastMessageId:0};
-if (!("lastMessageId" in db.settings.historyScan)) db.settings.historyScan.lastMessageId = 0;\nif (!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:"system"};\nif (!Number.isFinite(Number(db.settings.sharedData.version))) db.settings.sharedData.version=1;\nif (!db.settings.sharedData.lastChangedAt) db.settings.sharedData.lastChangedAt=Date.now();\nfunction touchSharedData(uid="system") { if(!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:String(uid)}; db.settings.sharedData.version=Number(db.settings.sharedData.version||0)+1; db.settings.sharedData.lastChangedAt=Date.now(); db.settings.sharedData.lastChangedBy=String(uid||"system"); }
+if (!("lastMessageId" in db.settings.historyScan)) db.settings.historyScan.lastMessageId = 0;
+if (!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:"system"};
+if (!Number.isFinite(Number(db.settings.sharedData.version))) db.settings.sharedData.version=1;
+if (!db.settings.sharedData.lastChangedAt) db.settings.sharedData.lastChangedAt=Date.now();
+function touchSharedData(uid="system") {
+  if(!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:String(uid)};
+  db.settings.sharedData.version=Number(db.settings.sharedData.version||0)+1;
+  db.settings.sharedData.lastChangedAt=Date.now();
+  db.settings.sharedData.lastChangedBy=String(uid||"system");
+}
 
 let historyClient = null;
 let historyConnecting = null;
