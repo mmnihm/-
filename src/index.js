@@ -835,9 +835,13 @@ async function scanHistory(uid) {
   };
 
   try {
+    console.log("🔎 HISTORY SCAN START:", { uid:String(uid), repoId:String(r.chatId||""), repoTitle:String(r.title||""), checkpoint:previousCheckpoint, baserow:Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID) });
     await updateProgress(0,0,previousCheckpoint,true);
+    console.log("🔎 HISTORY SCAN: progress message sent, connecting MTProto...");
     const client = await ensureHistoryClient(uid);
+    console.log("🔎 HISTORY SCAN: MTProto ready, locating repository...");
     const entity = await findHistoryEntity(client);
+    console.log("🔎 HISTORY SCAN: repository located, starting history iteration");
     let scanned = 0, indexed = 0, boundary = previousCheckpoint;
     for await (const message of client.iterMessages(entity,{limit:undefined})) {
       const messageId=Number(message?.id||0);
