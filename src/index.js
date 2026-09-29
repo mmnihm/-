@@ -643,7 +643,6 @@ function adminResourceMenu() {
 }
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
-    ["📦 资源仓库","🔍 仓库扫描"],
     ["🔐 指定群管理","⚙️ 系统设置"],
     ["➕ 添加管理员","➖ 删除管理员"],
     ["⬅️ 返回管理"]
@@ -703,9 +702,8 @@ function scanMenu() {
 }
 function platformMenu() {
   return {reply_markup:{keyboard:[
-    ["📦 资源仓库","🔐 指定群"],
-    ["🔍 仓库扫描","📊 数据统计"],
-    ["🤖 克隆机器人","📢 广播消息"],
+    ["🔐 指定群管理","⚙️ 系统设置"],
+    ["➕ 添加管理员","➖ 删除管理员"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
@@ -1035,51 +1033,73 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
   if(!items.length) return send(token,chatId,"📭 暂无相关资源。");
 
   const valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
-  let ok = 0, fail = 0, lastError = "";
+  if(!valid.length) return send(token,chatId,"📭 暂无可发送的资源。");
 
-  for(const x of valid) {
-    try {
-      await tg(sourceToken,"copyMessage",{
-        chat_id:chatId,
-        from_chat_id:x.chatId,
-        message_id:Number(x.messageId)
-      });
-      ok++;
-    } catch(e) {
-      fail++;
-      lastError = e.message || String(e);
-      console.error("COPY:", lastError, "chat=", x.chatId, "message=", x.messageId);
+  let ok = 0, fail = 0, lastError = "";
+  const batchSize = 10;
+
+  // 同一资源仓库的资源按 10 条一组复制，避免随机获取逐条发送。
+  // 如果数据库里存在多个来源仓库，则按 chatId 自动分组，避免 Telegram 拒绝跨仓库批量复制。
+  const groups = [];
+  const groupMap = new Map();
+  for(const item of valid) {
+    const sourceChatId = String(item.chatId);
+    if(!groupMap.has(sourceChatId)) {
+      const group = {chatId:sourceChatId, items:[]};
+      groupMap.set(sourceChatId,group);
+      groups.push(group);
     }
-    await sleep(80);
+    groupMap.get(sourceChatId).items.push(item);
   }
 
-  if(fail > 0) {
-    const total = valid.length;
-    if(ok === 0) {
-      const isChatNotFound = /chat not found/i.test(lastError);
+  for(const group of groups) {
+    for(let offset=0; offset<group.items.length; offset+=batchSize) {
+      const batch=group.items.slice(offset,offset+batchSize);
+      try {
+        const copied=await tg(sourceToken,"copyMessages",{
+          chat_id:chatId,
+          from_chat_id:group.chatId,
+          message_ids:batch.map(x=>Number(x.messageId))
+        });
+        const copiedCount=Array.isArray(copied)?copied.length:0;
+        ok+=copiedCount;
+        if(copiedCount<batch.length) {
+          fail+=batch.length-copiedCount;
+          lastError="批量复制结果数量不完整";
+        }
+      } catch(e) {
+        fail+=batch.length;
+        lastError=e.message||String(e);
+        console.error("COPY BATCH:",lastError,"chat=",group.chatId,"count=",batch.length);
+      }
+      if(offset+batchSize<group.items.length) await sleep(300);
+    }
+  }
+
+  if(fail>0) {
+    const total=valid.length;
+    if(ok===0) {
+      const isChatNotFound=/chat not found/i.test(lastError);
       return send(token,chatId,
         "❌ <b>资源暂时无法发送</b>\\n\\n"+
         "📦 找到资源："+total+" 条\\n"+
         "📤 成功发送：0 条\\n"+
         "⚠️ 发送失败："+fail+" 条\\n\\n"+
         (isChatNotFound
-          ? "🔧 <b>需要管理员处理</b>\\n\\n请把当前机器人加入「资源仓库」。如果仓库是频道，请将机器人添加为频道管理员。\\n\\n"+
-            "历史扫描账号能看到资源，只代表扫描账号能读取历史消息；用户获取资源时，机器人本身也必须能够访问仓库消息。"
-          : "🔧 <b>资源仓库读取失败</b>\\n\\n请确认机器人仍在资源仓库中，并有读取消息的权限。\\n\\n"+
-            "Telegram：<code>"+String(lastError).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>")
-      , {parse_mode:"HTML"});
+          ? "🔧 <b>需要管理员处理</b>\\n\\n请把当前机器人加入「资源仓库」。如果仓库是频道，请将机器人添加为频道管理员。\\n\\n历史扫描账号能看到资源，只代表扫描账号能读取历史消息；用户获取资源时，机器人本身也必须能够访问仓库消息。"
+          : "🔧 <b>资源仓库读取失败</b>\\n\\n请确认机器人仍在资源仓库中，并有读取消息的权限。\\n\\nTelegram：<code>"+String(lastError).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>")
+      ,{parse_mode:"HTML"});
     }
     return send(token,chatId,
       "⚠️ <b>资源获取完成</b>\\n\\n"+
+      "📦 已按每组 10 条发送\\n"+
       "📤 成功发送："+ok+" 条\\n"+
-      "⚠️ 发送失败："+fail+" 条\\n\\n"+
-      "部分历史消息无法复制，请稍后再试。"
-    , {parse_mode:"HTML"});
+      "⚠️ 发送失败："+fail+" 条",
+      {parse_mode:"HTML"});
   }
 
   return true;
 }
-
 const states=new Map();
 
 async function binding(msg) {
