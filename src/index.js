@@ -3021,10 +3021,18 @@ async function childLoop(child) {
     console.log("🤖 CHILD CONNECTED:", "@" + (me.username || me.first_name), "id=" + me.id);
     await ensureStartCommand(token);
   } catch (e) {
+    child.lastError=String(e?.message||e);
+    child.status="dead";
+    child.running=false;
+    child.restartCount=Number(child.restartCount||0)+1;
+    saveDb();
     console.error("❌ CHILD START FAILED:", child.username ? "@" + child.username : "(unknown)", e.message);
-    throw e;
+    console.warn("⚠️ 子机器人已停止运行，不影响主机器人启动：", child.username ? "@" + child.username : "(unknown)");
+    return;
   }
 
+  child.status="running";
+  child.running=true;
   while(true){
     try{
       const updates=await tg(token,"getUpdates",{offset:Number(child.offset||0),timeout:25,allowed_updates:["message","callback_query"]});
@@ -3048,9 +3056,10 @@ function startChild(child){
     .catch(e=>{
       console.error("❌ CHILD FATAL:",child.username ? "@"+child.username : child.botId,e);
       child.lastError=String(e?.message||e);
+      child.status="dead";
+      child.running=false;
       child.restartCount=Number(child.restartCount||0)+1;
       saveDb();
-      setTimeout(()=>startChild(child),5000);
     })
     .finally(()=>childRunners.delete(runnerId));
   childRunners.set(runnerId,runner);
