@@ -597,14 +597,15 @@ async function scanHistory(uid) {
     db.settings.historyScan.lastMessageId=boundary;
     saveDb();
     const text =
-      "🔍 <b>历史资源扫描</b>\\n"+
-      "━━━━━━━━━━━━━━\\n\\n"+
-      "📦 已扫描消息：<b>"+scanned.toLocaleString()+"</b> 条\\n"+
-      "📚 已收录资源：<b>"+indexed.toLocaleString()+"</b> 条\\n"+
-      "⏱️ 扫描用时：<b>"+elapsedText()+"</b>\\n"+
-      "🆔 当前进度：<code>"+boundary+"</code>\\n\\n"+
+      "🔄 <b>正在扫描历史资源</b>\\n"+
       "━━━━━━━━━━━━━━\\n"+
-      "⏳ <i>正在扫描资源仓库…</i>";
+      "📦 仓库：<b>"+escapeHtml(r.title)+"</b>\\n"+
+      "📨 已扫描：<b>"+scanned.toLocaleString()+"</b> 条\\n"+
+      "✨ 已发现：<b>"+indexed.toLocaleString()+"</b> 条\\n"+
+      "⏱️ 已用时：<b>"+elapsedText()+"</b>\\n"+
+      "🆔 进度：<code>"+boundary+"</code>\\n"+
+      "━━━━━━━━━━━━━━\\n"+
+      "⏳ 正在建立资源索引…";
     if(!progressMessage || force){
       if(!progressMessage){
         try {
@@ -651,16 +652,16 @@ async function scanHistory(uid) {
     saveDb();
 
     const doneText =
-      "✅ <b>历史资源扫描完成</b>\\n\\n"+
-      "━━━━━━━━━━━━━━\\n\\n"+
-      "📦 仓库："+escapeHtml(r.title)+"\\n"+
-      "🔎 扫描消息：<b>"+scanned+"</b> 条\\n"+
-      "📚 新增 / 更新：<b>"+indexed+"</b> 条\\n"+
-      "📊 当前资源：<b>"+db.resources.length+"</b> 条\\n"+
-      "⏱️ 用时：<b>"+elapsedText()+"</b>\\n\\n"+
+      "✅ <b>历史资源扫描完成</b>\\n"+
       "━━━━━━━━━━━━━━\\n"+
-      "✨ <i>历史消息已建立索引</i>\\n\\n"+
-      "现在可以使用搜索、随机获取和最新资源功能。";
+      "📦 仓库：<b>"+escapeHtml(r.title)+"</b>\\n"+
+      "📨 扫描消息：<b>"+scanned.toLocaleString()+"</b> 条\\n"+
+      "✨ 新增 / 更新：<b>"+indexed.toLocaleString()+"</b> 条\\n"+
+      "📚 当前资源：<b>"+db.resources.length.toLocaleString()+"</b> 条\\n"+
+      "⏱️ 扫描耗时：<b>"+elapsedText()+"</b>\\n"+
+      "━━━━━━━━━━━━━━\\n"+
+      "📌 <i>历史消息已建立索引</i>\\n"+
+      "👇 现在可以使用搜索、随机获取和最新资源功能。";
 
     if(progressMessage){
       await safeEdit(TOKEN,{
