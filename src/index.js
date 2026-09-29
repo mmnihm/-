@@ -563,7 +563,11 @@ async function pullBaserowSharedData() {
       if(row?.id) baserowRowsCache.set(String(row.id),row);
       const title=titleField ? String(row?.[titleField.name]??"").trim() : "";
       if(title.startsWith("__FOLDER__:")) {
-        const folderValue=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+        let folderValue=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+        if(!folderValue) {
+          const encoded=title.split(":")[2] || "";
+          try { folderValue=Buffer.from(encoded,"base64url").toString("utf8").trim(); } catch {}
+        }
         if(folderValue) folderNames.set(sharedDirectoryId(folderValue),folderValue);
         continue;
       }
@@ -2488,6 +2492,12 @@ async function mainMessage(msg) {
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
     if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ <b>文件夹不存在</b>\\n\\n请重新选择。",adminResourceMenu()); }
     const oldName=d.name;
+    const oldDirectoryId=String(d.id);
+    const oldMarker=Array.from(baserowRowsCache.values()).find(row=>{
+      const f=baserowPickField(baserowFieldsCache,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+      return f && String(row?.[f.name]||"").startsWith("__FOLDER__:"+oldDirectoryId+":");
+    });
+    if(oldMarker?.id) baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(oldMarker.id));
     const existing=getDirectoryByName(newName);
     if(existing && String(existing.id)!==String(d.id)) return send(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
     d.name=newName;
