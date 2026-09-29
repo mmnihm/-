@@ -643,6 +643,7 @@ function adminResourceMenu() {
 }
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
+    ["📦 资源仓库","🔍 仓库扫描"],
     ["🔐 指定群管理","⚙️ 系统设置"],
     ["➕ 添加管理员","➖ 删除管理员"],
     ["⬅️ 返回管理"]
