@@ -635,7 +635,6 @@ function adminMenu() {
 }
 function adminResourceMenu() {
   return {reply_markup:{keyboard:[
-    ["📤 上传资源","📂 资源目录"],
     ["✏️ 修改文件夹名称","🗑️ 删除资源"],
     ["📦 资源仓库","🔍 仓库扫描"],
     ["⬅️ 返回管理"]
@@ -643,8 +642,7 @@ function adminResourceMenu() {
 }
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
-    ["🔐 指定群管理","⚙️ 系统设置"],
-    ["➕ 添加管理员","➖ 删除管理员"],
+    ["🔐 指定群管理","👥 管理员管理"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
 }
@@ -696,16 +694,11 @@ function deleteResourceMenu() {
 function scanMenu() {
   return {reply_markup:{keyboard:[
     ["🔍 开始历史扫描","🔐 扫描授权"],
-    ["📦 资源仓库","📊 数据统计"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"仓库扫描"}};
 }
 function platformMenu() {
-  return {reply_markup:{keyboard:[
-    ["🔐 指定群管理","⚙️ 系统设置"],
-    ["➕ 添加管理员","➖ 删除管理员"],
-    ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"平台设置"}};
+  return adminSettingsMenu();
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
 function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
@@ -941,10 +934,37 @@ function search(q) {
   if(!q) return [];
   return db.resources.filter(x=>(String(x.title||"")+" "+String(x.caption||"")+" "+String(x.directoryId||"")).toLowerCase().includes(q));
 }
-function random10() {
+function random10(userId) {
   const arr=[...db.resources];
-  for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
-  return arr.slice(0,10);
+  if(!arr.length) return [];
+
+  // 每个用户独立记录随机获取历史：资源未耗尽前尽量不重复。
+  // 全部资源都获取过后自动开启下一轮，保证“每次随机获取”仍然随机。
+  if(!db.settings.randomHistory || typeof db.settings.randomHistory!=="object") {
+    db.settings.randomHistory={};
+  }
+  const key=String(userId);
+  const validIds=new Set(arr.map(x=>String(x.id||x.messageId||"")));
+  let history=Array.isArray(db.settings.randomHistory[key])
+    ? db.settings.randomHistory[key].filter(id=>validIds.has(String(id)))
+    : [];
+
+  let pool=arr.filter(x=>!history.includes(String(x.id||x.messageId||"")));
+  if(!pool.length) {
+    history=[];
+    pool=[...arr];
+  }
+
+  for(let i=pool.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [pool[i],pool[j]]=[pool[j],pool[i]];
+  }
+
+  const batch=pool.slice(0,10);
+  history.push(...batch.map(x=>String(x.id||x.messageId||"")));
+  db.settings.randomHistory[key]=history.slice(-arr.length);
+  saveDb();
+  return batch;
 }
 function resourceInlineKeyboard(items,page=0) {
   const start=page*10;
@@ -981,7 +1001,7 @@ async function deliverFromHistory(token,chatId,userId,items) {
     const entity = await findHistoryEntity(client);
     let ok = 0, fail = 0;
 
-    await send(token,chatId,"⏳ <b>正在准备资源</b>\\n\\n📦 本次获取："+items.length+" 条\\n📤 正在发送，请稍候……",{parse_mode:"HTML"});
+
 
     for (const item of items) {
       try {
@@ -1056,10 +1076,11 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
     for(let offset=0; offset<group.items.length; offset+=batchSize) {
       const batch=group.items.slice(offset,offset+batchSize);
       try {
+        const orderedBatch=[...batch].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
         const copied=await tg(sourceToken,"copyMessages",{
           chat_id:chatId,
           from_chat_id:group.chatId,
-          message_ids:batch.map(x=>Number(x.messageId))
+          message_ids:orderedBatch.map(x=>Number(x.messageId))
         });
         const copiedCount=Array.isArray(copied)?copied.length:0;
         ok+=copiedCount;
@@ -1091,10 +1112,10 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
       ,{parse_mode:"HTML"});
     }
     return send(token,chatId,
-      "⚠️ <b>资源获取完成</b>\\n\\n"+
-      "📦 已按每组 10 条发送\\n"+
-      "📤 成功发送："+ok+" 条\\n"+
-      "⚠️ 发送失败："+fail+" 条",
+      "⚠️ <b>本批获取完成</b>\\n\\n"+
+      "📦 本组："+valid.length+" 个资源\\n"+
+      "📤 成功："+ok+" 个\\n"+
+      "⚠️ 失败："+fail+" 个",
       {parse_mode:"HTML"});
   }
 
@@ -1338,7 +1359,7 @@ async function mainMessage(msg) {
       {reply_markup:{keyboard:[["❌ 取消搜索"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"请输入搜索关键词"}}
     );
   }
-  if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10());
+  if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10(uid));
   if(t==="🆕 最新资源") return deliver(TOKEN,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search") {
     if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
@@ -1741,7 +1762,7 @@ async function childMessage(child,msg,token) {
     return sendHtml(token,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
   if(t==="🔎 搜索资源"){states.set(key,{step:"search"});return send(token,uid,"🔎 <b>搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});}
-  if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10());
+  if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10(uid));
   if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search"){
     if(t==="/cancel"){states.delete(key);return send(token,uid,"↩️ 已退出搜索。",childMenu());}
