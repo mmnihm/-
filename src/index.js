@@ -1221,40 +1221,163 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
   const sourceRaw=String(sourceValue||"").trim(), targetRaw=String(targetValue||"").trim();
   if(!sourceRaw || !targetRaw) throw new Error("旧仓库和新仓库都不能为空");
   if(sourceRaw===targetRaw) throw new Error("旧仓库和新仓库不能是同一个");
-  const startedAt=Date.now();
-  db.settings.repositoryMigration={status:"running",source:sourceRaw,target:targetRaw,scanned:0,migrated:0,failed:0,startedAt,finishedAt:null,error:""};
-  saveDb();
-  let sc,tc;
-  try { sc=await main("getChat",{chat_id:sourceRaw}); } catch(e){ throw new Error("旧仓库无法访问："+String(e?.telegramDescription||e?.message||e)); }
-  try { tc=await main("getChat",{chat_id:targetRaw}); } catch(e){ throw new Error("新仓库无法访问："+String(e?.telegramDescription||e?.message||e)); }
-  const sourceId=String(sc.id), targetId=String(tc.id);
-  const sourceTitle=String(sc.title||sc.username||sourceId), targetTitle=String(tc.title||tc.username||targetId);
-  const sourceRepo={chatId:sourceId,title:sourceTitle,username:sc.username||"",type:sc.type||""};
-  let items=db.resources.filter(x=>String(x.chatId)===sourceId && Number(x.messageId)>0);
-  if(!items.length){ await sendHtml(TOKEN,uid,"🔎 <b>旧仓库尚未建立索引</b>\\n\\n正在启动扫描账号读取旧仓库历史消息，请稍候…"); await scanHistory(uid,sourceRepo); items=db.resources.filter(x=>String(x.chatId)===sourceId && Number(x.messageId)>0); }
-  if(!items.length) throw new Error("旧仓库没有找到可迁移的资源");
-  db.settings.repositoryMigration.scanned=items.length; saveDb();
-  const progress=await sendHtml(TOKEN,uid,"<b>🔄 正在迁移仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 旧仓库："+escapeHtml(sourceTitle)+"\\n📥 新仓库："+escapeHtml(targetTitle)+"\\n📚 待迁移："+items.length+" 条\\n\\n⏳ 正在复制…");
-  let migratedCount=0,failed=0;
-  const ordered=[...items].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
-  for(let i=0;i<ordered.length;i+=10){
-    const batch=ordered.slice(i,i+10);
-    try{
-      const copied=await main("copyMessages",{chat_id:targetId,from_chat_id:sourceId,message_ids:batch.map(x=>Number(x.messageId)),...(contentProtectionEnabled()?{protect_content:true}:{})});
-      if(!Array.isArray(copied)) throw new Error("Telegram 返回结果异常");
-      const count=Math.min(copied.length,batch.length);
-      for(let j=0;j<count;j++){ const newId=Number(copied[j]?.message_id||0); if(!newId) continue; batch[j].chatId=targetId; batch[j].messageId=newId; batch[j].fileId=null; queueBaserowResourceSync(batch[j]); migratedCount++; }
-      failed+=batch.length-count;
-    }catch(e){ failed+=batch.length; console.error("MIGRATION BATCH:",e.message,"source=",sourceId,"target=",targetId); }
-    db.settings.repositoryMigration.migrated=migratedCount; db.settings.repositoryMigration.failed=failed; saveDb();
-    if(i===0 || i+10>=ordered.length || i%100===0) await safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:"<b>🔄 正在迁移仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 旧仓库："+escapeHtml(sourceTitle)+"\\n📥 新仓库："+escapeHtml(targetTitle)+"\\n📚 总资源："+ordered.length+"\\n✅ 已迁移："+migratedCount+"\\n⚠️ 失败："+failed+"\\n\\n⏳ 正在处理…",parse_mode:"HTML",reply_markup:{inline_keyboard:[]}}).catch(()=>{});
-  }
-  db.settings.repository={chatId:targetId,title:targetTitle,username:tc.username||"",type:tc.type||""};
-  db.settings.repositoryMigration={status:failed?"completed_with_errors":"completed",source:sourceId,target:targetId,scanned:ordered.length,migrated:migratedCount,failed,startedAt,finishedAt:Date.now(),error:""};
-  saveDb(); await waitBaserowSyncQueue();
-  return safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:"<b>"+(failed?"⚠️ 仓库迁移完成（有失败）":"✅ 仓库迁移完成")+"</b>\\n━━━━━━━━━━━━━━\\n\\n📤 旧仓库："+escapeHtml(sourceTitle)+"\\n📥 新仓库："+escapeHtml(targetTitle)+"\\n📚 扫描资源："+ordered.length+"\\n✅ 成功迁移："+migratedCount+"\\n⚠️ 失败："+failed+"\\n\\n📌 旧仓库不会删除\\n📁 原有文件夹归属保留",parse_mode:"HTML",reply_markup:adminMenu().reply_markup});
-}
 
+  const previous=db.settings.repositoryMigration||{};
+  const canResume=previous.status==="running"&&String(previous.source||"")===sourceRaw&&String(previous.target||"")===targetRaw&&previous.startedAt;
+  const startedAt=canResume?Number(previous.startedAt):Date.now();
+  const state=canResume?previous:{
+    status:"running",source:sourceRaw,target:targetRaw,sourceId:null,targetId:null,
+    sourceTitle:"",targetTitle:"",scanned:0,queued:0,migrated:0,skipped:0,failed:0,current:0,total:0,
+    startedAt,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[]
+  };
+  state.status="running";state.finishedAt=null;state.error="";
+  state.completedKeys=Array.isArray(state.completedKeys)?state.completedKeys:[];
+  state.failedKeys=Array.isArray(state.failedKeys)?state.failedKeys:[];
+  state.folderMap=state.folderMap&&typeof state.folderMap==="object"?state.folderMap:{};
+  db.settings.repositoryMigration=state;saveDb();
+
+  let sc,tc;
+  try{sc=await main("getChat",{chat_id:sourceRaw});}catch(e){throw new Error("旧仓库无法访问："+String(e?.telegramDescription||e?.message||e));}
+  try{tc=await main("getChat",{chat_id:targetRaw});}catch(e){throw new Error("新仓库无法访问："+String(e?.telegramDescription||e?.message||e));}
+
+  const sourceId=String(sc.id),targetId=String(tc.id);
+  const sourceTitle=String(sc.title||sc.username||sourceId),targetTitle=String(tc.title||tc.username||targetId);
+  state.source=sourceId;state.target=targetId;state.sourceId=sourceId;state.targetId=targetId;
+  state.sourceTitle=sourceTitle;state.targetTitle=targetTitle;saveDb();
+
+  let items=db.resources.filter(x=>String(x.chatId)===sourceId&&Number(x.messageId)>0);
+  if(!items.length){
+    await sendHtml(TOKEN,uid,"🔎 <b>正在建立旧仓库索引</b>\n\n📤 旧仓库："+escapeHtml(sourceTitle)+"\n🔐 将使用历史扫描账号读取旧仓库消息。\n\n请稍候…");
+    await scanHistory(uid,{chatId:sourceId,title:sourceTitle,username:sc.username||"",type:sc.type||""});
+    items=db.resources.filter(x=>String(x.chatId)===sourceId&&Number(x.messageId)>0);
+  }
+  if(!items.length) throw new Error("旧仓库没有找到可迁移的资源");
+
+  const ordered=[...items].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+  const completed=new Set(state.completedKeys.map(String));
+  const failedKeys=new Set(state.failedKeys.map(String));
+  state.scanned=ordered.length;state.total=ordered.length;state.queued=ordered.length;
+  state.migrated=Math.max(0,Number(state.migrated)||0);state.skipped=Math.max(0,Number(state.skipped)||0);state.failed=0;state.current=0;saveDb();
+
+  const ensureTargetDirectory=(sourceItem)=>{
+    const sourceDir=db.directories.find(d=>String(d.id)===String(sourceItem?.directoryId||""));
+    const folderName=String(sourceDir?.name||"").trim();
+    if(!folderName)return null;
+    const normalized=folderName.replace(/\s+/g," ").trim().toLowerCase();
+    if(state.folderMap[normalized])return state.folderMap[normalized];
+    let targetDir=db.directories.find(d=>String(d.name||"").replace(/\s+/g," ").trim().toLowerCase()===normalized);
+    if(!targetDir){
+      targetDir={id:sharedDirectoryId(folderName),name:folderName,createdAt:Date.now(),sourceMigration:sourceId+"->"+targetId};
+      db.directories.push(targetDir);queueBaserowDirectorySync(targetDir);
+    }
+    state.folderMap[normalized]=String(targetDir.id);return String(targetDir.id);
+  };
+
+  const renderProgress=(phase)=>{
+    const done=Number(state.migrated||0)+Number(state.skipped||0),total=Number(state.total||ordered.length);
+    const percent=total?Math.min(100,Math.floor(done/total*100)):100;
+    const filled=Math.round(percent/10),bar="▰".repeat(filled)+"▱".repeat(Math.max(0,10-filled));
+    const elapsed=Math.max(0,Math.floor((Date.now()-startedAt)/1000));
+    const mm=String(Math.floor(elapsed/60)).padStart(2,"0"),ss=String(elapsed%60).padStart(2,"0");
+    return "<b>🔄 正在迁移仓库</b>\n━━━━━━━━━━━━━━\n📤 旧仓库：<b>"+escapeHtml(sourceTitle)+"</b>\n📥 新仓库：<b>"+escapeHtml(targetTitle)+"</b>\n\n📚 总资源："+total.toLocaleString()+"\n📊 进度："+bar+" <b>"+percent+"%</b>\n✅ 已迁移："+Number(state.migrated||0).toLocaleString()+"\n⏭️ 已跳过："+Number(state.skipped||0).toLocaleString()+"\n⚠️ 失败："+Number(state.failed||0).toLocaleString()+"\n📁 文件夹："+Object.keys(state.folderMap||{}).length.toLocaleString()+"\n⏱️ 用时："+mm+":"+ss+"\n\n"+(phase==="retry"?"🔁 正在重试失败批次…":"⏳ 正在处理资源…");
+  };
+
+  const progress=await sendHtml(TOKEN,uid,renderProgress(canResume?"resume":"processing"),{reply_markup:{inline_keyboard:[[{"text":"⏳ 后台运行","callback_data":"admin:root"}]]}});
+
+  const targetExisting=new Set(db.resources.filter(x=>String(x.chatId)===targetId).map(x=>{
+    const d=db.directories.find(y=>String(y.id)===String(x.directoryId||""));
+    return String(x.title||"").trim().toLowerCase()+"|"+String(d?.name||"").trim().toLowerCase();
+  }));
+
+  const copyOneBatch=async batch=>{
+    const ids=batch.map(x=>Number(x.messageId)).filter(x=>x>0);if(!ids.length)return [];
+    let last;
+    for(let attempt=1;attempt<=3;attempt++){
+      try{
+        const copied=await main("copyMessages",{chat_id:targetId,from_chat_id:sourceId,message_ids:ids,...(contentProtectionEnabled()?{protect_content:true}:{})});
+        if(!Array.isArray(copied))throw new Error("Telegram 返回结果异常");
+        return copied;
+      }catch(e){
+        last=e;console.warn("MIGRATION BATCH RETRY",attempt,"size=",batch.length,e?.message||e);
+        if(attempt<3)await sleep(1500*attempt);
+      }
+    }
+    throw last||new Error("复制批次失败");
+  };
+
+  const applyCopied=async(batch,copied)=>{
+    let ok=0;
+    for(let j=0;j<batch.length;j++){
+      const item=batch[j],key=resourceKey(item),newId=Number(copied[j]?.message_id||0);
+      if(!newId)continue;
+      const directoryId=ensureTargetDirectory(item);
+      const targetItem={...item,chatId:targetId,messageId:newId,directoryId:directoryId||null,fileId:null,baserowRowId:null,migratedFrom:{chatId:sourceId,messageId:Number(item.messageId),at:Date.now()}};
+      if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.messageId)===newId)){
+        db.resources.unshift(targetItem);queueBaserowResourceSync(targetItem);
+      }
+      completed.add(key);failedKeys.delete(key);state.migrated++;ok++;
+    }
+    return ok;
+  };
+
+  const processBatch=async batch=>{
+    const pending=batch.filter(x=>!completed.has(resourceKey(x)));
+    if(!pending.length){state.skipped+=batch.length;return;}
+    const needCopy=[];
+    for(const item of pending){
+      const d=db.directories.find(y=>String(y.id)===String(item.directoryId||""));
+      const dedupeKey=String(item.title||"").trim().toLowerCase()+"|"+String(d?.name||"").trim().toLowerCase();
+      if(dedupeKey!=="|"&&targetExisting.has(dedupeKey)){completed.add(resourceKey(item));state.skipped++;}else needCopy.push(item);
+    }
+    if(!needCopy.length)return;
+    try{
+      const copied=await copyOneBatch(needCopy);const ok=await applyCopied(needCopy,copied);
+      if(ok<needCopy.length)for(let i=ok;i<needCopy.length;i++)failedKeys.add(resourceKey(needCopy[i]));
+    }catch(e){
+      console.error("MIGRATION BATCH FAILED:",e?.message||e);
+      if(needCopy.length>1){
+        for(const item of needCopy){
+          try{const copied=await copyOneBatch([item]);const ok=await applyCopied([item],copied);if(!ok)failedKeys.add(resourceKey(item));}
+          catch(err){failedKeys.add(resourceKey(item));console.error("MIGRATION ITEM FAILED:",resourceKey(item),err?.message||err);}
+        }
+      }else failedKeys.add(resourceKey(needCopy[0]));
+    }
+  };
+
+  let lastUi=Date.now();
+  for(let i=0;i<ordered.length;i+=10){
+    const batch=ordered.slice(i,i+10);state.current=Math.min(i+batch.length,ordered.length);
+    await processBatch(batch);
+    state.failed=failedKeys.size;state.completedKeys=[...completed].slice(-25000);state.failedKeys=[...failedKeys].slice(-25000);
+    state.lastError=state.failed?"仍有 "+state.failed+" 条资源待重试":"";saveDb();
+    if(i===0||i+10>=ordered.length||Date.now()-lastUi>=12000){
+      lastUi=Date.now();
+      await safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:renderProgress("processing"),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{"text":state.failed?"🔁 失败项将自动重试":"⏳ 迁移进行中","callback_data":"admin:root"}]]}}).catch(()=>{});
+    }
+  }
+
+  for(let round=1;round<=2&&failedKeys.size;round++){
+    state.failed=failedKeys.size;
+    await safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:renderProgress("retry"),parse_mode:"HTML",reply_markup:{inline_keyboard:[]}}).catch(()=>{});
+    const retryItems=ordered.filter(x=>failedKeys.has(resourceKey(x))),beforeSize=failedKeys.size;
+    for(const item of retryItems){
+      try{const copied=await copyOneBatch([item]);const ok=await applyCopied([item],copied);if(ok)failedKeys.delete(resourceKey(item));}
+      catch(e){console.warn("MIGRATION FINAL RETRY",resourceKey(item),e?.message||e);}
+      state.failed=failedKeys.size;state.completedKeys=[...completed].slice(-25000);state.failedKeys=[...failedKeys].slice(-25000);saveDb();
+    }
+    if(failedKeys.size===beforeSize)break;
+  }
+
+  state.failed=failedKeys.size;state.status=state.failed?"completed_with_errors":"completed";state.finishedAt=Date.now();
+  state.error=state.failed?"部分资源无法复制，请重新执行同一组旧/新仓库迁移以继续断点续传。":"";
+  state.completedKeys=[...completed].slice(-25000);state.failedKeys=[...failedKeys].slice(-25000);saveDb();
+  await waitBaserowSyncQueue();
+
+  const elapsed=Math.max(0,Math.floor((state.finishedAt-startedAt)/1000));
+  const mm=String(Math.floor(elapsed/60)).padStart(2,"0"),ss=String(elapsed%60).padStart(2,"0");
+  const doneText="<b>"+(state.failed?"⚠️ 仓库迁移完成（有待处理项）":"✅ 仓库迁移完成")+"</b>\n━━━━━━━━━━━━━━\n📤 旧仓库："+escapeHtml(sourceTitle)+"\n📥 新仓库："+escapeHtml(targetTitle)+"\n\n📚 总资源："+ordered.length.toLocaleString()+"\n✅ 已迁移："+Number(state.migrated||0).toLocaleString()+"\n⏭️ 已跳过："+Number(state.skipped||0).toLocaleString()+"\n⚠️ 失败："+Number(state.failed||0).toLocaleString()+"\n📁 文件夹："+Object.keys(state.folderMap||{}).length.toLocaleString()+"\n⏱️ 总耗时："+mm+":"+ss+"\n\n"+(state.failed?"🔁 再次执行相同的迁移任务即可继续失败项，不会重复已完成资源。":"🎉 所有可迁移资源已处理完成。")+"\n\n📌 旧仓库不会删除\n📁 同名文件夹自动归并，不存在的文件夹自动创建";
+  return safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:doneText,parse_mode:"HTML",reply_markup:adminMenu().reply_markup});
+}
 const isSuperAdmin = id => ADMIN_IDS.has(String(id));
 const isAdmin = id => isSuperAdmin(id) || db.settings.admins.includes(String(id));
 const group = () => db.settings.requiredGroup;
