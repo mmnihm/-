@@ -3431,7 +3431,15 @@ async function handleDirectoryCallback(token, q, child=false) {
   });
 }
 
+let mainPollingActive = false;
+const mainProcessedUpdates = new Set();
+
 async function pollMain() {
+  if (mainPollingActive) {
+    console.warn("⚠️ MAIN POLLING 已经运行，忽略重复启动");
+    return;
+  }
+  mainPollingActive = true;
   try {
     await main("deleteWebhook",{drop_pending_updates:false});
   } catch (e) {
@@ -3450,6 +3458,19 @@ async function pollMain() {
       runtime.lastError = "";
       if (updates.length) runtime.lastUpdateAt = Date.now();
       for(const u of updates){
+        const updateId=Number(u.update_id);
+        if(Number.isFinite(updateId)) {
+          if(mainProcessedUpdates.has(updateId)) {
+            console.warn("⚠️ MAIN DUPLICATE UPDATE 已忽略:", updateId);
+            continue;
+          }
+          mainProcessedUpdates.add(updateId);
+          // 只保留最近一批，避免长期占用内存。
+          if(mainProcessedUpdates.size>2000) {
+            const first=mainProcessedUpdates.values().next().value;
+            mainProcessedUpdates.delete(first);
+          }
+        }
         console.log("📩 MAIN UPDATE:", u.update_id, u.callback_query ? "callback_query" : u.channel_post ? "channel_post" : u.edited_channel_post ? "edited_channel_post" : u.message ? "message" : "other");
         if(u.channel_post) {
           console.log("📦 CHANNEL POST:", String(u.channel_post.chat?.id), u.channel_post.chat?.title || u.channel_post.chat?.username || "");
@@ -3462,7 +3483,11 @@ async function pollMain() {
         if(u.callback_query) { console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||"")); await handleDirectoryCallback(TOKEN,u.callback_query,false); }
         if(u.message) {
           console.log("📨 MAIN MESSAGE RECEIVED:", String(u.message.text||u.message.caption||"").slice(0,80));
-          mainMessage(u.message).catch(e=>console.error("MAIN MESSAGE:",e.message));
+          try {
+            await mainMessage(u.message);
+          } catch(e) {
+            console.error("MAIN MESSAGE:",e.message);
+          }
         }
         db.offset=u.update_id+1;
       }
