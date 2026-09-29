@@ -3450,7 +3450,7 @@ async function pollMain() {
       runtime.lastError = "";
       if (updates.length) runtime.lastUpdateAt = Date.now();
       for(const u of updates){
-        console.log("📩 MAIN UPDATE:", u.update_id, u.channel_post ? "channel_post" : u.edited_channel_post ? "edited_channel_post" : u.message ? "message" : "other");
+        console.log("📩 MAIN UPDATE:", u.update_id, u.callback_query ? "callback_query" : u.channel_post ? "channel_post" : u.edited_channel_post ? "edited_channel_post" : u.message ? "message" : "other");
         if(u.channel_post) {
           console.log("📦 CHANNEL POST:", String(u.channel_post.chat?.id), u.channel_post.chat?.title || u.channel_post.chat?.username || "");
           indexResource(u.channel_post);
@@ -3459,7 +3459,7 @@ async function pollMain() {
           console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));
           indexResource(u.edited_channel_post);
         }
-        if(u.callback_query) handleDirectoryCallback(TOKEN,u.callback_query,false).catch(e=>console.error("MAIN CALLBACK:",e.message));
+        if(u.callback_query) { console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||"")); await handleDirectoryCallback(TOKEN,u.callback_query,false); }
         if(u.message) mainMessage(u.message).catch(e=>console.error("MAIN MESSAGE:",e.message));
         db.offset=u.update_id+1;
       }
