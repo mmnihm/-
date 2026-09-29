@@ -2330,7 +2330,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="adm:nonmember")return mainMessage({chat:{id:chatId},from:{id:uid},text:"✏️ 非会员提示"});
     if(data==="adm:post")return mainMessage({chat:{id:chatId},from:{id:uid},text:"📣 获取后推广"});
     const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人"};
-    if(syn[route])return mainMessage({chat:{id:chatId},from:{id:uid},text:syn[route]});
+    if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
       [{text:"➕ +1",callback_data:"quota:+1"},{text:"➖ -1",callback_data:"quota:-1"}],
       [{text:"✏️ 自定义",callback_data:"quota:set"}],
