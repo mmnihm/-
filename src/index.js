@@ -252,12 +252,38 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[]}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}}}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
   db.settings.logs.unshift({uid:String(uid),action:String(action),detail:String(detail).slice(0,300),at:Date.now()});
   db.settings.logs=db.settings.logs.slice(0,200);
+}
+function recordStat(uid,type,count=1) {
+  if(!db.settings.stats || typeof db.settings.stats!=="object") db.settings.stats={downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}};
+  const stats=db.settings.stats;
+  if(!stats.userActions || typeof stats.userActions!=="object") stats.userActions={};
+  const id=String(uid||"");
+  if(!id) return;
+  if(type==="download") stats.downloads+=Number(count)||0;
+  if(type==="search") stats.searches+=Number(count)||0;
+  if(type==="upload") stats.uploads+=Number(count)||0;
+  if(type==="uploadedResource") stats.uploadedResources+=Number(count)||0;
+  if(!stats.userActions[id]) stats.userActions[id]={downloads:0,searches:0,uploads:0,uploadedResources:0,lastActive:0};
+  const u=stats.userActions[id];
+  if(type==="download") u.downloads+=Number(count)||0;
+  if(type==="search") u.searches+=Number(count)||0;
+  if(type==="upload") u.uploads+=Number(count)||0;
+  if(type==="uploadedResource") u.uploadedResources+=Number(count)||0;
+  u.lastActive=Date.now();
+}
+function recordUserActivity(uid) {
+  if(!uid) return;
+  if(!db.settings.stats || typeof db.settings.stats!=="object") db.settings.stats={downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}};
+  if(!db.settings.stats.userActions || typeof db.settings.stats.userActions!=="object") db.settings.stats.userActions={};
+  const id=String(uid);
+  if(!db.settings.stats.userActions[id]) db.settings.stats.userActions[id]={downloads:0,searches:0,uploads:0,uploadedResources:0,lastActive:0};
+  db.settings.stats.userActions[id].lastActive=Date.now();
 }
 function normalizeDb(raw) {
   const base = emptyDb();
@@ -842,6 +868,8 @@ async function finalizeUploadUnlocked(uid, state) {
     }
   }
 
+  recordStat(uid,"upload",1);
+  recordStat(uid,"uploadedResource",stored);
   saveDb();
   logAdmin(uid,"结束上传",d.name+" / 收到"+items.length+" / 入库"+stored);
 
@@ -1114,6 +1142,8 @@ async function deliverFromHistory(token,chatId,userId,items) {
     }
 
     if (ok > 0) {
+      recordStat(userId,"download",ok);
+      saveDb();
       return send(token,chatId,
         "✅ <b>资源获取完成</b>\\n\\n"+
         "📤 成功发送："+ok+" 条\\n"+
@@ -1222,6 +1252,8 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
       {parse_mode:"HTML"});
   }
 
+  recordStat(userId,"download",ok);
+  saveDb();
   return send(token,chatId,
     "✅ <b>本批获取完成</b>\\n"+
     "━━━━━━━━━━━━━━\\n\\n"+
@@ -1306,6 +1338,7 @@ async function mainMessage(msg) {
 
   const uid=msg.from.id;
   if(!db.users.includes(uid)) { db.users.push(uid); saveDb(); }
+  recordUserActivity(uid);
   const t=msg.text||"";
   const admin=isAdmin(uid);
   const key="m:"+uid;
@@ -1376,17 +1409,37 @@ async function mainMessage(msg) {
     }
   }
 
-  if(t==="📊 数据统计" && admin)
+  if(t==="📊 数据统计" && admin) {
+    const stats=db.settings.stats||{};
+    const users=stats.userActions||{};
+    const now=Date.now(),day=86400000;
+    const activeToday=Object.values(users).filter(x=>Number(x.lastActive||0)>=now-day).length;
+    const active7d=Object.values(users).filter(x=>Number(x.lastActive||0)>=now-7*day).length;
+    const topDownloads=Object.entries(users).sort((a,b)=>Number(b[1]?.downloads||0)-Number(a[1]?.downloads||0)).slice(0,5);
+    const topSearch=Object.entries(users).sort((a,b)=>Number(b[1]?.searches||0)-Number(a[1]?.searches||0)).slice(0,5);
+    const topUsers=topDownloads.map(([id,x],i)=>(i+1)+". <code>"+escapeHtml(id)+"</code> · 获取 "+Number(x.downloads||0)).join("\\n")||"暂无数据";
+    const searchUsers=topSearch.map(([id,x],i)=>(i+1)+". <code>"+escapeHtml(id)+"</code> · 搜索 "+Number(x.searches||0)).join("\\n")||"暂无数据";
     return sendHtml(TOKEN,uid,
-      "<b>📊 平台数据</b>\\n\\n"+
-      "👤 用户： <b>"+db.users.length+"</b>\\n"+
-      "🤖 子机器人： <b>"+db.children.length+"</b>\\n"+
-      "📚 已索引资源： <b>"+db.resources.length+"</b>\\n"+
-      "📂 分类： <b>"+db.directories.length+"</b>\\n\\n"+
-      "🔐 指定群： "+(group()?"✅ 已绑定":"❌ 未绑定")+"\\n"+
-      "📦 资源仓库： "+(repo()?"✅ 已绑定":"❌ 未绑定"),
-      {parse_mode:"HTML",...backMenu(true)}
+      "<b>📊 数据与运营</b>\\n"+
+      "━━━━━━━━━━━━━━\\n\\n"+
+      "👤 <b>用户数据</b>\\n"+
+      "• 用户总数：<b>"+db.users.length+"</b>\\n"+
+      "• 今日活跃：<b>"+activeToday+"</b>\\n"+
+      "• 近7天活跃：<b>"+active7d+"</b>\\n\\n"+
+      "📥 <b>获取统计</b>\\n"+
+      "• 获取资源：<b>"+Number(stats.downloads||0)+"</b> 个\\n\\n"+
+      "🔎 <b>搜索统计</b>\\n"+
+      "• 搜索次数：<b>"+Number(stats.searches||0)+"</b> 次\\n\\n"+
+      "📤 <b>上传统计</b>\\n"+
+      "• 上传批次：<b>"+Number(stats.uploads||0)+"</b> 次\\n"+
+      "• 上传资源：<b>"+Number(stats.uploadedResources||0)+"</b> 个\\n\\n"+
+      "🏆 <b>获取最多的用户</b>\\n"+topUsers+"\\n\\n"+
+      "🔍 <b>搜索最多的用户</b>\\n"+searchUsers+"\\n\\n"+
+      "📚 资源库：<b>"+db.resources.length+"</b> 个 · 📂 文件夹：<b>"+db.directories.length+"</b> 个\\n"+
+      "🤖 子机器人：<b>"+db.children.length+"</b> 个",
+      {parse_mode:"HTML",...adminOpsMenu()}
     );
+  }
 
   if(t==="📦 资源仓库" && admin)
     return send(TOKEN,uid,
@@ -1482,6 +1535,8 @@ async function mainMessage(msg) {
       return send(TOKEN,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",admin?adminMenu():userMenu());
     }
     const query=t.trim();
+    recordStat(uid,"search",1);
+    saveDb();
     const results=search(query);
     if(!results.length) return sendHtml(TOKEN,uid,
       "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+escapeHtml(query)+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
@@ -1984,6 +2039,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     await answer("正在获取资源…");
     try {
       await sendIndexedResource(token,chatId,item);
+      recordStat(uid,"download",1);
+      saveDb();
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
