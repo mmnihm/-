@@ -2912,7 +2912,8 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(!uid || !callbackId || !chatId || !messageId) return;
 
-  // 先立即确认 Telegram 按钮点击，避免共享数据库刷新导致按钮一直转圈/看起来没反应。
+  // 回调必须独立于 Baserow：先确认点击，再执行按钮逻辑。
+  console.log("🔘 CALLBACK:", data, "uid="+uid, "chat="+chatId);
   const answer=async(text="",showAlert=false)=>{
     try {
       const body={callback_query_id:callbackId};
@@ -2921,10 +2922,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     } catch {}
   };
   await answer();
-  await refreshSharedData();
 
-
-  if(data==="hub"||data.startsWith("hub:")){await answer();
+  if(data==="hub"||data.startsWith("hub:")){
     const mode=data.split(":")[1]||"home";
     if(mode==="home")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureText(),parse_mode:"HTML",reply_markup:userFeatureKeyboard()});
     if(mode==="fav"){const items=userFavorites(uid).map(resourceByKey).filter(Boolean);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("⭐ 我的收藏",items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"getfav:")});}
