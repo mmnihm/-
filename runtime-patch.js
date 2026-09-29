@@ -12,7 +12,7 @@ if (!s.includes("BACKGROUND_REPOSITORY_SYNC_V2")) {
 
   s = s.replace(
     '["📦 资源仓库","🔍 仓库扫描"],',
-    '["📦 资源仓库","🔗 绑定新仓库"],["🔍 仓库扫描"],["🔄 迁移旧仓库"],'
+    '["🔗 绑定新仓库","🔄 迁移旧仓库"],'
   );
 
   const oldForward = /  if\(msg\.chat\?\.type==="private" && msg\.forward_origin\?\.chat\) \{[\s\S]*?    saveDb\(\);\n/;
