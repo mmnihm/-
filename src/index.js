@@ -129,7 +129,10 @@ async function telegramHttpsRequest(token, method, body, timeoutMs) {
 
 async function safeEdit(token, body, fallbackText = "") {
   try {
-    return await tg(token, "editMessageText", body);
+    const formattedBody = body && typeof body === "object" && typeof body.text === "string"
+      ? {...body, text:prettyText(body.text)}
+      : body;
+    return await tg(token, "editMessageText", formattedBody);
   } catch (e) {
     const msg = String(e?.message || e);
     if (/message.*(can't|cannot).*edit|message is not modified|MESSAGE_ID_INVALID|message to edit not found/i.test(msg)) {
@@ -138,7 +141,7 @@ async function safeEdit(token, body, fallbackText = "") {
         try {
           return await tg(token, "sendMessage", {
             chat_id: body.chat_id,
-            text: fallbackText,
+            text: prettyText(fallbackText),
             parse_mode: body.parse_mode,
             reply_markup: body.reply_markup
           });
@@ -1237,12 +1240,18 @@ function contentProtectionMenu() {
   ]};
 }
 function contentProtectionText() {
-  return "<b>🛡️ 内容保护</b>\\n━━━━━━━━━━━━━━\\n\\n"+
-    "🛡️ 防转发/保存：<b>"+(contentProtectionEnabled()?"开启":"关闭")+"</b>\\n"+
-    "⏱️ 自动删除：<b>"+autoDeleteText()+"</b>\\n\\n"+
-    (contentProtectionEnabled() && autoDeleteMinutes()>0
-      ? "用户获取的资源消息将在 "+autoDeleteText()+" 后自动删除。"
-      : "开启内容保护后，可设置资源消息自动删除时间。");
+  const protection = contentProtectionEnabled();
+  const deletion = autoDeleteMinutes() > 0;
+  return [
+    "<b>🛡️ 内容保护</b>",
+    "━━━━━━━━━━━━━━",
+    "🛡️ 防转发/保存：<b>"+(protection ? "开启" : "关闭")+"</b>",
+    "⏱️ 自动删除：<b>"+autoDeleteText()+"</b>",
+    "━━━━━━━━━━━━━━",
+    protection && deletion
+      ? "📌 用户获取的资源将在 "+autoDeleteText()+" 后自动删除。"
+      : "💡 开启内容保护后，可设置资源消息自动删除时间。"
+  ].join("\\n");
 }
 async function sendIndexedResource(token, chatId, item) {
   // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
