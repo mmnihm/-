@@ -315,6 +315,20 @@ function baserowValueForField(field, value, fallbackType="text") {
     return Number.isFinite(n) ? n : 0;
   }
   if (type === "boolean") return Boolean(value);
+  // Baserow 单选/多选字段必须使用表格中已经存在的选项，不能直接写入任意字符串。
+  if (type === "single_select" || type === "multiple_select") {
+    const options = Array.isArray(field.select_options) ? field.select_options
+      : Array.isArray(field.options) ? field.options : [];
+    const raw = String(value).trim();
+    if (!options.length) return undefined;
+    const findOption = (v) => options.find(o => String(o?.value ?? o?.name ?? "").trim().toLowerCase() === String(v).trim().toLowerCase());
+    if (type === "single_select") {
+      const option = findOption(raw);
+      return option ? String(option.value ?? option.name) : undefined;
+    }
+    const values = Array.isArray(value) ? value : [value];
+    return values.map(v => findOption(v)).filter(Boolean).map(o => String(o.value ?? o.name));
+  }
   if (type === "date" || type === "last_modified" || type === "created_on") {
     const d = value instanceof Date ? value : new Date(Number(value) > 10000000000 ? Number(value) : Number(value) * 1000);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
@@ -349,10 +363,14 @@ async function baserowSyncResource(item) {
     if (captionField) payload[captionField.name] = baserowValueForField(captionField, item.caption || "");
     if (folderField) {
       const d = db.directories.find(x => String(x.id) === String(item.directoryId || ""));
-      payload[folderField.name] = baserowValueForField(folderField, d?.name || "");
+      const folderValue = baserowValueForField(folderField, d?.name || "");
+      if (folderValue !== undefined) payload[folderField.name] = folderValue;
     }
     if (dateField) payload[dateField.name] = baserowValueForField(dateField, item.date);
-    if (typeField) payload[typeField.name] = baserowValueForField(typeField, item.fileType || "Resource");
+    if (typeField) {
+      const typeValue = baserowValueForField(typeField, item.fileType || "Resource");
+      if (typeValue !== undefined) payload[typeField.name] = typeValue;
+    }
     if (fileIdField) payload[fileIdField.name] = baserowValueForField(fileIdField, item.fileId || "");
     if (downloadField) payload[downloadField.name] = baserowValueForField(downloadField, Number(item.downloads || 0));
 
