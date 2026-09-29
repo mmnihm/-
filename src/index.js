@@ -734,7 +734,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[]}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[],resourceSources:[],repositoryMigration:{status:"idle",source:null,target:null,scanned:0,migrated:0,failed:0,startedAt:null,finishedAt:null,error:""}}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -946,7 +946,7 @@ async function ensureHistoryClient(uid) {
     try { await sendHtml(TOKEN, uid,
       "<b>❌ Telegram 扫描账号连接失败</b>\\n\\n" +
       "⚠️ " + escapeHtml(e?.message || "未知连接错误") + "\\n\\n" +
-      "💡 如果这个账号已经在资源频道里，请先在 Telegram 客户端打开一次该频道，然后重新点击「🚀 扫描并上传」。"
+      "💡 请确认扫描账号已经加入目标仓库，并在 Telegram 客户端打开过该仓库；如果提示 API 配置错误，请检查 TG_API_ID / TG_API_HASH。"
     ); } catch {}
     throw e;
   });
@@ -954,8 +954,8 @@ async function ensureHistoryClient(uid) {
   finally { historyConnecting = null; }
 }
 
-async function findHistoryEntity(client) {
-  const r = repo();
+async function findHistoryEntity(client, targetRepo=null) {
+  const r = targetRepo || repo();
   if (!r) throw new Error("尚未绑定资源仓库");
 
   const targetId = String(r.chatId || "").trim();
@@ -1060,7 +1060,7 @@ function indexHistoryMessage(message, chatId) {
   return true;
 }
 
-async function scanHistory(uid) {
+async function scanHistory(uid, targetRepo=null) {
   const historyState = db.settings.historyScan || {};
   if (historyState.status === "running") {
     const started = Number(historyState.startedAt || 0);
@@ -1078,8 +1078,8 @@ async function scanHistory(uid) {
     db.settings.historyScan = historyState;
     saveDb();
   }
-  const r = repo();
-  if (!r) return send(TOKEN,uid,"❌ <b>尚未绑定资源仓库</b>\\n\\n请先进入「📦 资源仓库」完成绑定。",adminMenu());
+  const r = targetRepo || repo();
+  if (!r) return send(TOKEN,uid,"❌ <b>没有可扫描的资源仓库</b>\\n\\n请先绑定仓库，或从「🔄 迁移仓库」指定旧仓库。",adminMenu());
 
   const previousCheckpoint=Number(db.settings.historyScan.lastMessageId||0);
   const startedAt=Date.now();
@@ -1141,7 +1141,7 @@ async function scanHistory(uid) {
     console.log("🔎 HISTORY SCAN: progress message sent, connecting MTProto...");
     const client = await ensureHistoryClient(uid);
     console.log("🔎 HISTORY SCAN: MTProto ready, locating repository...");
-    const entity = await findHistoryEntity(client);
+    const entity = await findHistoryEntity(client, r);
     console.log("🔎 HISTORY SCAN: repository located, starting history iteration");
     let scanned = 0, indexed = 0, boundary = previousCheckpoint;
     let lastProgressAt = Date.now();
@@ -1217,6 +1217,44 @@ async function scanHistory(uid) {
     return sendHtml(TOKEN,uid,errorText,adminMenu());
   }
 }
+async function repositoryMigration(uid, sourceValue, targetValue) {
+  const sourceRaw=String(sourceValue||"").trim(), targetRaw=String(targetValue||"").trim();
+  if(!sourceRaw || !targetRaw) throw new Error("旧仓库和新仓库都不能为空");
+  if(sourceRaw===targetRaw) throw new Error("旧仓库和新仓库不能是同一个");
+  const startedAt=Date.now();
+  db.settings.repositoryMigration={status:"running",source:sourceRaw,target:targetRaw,scanned:0,migrated:0,failed:0,startedAt,finishedAt:null,error:""};
+  saveDb();
+  let sc,tc;
+  try { sc=await main("getChat",{chat_id:sourceRaw}); } catch(e){ throw new Error("旧仓库无法访问："+String(e?.telegramDescription||e?.message||e)); }
+  try { tc=await main("getChat",{chat_id:targetRaw}); } catch(e){ throw new Error("新仓库无法访问："+String(e?.telegramDescription||e?.message||e)); }
+  const sourceId=String(sc.id), targetId=String(tc.id);
+  const sourceTitle=String(sc.title||sc.username||sourceId), targetTitle=String(tc.title||tc.username||targetId);
+  const sourceRepo={chatId:sourceId,title:sourceTitle,username:sc.username||"",type:sc.type||""};
+  let items=db.resources.filter(x=>String(x.chatId)===sourceId && Number(x.messageId)>0);
+  if(!items.length){ await sendHtml(TOKEN,uid,"🔎 <b>旧仓库尚未建立索引</b>\\n\\n正在启动扫描账号读取旧仓库历史消息，请稍候…"); await scanHistory(uid,sourceRepo); items=db.resources.filter(x=>String(x.chatId)===sourceId && Number(x.messageId)>0); }
+  if(!items.length) throw new Error("旧仓库没有找到可迁移的资源");
+  db.settings.repositoryMigration.scanned=items.length; saveDb();
+  const progress=await sendHtml(TOKEN,uid,"<b>🔄 正在迁移仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 旧仓库："+escapeHtml(sourceTitle)+"\\n📥 新仓库："+escapeHtml(targetTitle)+"\\n📚 待迁移："+items.length+" 条\\n\\n⏳ 正在复制…");
+  let migratedCount=0,failed=0;
+  const ordered=[...items].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+  for(let i=0;i<ordered.length;i+=10){
+    const batch=ordered.slice(i,i+10);
+    try{
+      const copied=await main("copyMessages",{chat_id:targetId,from_chat_id:sourceId,message_ids:batch.map(x=>Number(x.messageId)),...(contentProtectionEnabled()?{protect_content:true}:{})});
+      if(!Array.isArray(copied)) throw new Error("Telegram 返回结果异常");
+      const count=Math.min(copied.length,batch.length);
+      for(let j=0;j<count;j++){ const newId=Number(copied[j]?.message_id||0); if(!newId) continue; batch[j].chatId=targetId; batch[j].messageId=newId; batch[j].fileId=null; queueBaserowResourceSync(batch[j]); migratedCount++; }
+      failed+=batch.length-count;
+    }catch(e){ failed+=batch.length; console.error("MIGRATION BATCH:",e.message,"source=",sourceId,"target=",targetId); }
+    db.settings.repositoryMigration.migrated=migratedCount; db.settings.repositoryMigration.failed=failed; saveDb();
+    if(i===0 || i+10>=ordered.length || i%100===0) await safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:"<b>🔄 正在迁移仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 旧仓库："+escapeHtml(sourceTitle)+"\\n📥 新仓库："+escapeHtml(targetTitle)+"\\n📚 总资源："+ordered.length+"\\n✅ 已迁移："+migratedCount+"\\n⚠️ 失败："+failed+"\\n\\n⏳ 正在处理…",parse_mode:"HTML",reply_markup:{inline_keyboard:[]}}).catch(()=>{});
+  }
+  db.settings.repository={chatId:targetId,title:targetTitle,username:tc.username||"",type:tc.type||""};
+  db.settings.repositoryMigration={status:failed?"completed_with_errors":"completed",source:sourceId,target:targetId,scanned:ordered.length,migrated:migratedCount,failed,startedAt,finishedAt:Date.now(),error:""};
+  saveDb(); await waitBaserowSyncQueue();
+  return safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:"<b>"+(failed?"⚠️ 仓库迁移完成（有失败）":"✅ 仓库迁移完成")+"</b>\\n━━━━━━━━━━━━━━\\n\\n📤 旧仓库："+escapeHtml(sourceTitle)+"\\n📥 新仓库："+escapeHtml(targetTitle)+"\\n📚 扫描资源："+ordered.length+"\\n✅ 成功迁移："+migratedCount+"\\n⚠️ 失败："+failed+"\\n\\n📌 旧仓库不会删除\\n📁 原有文件夹归属保留",parse_mode:"HTML",reply_markup:adminMenu().reply_markup});
+}
+
 const isSuperAdmin = id => ADMIN_IDS.has(String(id));
 const isAdmin = id => isSuperAdmin(id) || db.settings.admins.includes(String(id));
 const group = () => db.settings.requiredGroup;
@@ -1324,7 +1362,8 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"✏️ 修改文件夹",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
- [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
+ [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🔄 迁移仓库",callback_data:"adm:migrate"}],
+ [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
 function adminSettingsInline(){return{inline_keyboard:[
@@ -1655,9 +1694,25 @@ function configText() {
   ].join("\n");
 }
 
-function indexResource(msg) {
+function resourceSourceChats() {
+  const set = new Set();
   const r = repo();
-  if (!r || String(msg.chat?.id) !== String(r.chatId)) return;
+  if (r?.chatId) set.add(String(r.chatId));
+  const list = Array.isArray(db.settings.resourceSources) ? db.settings.resourceSources : [];
+  for (const x of list) {
+    const id = typeof x === "object" ? x.chatId : x;
+    if (id !== undefined && id !== null && String(id).trim()) set.add(String(id).trim());
+  }
+  return set;
+}
+
+function indexResource(msg) {
+  if (!msg?.chat?.id || !["group","supergroup","channel"].includes(String(msg.chat.type))) return;
+  if (!Array.isArray(db.settings.resourceSources)) db.settings.resourceSources = [];
+  if (!db.settings.resourceSources.some(x => String(x?.chatId ?? x) === String(msg.chat.id))) {
+    db.settings.resourceSources.push({chatId:String(msg.chat.id),title:String(msg.chat.title || msg.chat.username || msg.chat.id),username:String(msg.chat.username || ""),type:String(msg.chat.type || "")});
+    db.settings.resourceSources = db.settings.resourceSources.slice(-100);
+  }
   let fileType = null, fileId = null;
   if (msg.document) { fileType = "Document"; fileId = msg.document.file_id; }
   else if (msg.video) { fileType = "Video"; fileId = msg.video.file_id; }
@@ -2121,6 +2176,22 @@ async function mainMessage(msg) {
     states.delete(key);
     return sendHtml(TOKEN,uid,"<b>👑 管理后台</b>\\n\\n📦 资源：上传、目录、仓库与扫描\\n📊 运营：数据、广播与日志\\n⚙️ 设置：指定群、管理员与系统\\n🤖 机器人：克隆机器人\\n\\n👇 <i>请选择管理模块</i>",adminMenu());
   }
+  if (admin && s?.step === "migration_source") {
+    if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消仓库迁移。",adminMenu()); }
+    const source=String(t||"").trim();
+    if(!source) return send(TOKEN,uid,"⚠️ 请输入旧仓库 Chat ID 或 @用户名。");
+    states.set(key,{step:"migration_target",source});
+    return sendHtml(TOKEN,uid,"<b>📥 现在发送新仓库</b>\\n\\n请输入新仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n机器人必须同时在两个仓库里。发送 /cancel 可取消。");
+  }
+  if (admin && s?.step === "migration_target") {
+    if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消仓库迁移。",adminMenu()); }
+    const target=String(t||"").trim(), source=String(s?.source||"").trim();
+    if(!target) return send(TOKEN,uid,"⚠️ 请输入新仓库 ID 或 @用户名。");
+    states.delete(key);
+    try { return await repositoryMigration(uid,source,target); }
+    catch(e) { db.settings.repositoryMigration={...(db.settings.repositoryMigration||{}),status:"error",finishedAt:Date.now(),error:String(e?.message||e)}; saveDb(); return sendHtml(TOKEN,uid,"<b>❌ 仓库迁移失败</b>\\n\\n⚠️ "+escapeHtml(e?.message||e)+"\\n\\n请确认机器人同时在旧仓库和新仓库里，并具有读取消息权限。",adminMenu()); }
+  }
+
   const pendingHistory = historyInputs.get(String(uid));
   if (pendingHistory) {
     if (t === "/cancel") { historyInputs.delete(String(uid)); return send(TOKEN,uid,"❌ <b>已取消扫描授权</b>\\n\\n本次授权操作已结束。",adminMenu()); }
@@ -2293,6 +2364,11 @@ async function mainMessage(msg) {
       "<b>✅ 获取后推广消息已更新</b>\\n\\n"+
       db.settings.postResourceMessage,
       adminSettingsMenu());
+  }
+
+  if(t==="🔄 迁移仓库" && admin) {
+    states.set(key,{step:"migration_source"});
+    return sendHtml(TOKEN,uid,"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{"text":"❌ 取消","callback_data":"admin:root"}]]}});
   }
 
   if(t==="🔍 仓库扫描" && admin) {
@@ -2968,7 +3044,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     ]}});
     if(data==="adm:nonmember")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"✏️ 非会员提示"});
     if(data==="adm:post")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📣 获取后推广"});
-    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人"};
+    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
