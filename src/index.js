@@ -180,20 +180,25 @@ async function tg(token, method, body = {}) {
         continue;
       }
 
-      // Telegram 明确拒绝的 4xx 不应当按网络故障重复重试。
-      // callback_query 特别敏感：查询过期/ID 无效后重试只会继续失败。
+      // Telegram 业务拒绝不是网络故障：被踢出频道、chat not found、
+      // token 无效、callback 过期等，重试同一个请求没有意义。
       if (r.status >= 400 && r.status < 500) {
         const description = String(j.description || "");
         const err = new Error(description || method + " failed");
         err.telegramStatus = r.status;
         err.telegramDescription = description;
-        if (
-          method === "answerCallbackQuery" ||
-          (method === "editMessageText" &&
-            /message.*(can't|cannot).*edit|message is not modified|MESSAGE_ID_INVALID|message to edit not found/i.test(description))
-        ) {
-          err.noRetry = true;
-        }
+        err.noRetry = true;
+        throw err;
+      }
+
+      // 部分网关可能用 HTTP 200 返回 Telegram 的业务错误。
+      // ok=false 且不是 429 时也不再重复请求。
+      if (j.ok === false) {
+        const description = String(j.description || "");
+        const err = new Error(description || method + " failed");
+        err.telegramStatus = r.status;
+        err.telegramDescription = description;
+        err.noRetry = true;
         throw err;
       }
 
@@ -1986,14 +1991,17 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     const total=valid.length;
     if(ok===0) {
       const isChatNotFound=/chat not found/i.test(lastError);
+      const isKicked=/bot was kicked|bot is not a member|kicked from the channel|Forbidden/i.test(lastError);
       return send(token,chatId,
         "❌ <b>资源暂时无法发送</b>\\n\\n"+
         "📦 找到资源："+total+" 条\\n"+
         "📤 成功发送：0 条\\n"+
         "⚠️ 发送失败："+fail+" 条\\n\\n"+
-        (isChatNotFound
-          ? "🔧 <b>需要管理员处理</b>\\n\\n请把当前机器人加入「资源仓库」。如果仓库是频道，请将机器人添加为频道管理员。\\n\\n历史扫描账号能看到资源，只代表扫描账号能读取历史消息；用户获取资源时，机器人本身也必须能够访问仓库消息。"
-          : "🔧 <b>资源仓库读取失败</b>\\n\\n请确认机器人仍在资源仓库中，并有读取消息的权限。\\n\\nTelegram：<code>"+String(lastError).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>")
+        (isKicked
+          ? "🔧 <b>机器人已失去资源仓库权限</b>\\n\\n请把当前机器人重新加入资源仓库。\\n如果资源仓库是频道，请将机器人重新添加为频道管理员后再试。\\n\\n⚠️ Baserow 里仍然可以保存资源记录，但 Telegram 发送资源时，机器人必须还能访问原始消息。"
+          : isChatNotFound
+            ? "🔧 <b>需要管理员处理</b>\\n\\n请把当前机器人加入「资源仓库」。如果仓库是频道，请将机器人加入并确认有读取消息权限。\\n\\n历史扫描账号能看到资源，只代表扫描账号能读取历史消息；用户获取资源时，机器人本身也必须能够访问仓库消息。"
+            : "🔧 <b>资源仓库读取失败</b>\\n\\n请确认机器人仍在资源仓库中，并有读取消息的权限。\\n\\nTelegram：<code>"+String(lastError).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>")
       ,{parse_mode:"HTML"});
     }
     return send(token,chatId,
