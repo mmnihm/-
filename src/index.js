@@ -806,7 +806,7 @@ function adminRootInline(){return{inline_keyboard:[
  [{text:"🏠 返回首页",callback_data:"admin:home"}]
 ]};}
 function adminResourceInline(){return{inline_keyboard:[
- [{text:"✏️ 文件夹管理",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
+ [{text:"✏️ 修改文件夹",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
  [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
@@ -820,7 +820,7 @@ function adminSettingsInline(){return{inline_keyboard:[
 function adminOpsInline(){return{inline_keyboard:[
  [{text:"📊 数据统计",callback_data:"adm:stats"},{text:"📢 广播消息",callback_data:"adm:broadcast"}],
  [{text:"📜 操作日志",callback_data:"adm:logs"},{text:"📌 广播后置顶",callback_data:"adm:pin"}],
- [{text:"📝 用户提示",callback_data:"admin:prompts"},{text:"📣 获取后推广",callback_data:"adm:post"}],
+ [{text:"📝 用户提示",callback_data:"admin:prompts"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
 function adminBotInline(){return{inline_keyboard:[
@@ -833,7 +833,8 @@ function userMenu() {
   return {reply_markup:{keyboard:[
     ["📂 资源目录","🔎 搜索资源"],
     ["🎲 随机获取","🆕 最新资源"],
-    ["⭐ 我的资源","🏠 开始"]
+    ["⭐ 我的资源","🤖 克隆机器人"],
+    ["🏠 开始"]
   ],resize_keyboard:true,input_field_placeholder:"选择功能"}};
 }
 function childMenu() {
