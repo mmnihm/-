@@ -2236,6 +2236,8 @@ async function childMessage(child,msg,token) {
     }
   }
 
+  if(t==="⭐ 我的资源") return sendHtml(token,uid,userFeatureText(),{reply_markup:userFeatureKeyboard()});
+
   if(startCommand==="/start" || t==="🏠 开始") return sendHtml(token,uid,
     "<b>👋 欢迎使用资源机器人</b>\n\n📚 <b>共享资源功能</b>：目录 · 搜索 · 随机 · 最新\n\n👇 <i>请选择下方功能</i>",childMenu());
 
