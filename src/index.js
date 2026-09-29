@@ -833,19 +833,19 @@ function userMenu() {
   return {reply_markup:{keyboard:[
     ["📂 资源目录","🔎 搜索资源"],
     ["🎲 随机获取","🆕 最新资源"],
-    ["🏠 开始","🤖 克隆机器人"]
+    ["⭐ 我的资源","🏠 开始"]
   ],resize_keyboard:true,input_field_placeholder:"选择功能"}};
 }
 function childMenu() {
   return {reply_markup:{keyboard:[
-    ["🏠 开始","📂 资源目录"],
-    ["🔎 搜索资源","🎲 随机获取"],
-    ["🆕 最新资源"]
-  ],resize_keyboard:true,input_field_placeholder:"请选择功能"}};
+    ["📂 资源目录","🔎 搜索资源"],
+    ["🎲 随机获取","🆕 最新资源"],
+    ["⭐ 我的资源","🏠 开始"]
+  ],resize_keyboard:true,input_field_placeholder:"选择功能"}};
 }
 function backMenu(admin=false) {
   return admin
-    ? {reply_markup:{keyboard:[["⬅️ 返回管理","🏠 开始"]],resize_keyboard:true,input_field_placeholder:"返回上一级"}}
+    ? {reply_markup:{inline_keyboard:[[{text:"⬅️ 返回管理",callback_data:"admin:root"}]]}}
     : userMenu();
 }
 function adminMenu(){return{reply_markup:adminRootInline()};}
@@ -1509,6 +1509,7 @@ async function mainMessage(msg) {
     return;
   }
 
+  if(t==="⭐ 我的资源") return sendHtml(TOKEN,uid,userFeatureText(),{reply_markup:userFeatureKeyboard()});
   if(t==="/start" || t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\n\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
   if(t==="/admin") {
   if(t.startsWith("/start share_")) {
