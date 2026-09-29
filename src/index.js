@@ -1223,11 +1223,12 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const mode=options.mode==="random"?"random":"latest";
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
-    return sendHtml(token,chatId,
+    await sendHtml(token,chatId,
       "<b>📦 本批资源获取完成</b>\n━━━━━━━━━━━━━━\n\n📤 成功发送：<b>"+ok+"</b> 条\n⚠️ 失败："+fail+" 条\n📚 本批："+items.length+" 条\n\n"+
       (mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。"),
       batchNavigation(mode,offset,total));
     if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
+    return;
   }catch(e){
     console.error("HISTORY DELIVERY:",e);
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\n\n原因："+escapeHtml(e.message||e),childMenu());
@@ -1321,7 +1322,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
 
   recordStat(userId,"download",ok);
   saveDb();
-  return send(token,chatId,
+  await send(token,chatId,
     "✅ <b>本批获取完成</b>\\n"+
     "━━━━━━━━━━━━━━\\n\\n"+
     "📦 本次资源：<b>"+valid.length+"</b> 个\\n"+
@@ -1334,6 +1335,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
         : "✨ <i>资源已发送完成</i>"),
     {parse_mode:"HTML",...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length):{})});
   if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
+  return;
 }
 const states=new Map();
 
