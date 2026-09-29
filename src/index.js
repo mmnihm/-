@@ -228,9 +228,11 @@ async function tgUploadBuffer(token, method, chatId, buffer, fileName, caption="
   form.append("chat_id", String(chatId));
   form.append(method === "sendVideo" ? "video" : "document", new Blob([buffer]), fileName || "resource");
   if (caption) form.append("caption", String(caption).slice(0,1024));
+  if (contentProtectionEnabled()) form.append("protect_content", "true");
   const r = await fetch(api(token, method), {method:"POST", body:form});
   const j = await r.json();
   if (!j.ok) throw new Error(j.description || method + " failed");
+  if (j.result?.message_id) scheduleAutoDelete(token,chatId,[j.result.message_id]);
   return j.result;
 }
 function normalizeText(text) {
@@ -252,7 +254,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{}}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[]}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -359,6 +361,9 @@ if (!db.settings.historyScan) db.settings.historyScan = {status:"idle",scanned:0
 if (!("lastMessageId" in db.settings.historyScan)) db.settings.historyScan.lastMessageId = 0;
 if (!db.settings.userFavorites || typeof db.settings.userFavorites!=="object") db.settings.userFavorites={};
 if (!db.settings.userRecent || typeof db.settings.userRecent!=="object") db.settings.userRecent={};
+if (typeof db.settings.contentProtection !== "boolean") db.settings.contentProtection = true;
+if (!Number.isFinite(Number(db.settings.autoDeleteMinutes))) db.settings.autoDeleteMinutes = 1440;
+if (!Array.isArray(db.settings.autoDeleteQueue)) db.settings.autoDeleteQueue = [];
 if (!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:"system"};
 if (!Number.isFinite(Number(db.settings.sharedData.version))) db.settings.sharedData.version=1;
 if (!db.settings.sharedData.lastChangedAt) db.settings.sharedData.lastChangedAt=Date.now();
@@ -817,6 +822,7 @@ function adminResourceInline(){return{inline_keyboard:[
 function adminSettingsInline(){return{inline_keyboard:[
  [{text:"🔐 指定群管理",callback_data:"adm:group"},{text:"👥 管理员管理",callback_data:"adm:admins"}],
  [{text:"🎁 会员/配额设置",callback_data:"adm:quota"}],
+ [{text:"🛡️ 内容保护",callback_data:"adm:protect"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
 function adminOpsInline(){return{inline_keyboard:[
@@ -1164,6 +1170,80 @@ function indexResource(msg) {
   db.resources=db.resources.slice(0,MAX_RESOURCES);
   saveDb();
 }
+function contentProtectionEnabled() {
+  return db.settings.contentProtection !== false;
+}
+function autoDeleteMinutes() {
+  const n=Number(db.settings.autoDeleteMinutes);
+  return Number.isFinite(n) && n>0 ? Math.floor(n) : 0;
+}
+function autoDeleteText() {
+  const n=autoDeleteMinutes();
+  if(!n) return "关闭";
+  if(n<60) return n+" 分钟";
+  if(n<1440) return Math.round(n/60)+" 小时";
+  return Math.round(n/1440)+" 天";
+}
+function scheduleAutoDelete(token, chatId, messageIds) {
+  const mins=autoDeleteMinutes();
+  if(!contentProtectionEnabled() || mins<=0) return;
+  const ids=(Array.isArray(messageIds)?messageIds:[messageIds]).map(Number).filter(Number.isFinite);
+  if(!ids.length) return;
+  if(!Array.isArray(db.settings.autoDeleteQueue)) db.settings.autoDeleteQueue=[];
+  db.settings.autoDeleteQueue.push({
+    token: encrypt(String(token||"")),
+    chatId:String(chatId),
+    messageIds:ids.slice(0,100),
+    deleteAt:Date.now()+mins*60000,
+    createdAt:Date.now()
+  });
+  db.settings.autoDeleteQueue=db.settings.autoDeleteQueue.slice(-5000);
+  saveDb();
+}
+async function processAutoDeleteQueue() {
+  const q=Array.isArray(db.settings.autoDeleteQueue)?db.settings.autoDeleteQueue:[];
+  if(!q.length) return;
+  const now=Date.now(), keep=[], due=[];
+  for(const item of q) {
+    if(Number(item.deleteAt||0)>now) keep.push(item);
+    else due.push(item);
+  }
+  for(const item of due) {
+    try {
+      const token=decrypt(String(item.token||""));
+      const ids=(Array.isArray(item.messageIds)?item.messageIds:[]).map(Number).filter(Number.isFinite);
+      for(let i=0;i<ids.length;i+=100) {
+        const batch=ids.slice(i,i+100);
+        if(batch.length) await tg(token,"deleteMessages",{chat_id:item.chatId,message_ids:batch});
+      }
+    } catch(e) {
+      console.warn("⚠️ 自动删除失败，5分钟后重试：",e.message);
+      item.deleteAt=Date.now()+5*60000;
+      keep.push(item);
+    }
+  }
+  db.settings.autoDeleteQueue=keep.slice(-5000);
+  if(due.length) saveDb();
+}
+function contentProtectionMenu() {
+  const on=contentProtectionEnabled();
+  const mins=autoDeleteMinutes();
+  return {inline_keyboard:[
+    [{text:(on?"🛡️ 内容保护：开启":"🔓 内容保护：关闭"),callback_data:"protect:toggle"}],
+    [{text:"⏱️ 自动删除："+autoDeleteText(),callback_data:"protect:duration"}],
+    [{text:"1小时",callback_data:"protect:set:60"},{text:"6小时",callback_data:"protect:set:360"},{text:"24小时",callback_data:"protect:set:1440"}],
+    [{text:"3天",callback_data:"protect:set:4320"},{text:"关闭自动删除",callback_data:"protect:set:0"}],
+    [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
+  ]};
+}
+function contentProtectionText() {
+  return "<b>🛡️ 内容保护</b>\\n━━━━━━━━━━━━━━\\n\\n"+
+    "🛡️ 防转发/保存：<b>"+(contentProtectionEnabled()?"开启":"关闭")+"</b>\\n"+
+    "⏱️ 自动删除：<b>"+autoDeleteText()+"</b>\\n\\n"+
+    (contentProtectionEnabled() && autoDeleteMinutes()>0
+      ? "用户获取的资源消息将在 "+autoDeleteText()+" 后自动删除。"
+      : "开启内容保护后，可设置资源消息自动删除时间。");
+}
 async function sendIndexedResource(token, chatId, item) {
   // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
   // 子机器人没有加入资源仓库时，优先让主机器人代发资源。
@@ -1172,14 +1252,19 @@ async function sendIndexedResource(token, chatId, item) {
       const field = item.fileType.toLowerCase();
       const body = {chat_id:chatId, [field]:item.fileId};
       if (item.caption) body.caption = String(item.caption).slice(0,1024);
-      await tg(sendToken, "send" + item.fileType, body);
-      return;
+      if (contentProtectionEnabled()) body.protect_content = true;
+      const sent = await tg(sendToken, "send" + item.fileType, body);
+      if (sent?.message_id) scheduleAutoDelete(sendToken,chatId,[sent.message_id]);
+      return sent;
     }
     if (item.textOnly) {
-      await tg(sendToken, "sendMessage", {chat_id:chatId, text:item.caption || item.title || "未命名资源"});
-      return;
+      const sent = await tg(sendToken, "sendMessage", {chat_id:chatId, text:item.caption || item.title || "未命名资源", ...(contentProtectionEnabled()?{protect_content:true}:{})});
+      if (sent?.message_id) scheduleAutoDelete(sendToken,chatId,[sent.message_id]);
+      return sent;
     }
-    await tg(sendToken, "copyMessage", {chat_id:chatId,from_chat_id:item.chatId,message_id:Number(item.messageId)});
+    const sent = await tg(sendToken, "copyMessage", {chat_id:chatId,from_chat_id:item.chatId,message_id:Number(item.messageId),...(contentProtectionEnabled()?{protect_content:true}:{})});
+    if (sent?.message_id) scheduleAutoDelete(sendToken,chatId,[sent.message_id]);
+    return sent;
   };
 
   if (token === TOKEN) {
@@ -1355,10 +1440,12 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
         const copied=await tg(sourceToken,"copyMessages",{
           chat_id:chatId,
           from_chat_id:group.chatId,
-          message_ids:orderedBatch.map(x=>Number(x.messageId))
+          message_ids:orderedBatch.map(x=>Number(x.messageId)),
+          ...(contentProtectionEnabled()?{protect_content:true}:{})
         });
         const copiedCount=Array.isArray(copied)?copied.length:0;
         ok+=copiedCount;
+        if(Array.isArray(copied) && copied.length) scheduleAutoDelete(sourceToken,chatId,copied.map(x=>x?.message_id).filter(Boolean));
         if(copiedCount<batch.length) {
           fail+=batch.length-copiedCount;
           lastError="批量复制结果数量不完整";
@@ -2333,6 +2420,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="adm:post")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📣 获取后推广"});
     const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
+    if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
       [{text:"➕ +1",callback_data:"quota:+1"},{text:"➖ -1",callback_data:"quota:-1"}],
       [{text:"✏️ 自定义",callback_data:"quota:set"}],
@@ -2360,6 +2448,30 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签统计</b>\n━━━━━━━━━━━━━━\n\n"+body,parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
     }
   }
+  if(data.startsWith("protect:")){
+    if(!isAdmin(uid) || child){await answer("无权限",true);return;}
+    const op=data.slice("protect:".length);
+    if(op==="toggle"){
+      db.settings.contentProtection=!contentProtectionEnabled();
+      if(!contentProtectionEnabled()) db.settings.autoDeleteMinutes=0;
+      else if(!autoDeleteMinutes()) db.settings.autoDeleteMinutes=1440;
+      saveDb(); logAdmin(uid,"内容保护",contentProtectionEnabled()?"开启":"关闭");
+      await answer(contentProtectionEnabled()?"已开启":"已关闭");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
+    }
+    if(op==="duration"){
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
+    }
+    if(op.startsWith("set:")){
+      const n=Math.max(0,Number(op.slice(4))||0);
+      db.settings.autoDeleteMinutes=n;
+      if(n>0) db.settings.contentProtection=true;
+      saveDb(); logAdmin(uid,"自动删除",n?autoDeleteText():"关闭");
+      await answer(n?("自动删除："+autoDeleteText()):"已关闭自动删除");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
+    }
+  }
+
   if(data.startsWith("quota:")){
     if(child||!isAdmin(uid)){await answer("无权限",true);return;}
     const op=data.slice(6);
@@ -2872,6 +2984,10 @@ async function boot(){
     runtime.lastError = "BOT_TOKEN 未配置";
     console.error("❌ BOT_TOKEN 未配置，等待环境变量后自动重试");
   }
+
+  console.log("🛡️ 内容保护：", contentProtectionEnabled() ? "开启" : "关闭", "自动删除：", autoDeleteText());
+  setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
+  processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除初始化失败：",e.message));
 
   console.log("🫀 BOT HEARTBEAT ENABLED");
   setInterval(() => {
