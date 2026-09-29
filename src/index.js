@@ -1938,6 +1938,8 @@ async function childMessage(child,msg,token) {
   if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search"){
     if(t==="/cancel"){states.delete(key);return send(token,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",childMenu());}
+    recordStat(uid,"search",1);
+    saveDb();
     const results=search(t);
     if(!results.length) return sendHtml(token,uid,
       "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
@@ -2255,6 +2257,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     try {
       await sendIndexedResource(token,chatId,item);
       sent++;
+      recordStat(uid,"download",1);
     } catch(e) {
       console.error("FOLDER BATCH SEND:",e.message,"chat=",chatId,"resource=",item.messageId);
     }
@@ -2262,6 +2265,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   const next=Math.min(offset+10,all.length);
+  if(sent) saveDb();
   return safeEdit(token,{
     chat_id:chatId,
     message_id:messageId,
