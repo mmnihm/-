@@ -763,7 +763,7 @@ function adminResourceMenu() {
     ["🔗 分享资源","📦 资源仓库"],
     ["🔍 仓库扫描"],
     ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"管理资源"}};
+  ],resize_keyboard:true,input_field_placeholder:"选择资源管理功能"}};
 }
 function adminSettingsMenu() {
   return {reply_markup:{keyboard:[
@@ -826,7 +826,7 @@ function platformMenu() {
   return adminSettingsMenu();
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
-function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
+function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); touchSharedData("system"); saveDb(); return d; }
 function getResourceByShareToken(token) {
   const t=String(token||"").trim();
   if(!t) return null;
@@ -884,6 +884,7 @@ function resourceMoveMenu(items,page=0,selected=[]) {
   if(start+10<items.length) nav.push({text:"下一页 ➡️",callback_data:"bulk_page:"+(page+1)});
   if(nav.length) rows.push(nav);
   rows.push([{text:"📦 移动已选资源",callback_data:"bulk_move"}]);
+  rows.push([{text:"🗑️ 删除已选资源",callback_data:"bulk_delete"}]);
   rows.push([{text:"❌ 取消",callback_data:"bulk_cancel"}]);
   return {inline_keyboard:rows};
 }
@@ -1733,6 +1734,7 @@ async function mainMessage(msg) {
     const existing=getDirectoryByName(newName);
     if(existing && String(existing.id)!==String(d.id)) return send(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
     d.name=newName;
+    touchSharedData(uid);
     saveDb();
     logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
     states.delete(key);
@@ -1768,6 +1770,7 @@ async function mainMessage(msg) {
       for(const item of items) { try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); deleted++; } catch(e) {} }
       db.resources=db.resources.filter(x=>String(x.directoryId)!==String(d.id));
       db.directories=db.directories.filter(x=>String(x.id)!==String(d.id));
+      touchSharedData(uid);
       saveDb(); logAdmin(uid,"删除文件夹",d.name); states.set(key,{step:"delete_folder"});
       return send(TOKEN,uid,"✅ 已删除文件夹「"+d.name+"」。\\n\\n📚 已从资源索引移除："+items.length+" 个文件。\\n🗑️ 仓库消息成功删除："+deleted+" 个。",deleteResourceMenu());
     }
@@ -1777,6 +1780,7 @@ async function mainMessage(msg) {
     const item=items[idx];
     try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
     db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
+    touchSharedData(uid);
     saveDb(); logAdmin(uid,"删除资源",item.title);
     const left=directoryItems(d.id);
     const rows=left.slice(0,40).map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,35)]);
@@ -2146,7 +2150,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     return sendHtml(TOKEN,uid,"<b>✅ 资源移动完成</b>\n━━━━━━━━━━━━━━\n\n📦 "+escapeHtml(item.title||"未命名")+"\n📁 目标文件夹：<b>"+escapeHtml(target.name)+"</b>",adminResourceMenu());
   }
 
-  if(data.startsWith("bulk_toggle:") || data.startsWith("bulk_page:") || data==="bulk_move" || data==="bulk_cancel") {
+  if(data.startsWith("bulk_toggle:") || data.startsWith("bulk_page:") || data==="bulk_move" || data==="bulk_delete" || data==="bulk_delete_confirm" || data==="bulk_delete_cancel" || data==="bulk_cancel") {
     if(!isAdmin(uid) || child) { await answer("无权限",true); return; }
     const key="m:"+uid;
     const st=states.get(key);
@@ -2168,6 +2172,51 @@ async function handleDirectoryCallback(token, q, child=false) {
       await answer(at>=0?"已取消选择":"已选择");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📦 <b>批量管理</b>\n\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\n\n👇 点击资源进行多选。",parse_mode:"HTML",reply_markup:resourceMoveMenu(st.items,p,st.selected)});
     }
+    if(data==="bulk_delete") {
+      if(!st.selected.length) { await answer("请先选择资源",true); return; }
+      st.step="bulk_delete_confirm"; states.set(key,st);
+      await answer("请确认删除");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"⚠️ <b>确认批量删除？</b>\\n\\n"+
+          "📁 文件夹："+escapeHtml(db.directories.find(d=>String(d.id)===String(st.sourceId))?.name||"未命名")+"\\n"+
+          "🗑️ 将删除资源：<b>"+st.selected.length+"</b> 个\\n\\n"+
+          "此操作会尝试删除仓库中的对应消息。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[
+          [{text:"🗑️ 确认删除",callback_data:"bulk_delete_confirm"},{text:"❌ 取消",callback_data:"bulk_delete_cancel"}]
+        ]}});
+    }
+    if(data==="bulk_delete_cancel") {
+      st.step="bulk_select"; states.set(key,st);
+      await answer("已取消");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"📦 <b>批量管理</b>\\n\\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\\n\\n👇 点击资源进行多选。",
+        parse_mode:"HTML",reply_markup:resourceMoveMenu(st.items,st.page,st.selected)});
+    }
+    if(data==="bulk_delete_confirm") {
+      if(st.step!=="bulk_delete_confirm") { await answer("操作已过期",true); return; }
+      const selected=new Set(st.selected.map(String));
+      const targets=st.items.filter(x=>selected.has(String(x.messageId)));
+      let deleted=0;
+      for(const item of targets) {
+        try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
+        const before=db.resources.length;
+        db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
+        if(db.resources.length<before) deleted++;
+      }
+      touchSharedData(uid);
+      saveDb();
+      logAdmin(uid,"批量删除资源","删除 "+targets.length+" 个，索引移除 "+deleted+" 个");
+      states.delete(key);
+      await answer("删除完成");
+      return sendHtml(TOKEN,uid,
+        "<b>🗑️ 批量删除完成</b>\\n━━━━━━━━━━━━━━\\n\\n"+
+        "📦 选择资源："+targets.length+" 个\\n"+
+        "🗑️ 已从资源索引移除："+deleted+" 个\\n\\n"+
+        "📁 其余资源保持不变。",
+        adminResourceMenu());
+    }
+
     if(data==="bulk_move") {
       if(!st.selected.length) { await answer("请先选择资源",true); return; }
       st.step="bulk_target"; states.set(key,st);
