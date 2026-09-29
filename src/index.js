@@ -603,9 +603,10 @@ async function scanHistory(uid) {
       "📨 已扫描：<b>"+scanned.toLocaleString()+"</b> 条\\n"+
       "✨ 已发现：<b>"+indexed.toLocaleString()+"</b> 条\\n"+
       "⏱️ 已用时：<b>"+elapsedText()+"</b>\\n"+
-      "🆔 进度：<code>"+boundary+"</code>\\n"+
-      "━━━━━━━━━━━━━━\\n"+
-      "⏳ 正在建立资源索引…";
+      "🆔 当前进度：<code>"+boundary+"</code>\\n"+
+      "━━━━━━━━━━━━━━\\n\\n"+
+      "⏳ 正在建立资源索引\\n"+
+      "请稍候…";
     if(!progressMessage || force){
       if(!progressMessage){
         try {
