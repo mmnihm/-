@@ -750,7 +750,9 @@ function adminMenu() {
 function adminResourceMenu() {
   return {reply_markup:{keyboard:[
     ["✏️ 修改文件夹名称","🗑️ 删除资源"],
-    ["📦 资源仓库","🔍 仓库扫描"],
+    ["🔄 移动资源","📦 批量管理"],
+    ["🔗 分享资源","📦 资源仓库"],
+    ["🔍 仓库扫描"],
     ["⬅️ 返回管理"]
   ],resize_keyboard:true,input_field_placeholder:"管理资源"}};
 }
@@ -816,6 +818,72 @@ function platformMenu() {
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
 function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); saveDb(); return d; }
+function getResourceByShareToken(token) {
+  const t=String(token||"").trim();
+  if(!t) return null;
+  return db.resources.find(r=>String(r.shareToken||"")===t) || null;
+}
+function ensureShareToken(item) {
+  if(!item.shareToken) {
+    item.shareToken=crypto.randomBytes(9).toString("base64url");
+    item.shareCreatedAt=Date.now();
+    if(!Array.isArray(db.settings.sharedResources)) db.settings.sharedResources=[];
+    if(!db.settings.sharedResources.includes(item.shareToken)) db.settings.sharedResources.push(item.shareToken);
+    saveDb();
+  }
+  return item.shareToken;
+}
+async function botUsername() {
+  try {
+    const me=await tg(TOKEN,"getMe");
+    return String(me.username||"").trim();
+  } catch { return ""; }
+}
+async function makeShareLink(item) {
+  const username=await botUsername();
+  if(!username) throw new Error("无法获取主机器人用户名");
+  const token=ensureShareToken(item);
+  return "https://t.me/"+username+"?start=share_"+token;
+}
+function moveFolderMenu(excludeId=null) {
+  const rows=[];
+  for(const d of db.directories) {
+    if(excludeId && String(d.id)===String(excludeId)) continue;
+    const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+    rows.push([{text:"📁 "+String(d.name||"未命名").slice(0,28)+" · "+count,callback_data:"move_to:"+d.id}]);
+  }
+  if(!rows.length) rows.push([{text:"📭 没有其他文件夹",callback_data:"noop"}]);
+  rows.push([{text:"❌ 取消",callback_data:"move_cancel"}]);
+  return {inline_keyboard:rows};
+}
+function resourceMoveMenu(items,page=0,selected=[]) {
+  const start=page*10;
+  const pageItems=items.slice(start,start+10);
+  const rows=[];
+  for(let i=0;i<pageItems.length;i+=2) {
+    const row=[];
+    for(let j=i;j<i+2 && j<pageItems.length;j++) {
+      const item=pageItems[j];
+      const id=String(item.messageId);
+      const mark=selected.includes(id)?"☑️ ":"";
+      row.push({text:mark+(start+j+1)+". "+String(item.title||"未命名").slice(0,22),callback_data:"bulk_toggle:"+page+":"+j});
+    }
+    rows.push(row);
+  }
+  const nav=[];
+  if(page>0) nav.push({text:"⬅️ 上一页",callback_data:"bulk_page:"+(page-1)});
+  if(start+10<items.length) nav.push({text:"下一页 ➡️",callback_data:"bulk_page:"+(page+1)});
+  if(nav.length) rows.push(nav);
+  rows.push([{text:"📦 移动已选资源",callback_data:"bulk_move"}]);
+  rows.push([{text:"❌ 取消",callback_data:"bulk_cancel"}]);
+  return {inline_keyboard:rows};
+}
+function shareResourceKeyboard(token) {
+  return {inline_keyboard:[
+    [{text:"🔗 打开分享链接",url:token}],
+    [{text:"🏠 返回首页",callback_data:"batch:home"}]
+  ]};
+}
 async function finalizeUploadUnlocked(uid, state) {
   const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
   if (!items.length) {
@@ -1368,6 +1436,26 @@ async function mainMessage(msg) {
 
   if(t==="/start" || t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\n\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
   if(t==="/admin") {
+  if(t.startsWith("/start share_")) {
+    const shareToken=t.slice("/start share_".length).trim();
+    const item=getResourceByShareToken(shareToken);
+    if(!item) return sendHtml(TOKEN,uid,"<b>🔗 分享资源</b>\n\n❌ 这个分享链接已失效或资源不存在。",userMenu());
+    try {
+      await sendIndexedResource(TOKEN,uid,item);
+      recordStat(uid,"download",1);
+      saveDb();
+      return sendHtml(TOKEN,uid,
+        "<b>🔗 分享资源</b>\n"+
+        "━━━━━━━━━━━━━━\n\n"+
+        "📦 <b>"+escapeHtml(item.title||"未命名资源")+"</b>\n"+
+        "📁 文件夹：<b>"+escapeHtml(db.directories.find(d=>String(d.id)===String(item.directoryId))?.name||"未分类")+"</b>\n\n"+
+        "✅ 资源已发送。\n\n"+
+        "━━━━━━━━━━━━━━",
+        userMenu());
+    } catch(e) {
+      return sendHtml(TOKEN,uid,"<b>❌ 资源获取失败</b>\n\n请稍后重试。",userMenu());
+    }
+  }
     if(!admin) return send(TOKEN,uid,"⛔ <b>无管理员权限</b>\\n\\n此功能仅限管理员使用。");
     return sendHtml(TOKEN,uid,"<b>👑 管理员控制台</b>\n\n"+configText()+"\n\n👇 <i>请选择需要管理的功能</i>",adminMenu());
   }
@@ -1567,6 +1655,76 @@ async function mainMessage(msg) {
   if(t==="📂 资源目录"&&admin) {
     return send(TOKEN,uid,"🛠️ <b>资源管理</b>\\n\\n这里放不常用的管理功能。",{parse_mode:"HTML",...adminToolsMenu()});
   }
+  if(t==="🔄 移动资源"&&admin) {
+    const dirs=db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id)));
+    if(!dirs.length) return send(TOKEN,uid,"📭 <b>暂无可移动资源</b>\n\n请先建立文件夹并添加资源。",adminMenu());
+    states.set(key,{step:"move_source"});
+    return sendHtml(TOKEN,uid,"<b>🔄 移动资源</b>\n\n请选择资源所在的文件夹。",deleteResourceMenu());
+  }
+  if(s?.step==="move_source"&&admin) {
+    const d=getDirectoryByName(t);
+    if(!d) return send(TOKEN,uid,"⚠️ <b>文件夹不存在</b>\n\n请重新选择。",deleteResourceMenu());
+    const items=directoryItems(d.id);
+    if(!items.length) return send(TOKEN,uid,"📭 <b>这个文件夹没有资源</b>\n\n请选择其他文件夹。",deleteResourceMenu());
+    states.set(key,{step:"move_item",sourceId:d.id,items});
+    return sendHtml(TOKEN,uid,"<b>🔄 选择要移动的资源</b>\n\n📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\n📦 共 "+items.length+" 个资源\n\n👇 请选择一个资源。",{reply_markup:{keyboard:items.slice(0,30).map((x,i)=>[(i+1)+". "+String(x.title||"未命名").slice(0,38)]).concat([["⬅️ 返回管理"]]),resize_keyboard:true}});
+  }
+  if(s?.step==="move_item"&&admin) {
+    if(t==="⬅️ 返回管理") { states.delete(key); return send(TOKEN,uid,"↩️ 已返回管理后台。",adminMenu()); }
+    const idx=parseInt((t.match(/^(\d+)\./)||[])[1],10)-1;
+    if(!Number.isInteger(idx)||idx<0||idx>=s.items.length) return send(TOKEN,uid,"⚠️ <b>请选择有效的资源</b>。");
+    const item=s.items[idx];
+    states.set(key,{step:"move_target",sourceId:s.sourceId,itemId:item.messageId});
+    return sendHtml(TOKEN,uid,"<b>🔄 选择目标文件夹</b>\n\n📦 资源：<b>"+escapeHtml(item.title||"未命名")+"</b>\n\n👇 请选择目标文件夹。",{reply_markup:moveFolderMenu(s.sourceId)});
+  }
+
+  if(t==="📦 批量管理"&&admin) {
+    const dirs=db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id)));
+    if(!dirs.length) return send(TOKEN,uid,"📭 <b>暂无资源可管理</b>。",adminMenu());
+    states.set(key,{step:"bulk_source"});
+    return sendHtml(TOKEN,uid,"<b>📦 批量管理</b>\n\n请选择要批量处理的文件夹。",deleteResourceMenu());
+  }
+  if(s?.step==="bulk_source"&&admin) {
+    const d=getDirectoryByName(t);
+    if(!d) return send(TOKEN,uid,"⚠️ <b>文件夹不存在</b>。",deleteResourceMenu());
+    const items=directoryItems(d.id);
+    if(!items.length) return send(TOKEN,uid,"📭 <b>这个文件夹没有资源</b>。",deleteResourceMenu());
+    states.set(key,{step:"bulk_select",sourceId:d.id,items,selected:[],page:0});
+    return sendHtml(TOKEN,uid,"<b>📦 批量管理</b>\n\n📁 <b>"+escapeHtml(d.name)+"</b>\n📦 共 "+items.length+" 个资源\n\n☑️ 点击资源可多选。",{reply_markup:resourceMoveMenu(items,0,[])});
+  }
+
+  if(t==="🔗 分享资源"&&admin) {
+    const dirs=db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id)));
+    if(!dirs.length) return send(TOKEN,uid,"📭 <b>暂无资源可分享</b>。",adminMenu());
+    states.set(key,{step:"share_source"});
+    return sendHtml(TOKEN,uid,"<b>🔗 分享资源</b>\n\n请选择文件夹。",deleteResourceMenu());
+  }
+  if(s?.step==="share_source"&&admin) {
+    const d=getDirectoryByName(t);
+    if(!d) return send(TOKEN,uid,"⚠️ <b>文件夹不存在</b>。",deleteResourceMenu());
+    const items=directoryItems(d.id);
+    states.set(key,{step:"share_item",items,directoryId:d.id});
+    return sendHtml(TOKEN,uid,"<b>🔗 选择资源</b>\n\n📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\n\n👇 点击资源名称。",{reply_markup:{keyboard:items.slice(0,30).map((x,i)=>[(i+1)+". "+String(x.title||"未命名").slice(0,38)]).concat([["⬅️ 返回管理"]]),resize_keyboard:true}});
+  }
+  if(s?.step==="share_item"&&admin) {
+    if(t==="⬅️ 返回管理") { states.delete(key); return send(TOKEN,uid,"↩️ 已返回管理后台。",adminMenu()); }
+    const idx=parseInt((t.match(/^(\d+)\./)||[])[1],10)-1;
+    if(!Number.isInteger(idx)||idx<0||idx>=s.items.length) return send(TOKEN,uid,"⚠️ <b>请选择有效的资源</b>。");
+    const item=s.items[idx];
+    try {
+      const link=await makeShareLink(item);
+      return sendHtml(TOKEN,uid,
+        "<b>🔗 资源分享</b>\n━━━━━━━━━━━━━━\n\n"+
+        "📦 <b>"+escapeHtml(item.title||"未命名资源")+"</b>\n\n"+
+        "🔗 <code>"+escapeHtml(link)+"</code>\n\n"+
+        "👇 点击按钮打开分享链接。",
+        shareResourceKeyboard(link)
+      );
+    } catch(e) {
+      return send(TOKEN,uid,"❌ <b>分享链接生成失败</b>\n\n"+escapeHtml(e.message||"未知错误"));
+    }
+  }
+
   if(t==="✏️ 修改文件夹名称"&&admin) {
     states.set(key,{step:"rename_folder"});
     return send(TOKEN,uid,"✏️ <b>修改文件夹名称</b>\n\n请选择要修改名称的文件夹：",{parse_mode:"HTML",...deleteResourceMenu()});
@@ -1973,6 +2131,54 @@ async function handleDirectoryCallback(token, q, child=false) {
       await tg(token,"answerCallbackQuery",body);
     } catch {}
   };
+
+  if(data==="move_cancel" || data.startsWith("move_to:")) {
+    if(!isAdmin(uid) || child) { await answer("无权限",true); return; }
+    const key="m:"+uid;
+    const st=states.get(key);
+    if(!st || (st.step!=="move_target" && st.step!=="bulk_target")) { await answer("操作已过期",true); return; }
+    if(data==="move_cancel") { states.delete(key); await answer("已取消"); return send(TOKEN,uid,"❌ 已取消移动。",adminResourceMenu()); }
+    const targetId=data.slice("move_to:".length);
+    const target=db.directories.find(d=>String(d.id)===String(targetId));
+    const item=db.resources.find(r=>Number(r.messageId)===Number(st.itemId)&&String(r.directoryId)===String(st.sourceId));
+    if(!target||!item) { await answer("资源或目标文件夹不存在",true); return; }
+    item.directoryId=target.id;
+    saveDb();
+    logAdmin(uid,"移动资源",(item.title||"未命名")+" → "+target.name);
+    states.delete(key);
+    await answer("移动完成");
+    return sendHtml(TOKEN,uid,"<b>✅ 资源移动完成</b>\n━━━━━━━━━━━━━━\n\n📦 "+escapeHtml(item.title||"未命名")+"\n📁 目标文件夹：<b>"+escapeHtml(target.name)+"</b>",adminResourceMenu());
+  }
+
+  if(data.startsWith("bulk_toggle:") || data.startsWith("bulk_page:") || data==="bulk_move" || data==="bulk_cancel") {
+    if(!isAdmin(uid) || child) { await answer("无权限",true); return; }
+    const key="m:"+uid;
+    const st=states.get(key);
+    if(!st || st.step!=="bulk_select") { await answer("操作已过期",true); return; }
+    if(data==="bulk_cancel") { states.delete(key); await answer("已取消"); return send(TOKEN,uid,"❌ 已取消批量管理。",adminResourceMenu()); }
+    if(data.startsWith("bulk_page:")) {
+      const page=Math.max(0,Number(data.slice(10))||0);
+      st.page=page; states.set(key,st);
+      await answer("已切换");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📦 <b>批量管理</b>\n\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\n\n👇 点击资源进行多选。",parse_mode:"HTML",reply_markup:resourceMoveMenu(st.items,page,st.selected)});
+    }
+    if(data.startsWith("bulk_toggle:")) {
+      const p=Number(data.split(":")[1])||0, idx=Number(data.split(":")[2])||0;
+      const item=st.items[p*10+idx];
+      if(!item) { await answer("资源不存在",true); return; }
+      const id=String(item.messageId), at=st.selected.indexOf(id);
+      if(at>=0) st.selected.splice(at,1); else st.selected.push(id);
+      st.page=p; states.set(key,st);
+      await answer(at>=0?"已取消选择":"已选择");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📦 <b>批量管理</b>\n\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\n\n👇 点击资源进行多选。",parse_mode:"HTML",reply_markup:resourceMoveMenu(st.items,p,st.selected)});
+    }
+    if(data==="bulk_move") {
+      if(!st.selected.length) { await answer("请先选择资源",true); return; }
+      st.step="bulk_target"; states.set(key,st);
+      await answer("请选择目标文件夹");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📦 <b>批量移动</b>\n\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\n\n👇 请选择目标文件夹。",parse_mode:"HTML",reply_markup:moveFolderMenu(st.sourceId)});
+    }
+  }
 
   if(data==="batch:random" || data.startsWith("batch:latest:") || data==="batch:home"){
     if(!(await allowed(TOKEN,uid))){ await answer("🔐 请先加入指定群",true); return; }
