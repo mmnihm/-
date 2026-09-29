@@ -2288,7 +2288,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   };
 
 
-  if(data==="hub"||data.startsWith("hub:")){
+  if(data==="hub"||data.startsWith("hub:")){await answer();
     const mode=data.split(":")[1]||"home";
     if(mode==="home")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureText(),parse_mode:"HTML",reply_markup:userFeatureKeyboard()});
     if(mode==="fav"){const items=userFavorites(uid).map(resourceByKey).filter(Boolean);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("⭐ 我的收藏",items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"getfav:")});}
@@ -2296,7 +2296,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(mode==="hot"){const items=[...db.resources].sort((a,b)=>Number(b.downloads||0)-Number(a.downloads||0)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🔥 热门资源",items,"按获取次数排序"),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gethot:")});}
     if(mode==="tags"){const map=allResourceTags();const tags=Object.keys(map).sort((a,b)=>map[b].length-map[a].length).slice(0,30);const rows=[];for(let i=0;i<tags.length;i+=2)rows.push(tags.slice(i,i+2).map(t=>({text:"🏷️ "+t.slice(0,18)+" · "+map[t].length,callback_data:"tag:"+t.slice(0,40)})));if(!rows.length)rows.push([{text:"📭 暂无标签",callback_data:"noop"}]);rows.push([{text:"⬅️ 返回",callback_data:"hub"}]);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签分类</b>\n━━━━━━━━━━━━━━\n\n📚 标签数：<b>"+tags.length+"</b>\n\n👇 请选择标签",parse_mode:"HTML",reply_markup:{inline_keyboard:rows}});}
   }
-  if(data.startsWith("tag:")){const tag=data.slice(4),items=db.resources.filter(x=>resourceTags(x).includes(tag)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🏷️ "+escapeHtml(tag),items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gettag:","hub:tags")});}
+  if(data.startsWith("tag:")){await answer();const tag=data.slice(4),items=db.resources.filter(x=>resourceTags(x).includes(tag)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🏷️ "+escapeHtml(tag),items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gettag:","hub:tags")});}
   if(data.startsWith("favtoggle:")){const item=resourceByKey(data.slice(10));if(!item){await answer("资源不存在",true);return;}const on=toggleFavorite(uid,item);await answer(on?"⭐ 已收藏":"☆ 已取消收藏");return;}
   for(const prefix of ["getfav:","getrecent:","gethot:","gettag:"]){
     if(data.startsWith(prefix)){
@@ -2308,7 +2308,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       ]}});}catch(e){await answer("获取失败："+String(e.message||e),true);return;}
     }
   }
-  if(data.startsWith("admin:")||data.startsWith("adm:")){
+  if(data.startsWith("admin:")||data.startsWith("adm:")){await answer();
     if(child||!isAdmin(uid)){await answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
