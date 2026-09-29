@@ -438,60 +438,79 @@ async function findHistoryEntity(client) {
 
   const targetId = String(r.chatId || "").trim();
   const targetUsername = String(r.username || "").replace(/^@/, "").trim().toLowerCase();
+  const targetTitle = String(r.title || "").trim().toLowerCase();
 
-  // 使用迁移仓库时验证过的简单匹配方式：
-  // username 优先，其次遍历已登录账号的 dialogs 比较 ID。
+  const normalizeId = value => {
+    const s = String(value ?? "").trim();
+    if (!s) return "";
+    if (s.startsWith("-100")) return s;
+    if (/^\d+$/.test(s)) return "-100" + s;
+    return s;
+  };
+
+  const sameId = (a, b) => {
+    const x = String(a ?? "").trim();
+    const y = String(b ?? "").trim();
+    if (!x || !y) return false;
+    return x === y || normalizeId(x) === normalizeId(y);
+  };
+
   if (targetUsername) {
     try {
       const entity = await client.getEntity(targetUsername);
       console.log("✅ MTProto 仓库通过 username 找到:", targetUsername, "id=", String(entity?.id || ""));
       return entity;
     } catch (e) {
-      console.warn("⚠️ MTProto username 获取失败:", targetUsername, e?.message || e);
+      console.warn("⚠️ MTProto username 获取失败，继续扫描 dialogs:", targetUsername, e?.message || e);
     }
   }
 
-  const dialogs = await client.getDialogs({limit:1000});
-  const normalizeId = value => {
-    const s = String(value ?? "").trim();
-    if (!s) return "";
-    return s.startsWith("-100") ? s : (/^\d+$/.test(s) ? "-100" + s : s);
-  };
-  const targetBotId = normalizeId(targetId);
+  const matches = [];
+  let dialogCount = 0;
 
-  for (const d of dialogs) {
+  // 不限制 1000 个对话，避免仓库不在前 1000 个时被误判为找不到。
+  for await (const d of client.iterDialogs({})) {
+    dialogCount++;
     const entity = d?.entity || d;
-    const entityId = String(entity?.id ?? d?.id ?? "");
-    const dialogId = String(d?.id ?? "");
-    const entityBotId = normalizeId(entityId);
-    const dialogBotId = normalizeId(dialogId);
+    const entityId = String(entity?.id ?? "").trim();
+    const dialogId = String(d?.id ?? "").trim();
+    const username = String(entity?.username || d?.username || "")
+      .replace(/^@/, "").trim().toLowerCase();
+    const title = String(entity?.title || d?.title || "").trim().toLowerCase();
 
-    if (
-      (targetId && (entityId === targetId || dialogId === targetId)) ||
-      (targetBotId && (entityBotId === targetBotId || dialogBotId === targetBotId))
-    ) {
+    if (targetId && (sameId(entityId, targetId) || sameId(dialogId, targetId))) {
       console.log("✅ MTProto 仓库通过 chatId 找到:", {
-        targetId,
-        entityId,
-        title: entity?.title || entity?.username || ""
+        targetId, entityId, title: entity?.title || entity?.username || ""
       });
       return entity;
     }
 
-    const username = String(entity?.username || "").replace(/^@/, "").toLowerCase();
     if (targetUsername && username === targetUsername) {
       console.log("✅ MTProto 仓库通过 dialog username 找到:", username, "id=", entityId);
       return entity;
     }
+
+    if (targetTitle && title === targetTitle) matches.push(entity);
+  }
+
+  if (matches.length === 1) {
+    const entity = matches[0];
+    console.log("✅ MTProto 仓库通过唯一标题自动找到:", {
+      title: entity?.title || "",
+      id: String(entity?.id || "")
+    });
+    return entity;
   }
 
   console.error("❌ MTProto 仓库匹配失败:", {
-    targetId,
-    targetUsername,
-    dialogCount: dialogs.length
+    targetId, targetUsername, targetTitle, dialogCount, titleMatches: matches.length
   });
 
-  throw new Error("MTProto 扫描账号已经登录，但没有匹配到当前资源仓库。请确认扫描账号加入的就是当前绑定仓库。");
+  if (matches.length > 1) {
+    throw new Error("扫描账号看到了多个同名资源仓库，无法安全自动选择。请重新绑定当前资源仓库。");
+  }
+
+  throw new Error("MTProto 扫描账号已经登录，但没有匹配到当前资源仓库。请确认扫描账号已经加入当前仓库，并在 Telegram 客户端打开过该仓库。");
 }
 
 function indexHistoryMessage(message, chatId) {
