@@ -672,11 +672,20 @@ async function refreshSharedData(force=false) {
   if(!force && now-sharedRefreshAt<5000) return;
   if(sharedRefreshPromise) return sharedRefreshPromise;
   sharedRefreshPromise=(async()=>{
+    const started=Date.now();
     try {
-      await waitBaserowSyncQueue();
-      if(db.settings.historyScan?.status==="running") return;
+      // 共享目录读取不能等待资源写入队列；否则历史扫描/批量同步时，
+      // 前面的几千条 Baserow 写入会把目录刷新一直排队，导致其他机器人看不到新目录。
+      if(db.settings.historyScan?.status==="running") {
+        console.log("⏸️ Baserow 共享刷新：历史扫描进行中，跳过本轮");
+        return;
+      }
+      console.log("🔄 Baserow 共享刷新开始");
       await pullBaserowSharedData();
       sharedRefreshAt=Date.now();
+      console.log("✅ Baserow 共享刷新完成：耗时="+(Date.now()-started)+"ms 文件夹="+db.directories.length+" 资源="+db.resources.length);
+    } catch(e) {
+      console.error("❌ Baserow 共享刷新异常:",String(e?.message||e));
     } finally {
       sharedRefreshPromise=null;
     }
