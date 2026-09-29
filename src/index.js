@@ -237,7 +237,7 @@ function normalizeText(text) {
   return String(text ?? "")
     .replace(/\\n/g, "\n")
     .replace(/\\r/g, "")
-    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n{2,}/g, "\n")
     .trim();
 }
 
