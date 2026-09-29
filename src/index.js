@@ -280,6 +280,129 @@ async function checkBaserowConnection() {
   }
 }
 
+// Baserow 资源同步：扫描/监听到资源后自动写入资源表。
+// 兼容不同模板字段名称；不会覆盖用户已有的其他字段。
+let baserowFieldsCache = null;
+let baserowSyncQueue = Promise.resolve();
+
+function baserowNormName(v) {
+  return String(v || "").trim().toLowerCase().replace(/[\\s_\-\/（）()：:]+/g, "");
+}
+
+async function getBaserowFields(force=false) {
+  if (baserowFieldsCache && !force) return baserowFieldsCache;
+  const fields = await baserowRequest(
+    "GET",
+    "/api/database/fields/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/"
+  );
+  baserowFieldsCache = Array.isArray(fields) ? fields : [];
+  console.log("🗄️ Baserow 字段:", baserowFieldsCache.map(x => x.name).join(" | "));
+  return baserowFieldsCache;
+}
+
+function baserowPickField(fields, aliases) {
+  const wanted = aliases.map(baserowNormName);
+  return fields.find(f => wanted.includes(baserowNormName(f.name))) || null;
+}
+
+function baserowValueForField(field, value, fallbackType="text") {
+  if (!field) return undefined;
+  const type = String(field.type || fallbackType);
+  if (value === undefined || value === null) return null;
+  if (type === "number" || type === "rating") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (type === "boolean") return Boolean(value);
+  if (type === "date" || type === "last_modified" || type === "created_on") {
+    const d = value instanceof Date ? value : new Date(Number(value) > 10000000000 ? Number(value) : Number(value) * 1000);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  return String(value).slice(0, 2000);
+}
+
+async function baserowSyncResource(item) {
+  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID || !item) return;
+  try {
+    const fields = await getBaserowFields();
+    if (!fields.length) throw new Error("Baserow 表没有可用字段");
+
+    const titleField = baserowPickField(fields, ["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+    const chatField = baserowPickField(fields, ["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+    const messageField = baserowPickField(fields, ["消息ID","资源ID","Message ID","MessageID"]);
+    const captionField = baserowPickField(fields, ["描述","说明","备注","Caption","Description"]);
+    const folderField = baserowPickField(fields, ["文件夹","目录","分类","Folder","Directory","Category"]);
+    const dateField = baserowPickField(fields, ["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
+    const typeField = baserowPickField(fields, ["类型","文件类型","Type","File Type"]);
+    const fileIdField = baserowPickField(fields, ["文件ID","File ID","FileID"]);
+    const downloadField = baserowPickField(fields, ["下载","下载次数","Downloads"]);
+
+    // 如果模板没有匹配名称字段，使用第一个可写文本字段作为主字段，确保扫描结果至少能落一行。
+    const primary = titleField || fields.find(f => !f.read_only && ["text","long_text","url"].includes(String(f.type||"")));
+    if (!primary) throw new Error("Baserow 没有可写的文本字段，请在表格增加“资源名称”字段");
+
+    const payload = {};
+    payload[primary.name] = baserowValueForField(primary, item.title || "未命名资源");
+    if (chatField) payload[chatField.name] = baserowValueForField(chatField, item.chatId);
+    if (messageField) payload[messageField.name] = baserowValueForField(messageField, item.messageId);
+    if (captionField) payload[captionField.name] = baserowValueForField(captionField, item.caption || "");
+    if (folderField) {
+      const d = db.directories.find(x => String(x.id) === String(item.directoryId || ""));
+      payload[folderField.name] = baserowValueForField(folderField, d?.name || "");
+    }
+    if (dateField) payload[dateField.name] = baserowValueForField(dateField, item.date);
+    if (typeField) payload[typeField.name] = baserowValueForField(typeField, item.fileType || "Resource");
+    if (fileIdField) payload[fileIdField.name] = baserowValueForField(fileIdField, item.fileId || "");
+    if (downloadField) payload[downloadField.name] = baserowValueForField(downloadField, Number(item.downloads || 0));
+
+    // 优先使用本地保存的 Baserow 行 ID 更新，避免重复。
+    if (item.baserowRowId) {
+      try {
+        const updated = await baserowRequest(
+          "PATCH",
+          "/api/database/rows/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/" + encodeURIComponent(item.baserowRowId) + "/?user_field_names=true",
+          payload
+        );
+        baserow.connected = true;
+        baserow.lastOkAt = Date.now();
+        return updated;
+      } catch (e) {
+        // 行可能已被人工删除，清掉 ID 后重新创建。
+        item.baserowRowId = null;
+      }
+    }
+
+    // 新资源创建一行，并把行 ID 保存回本地资源。
+    const created = await baserowRequest(
+      "POST",
+      "/api/database/rows/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/?user_field_names=true",
+      payload
+    );
+    item.baserowRowId = created?.id || null;
+    baserow.connected = true;
+    baserow.lastError = "";
+    baserow.lastOkAt = Date.now();
+    return created;
+  } catch (e) {
+    baserow.connected = false;
+    baserow.lastError = String(e?.message || e);
+    console.error("❌ Baserow 资源同步失败:", baserow.lastError);
+    return null;
+  }
+}
+
+function queueBaserowResourceSync(item) {
+  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID || !item) return;
+  baserowSyncQueue = baserowSyncQueue
+    .then(() => baserowSyncResource(item))
+    .catch(e => console.error("❌ Baserow 同步队列:", e.message));
+}
+
+async function waitBaserowSyncQueue() {
+  await baserowSyncQueue;
+}
+
+
 async function ensureStartCommand(token) {
   try {
     const commands = await tg(token, "getMyCommands");
@@ -650,6 +773,7 @@ function indexHistoryMessage(message, chatId) {
   } else {
     db.resources.unshift(item);
   }
+  queueBaserowResourceSync(db.resources.find(x=>x.chatId===item.chatId&&x.messageId===item.messageId) || item);
   return true;
 }
 
@@ -728,6 +852,7 @@ async function scanHistory(uid) {
     }
 
     db.resources=db.resources.slice(0,MAX_RESOURCES);
+    await waitBaserowSyncQueue();
     db.settings.historyScan={status:"completed",scanned,indexed,startedAt,finishedAt:Date.now(),error:"",lastMessageId:boundary};
     saveDb();
 
@@ -1242,6 +1367,7 @@ function indexResource(msg) {
     db.resources.unshift(item);
   }
   db.resources=db.resources.slice(0,MAX_RESOURCES);
+  queueBaserowResourceSync(db.resources.find(x=>x.chatId===item.chatId&&x.messageId===item.messageId) || item);
   saveDb();
 }
 function contentProtectionEnabled() {
