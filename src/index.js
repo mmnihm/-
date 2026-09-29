@@ -540,7 +540,7 @@ function indexHistoryMessage(message, chatId) {
 async function scanHistory(uid) {
   if (db.settings.historyScan.status === "running") return send(TOKEN,uid,"🔍 历史扫描已经在进行中，请稍候。");
   const r = repo();
-  if (!r) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。先绑定「📦 资源仓库」。",adminMenu());
+  if (!r) return send(TOKEN,uid,"❌ <b>尚未绑定资源仓库</b>\\n\\n请先进入「📦 资源仓库」完成绑定。",adminMenu());
 
   const previousCheckpoint=Number(db.settings.historyScan.lastMessageId||0);
   const startedAt=Date.now();
@@ -614,15 +614,16 @@ async function scanHistory(uid) {
     saveDb();
 
     const doneText =
-      "<b>✅ 历史扫描完成</b>\\n\\n"+
-      "📦 <b>资源仓库</b>："+escapeHtml(r.title)+"\\n"+
-      "🔎 <b>扫描消息</b>："+scanned+" 条\\n"+
-      "📚 <b>新增 / 更新</b>："+indexed+" 条\\n"+
-      "📊 <b>当前资源</b>："+db.resources.length+" 条\\n"+
-      "⏱️ <b>耗时</b>："+elapsedText()+"\\n\\n"+
+      "✅ <b>历史资源扫描完成</b>\\n\\n"+
+      "━━━━━━━━━━━━━━\\n\\n"+
+      "📦 仓库："+escapeHtml(r.title)+"\\n"+
+      "🔎 扫描消息：<b>"+scanned+"</b> 条\\n"+
+      "📚 新增 / 更新：<b>"+indexed+"</b> 条\\n"+
+      "📊 当前资源：<b>"+db.resources.length+"</b> 条\\n"+
+      "⏱️ 用时：<b>"+elapsedText()+"</b>\\n\\n"+
       "━━━━━━━━━━━━━━\\n"+
-      "✨ <i>历史消息已建立索引</i>\\n"+
-      "现在可以直接使用搜索、随机获取和最新资源功能。";
+      "✨ <i>历史消息已建立索引</i>\\n\\n"+
+      "现在可以使用搜索、随机获取和最新资源功能。";
 
     if(progressMessage){
       await safeEdit(TOKEN,{
@@ -793,12 +794,12 @@ async function finalizeUploadUnlocked(uid, state) {
   const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
   if (!items.length) {
     states.delete("m:"+uid);
-    return send(TOKEN,uid,"📭 本次没有收到资源。",adminMenu());
+    return send(TOKEN,uid,"📭 <b>本次没有收到资源</b>\\n\\n当前批次没有可入库的资源。",adminMenu());
   }
   const r = repo();
   if (!r) {
     states.delete("m:"+uid);
-    return send(TOKEN,uid,"❌ 资源仓库未绑定，无法入库。",adminMenu());
+    return send(TOKEN,uid,"❌ <b>资源仓库未绑定</b>\\n\\n请先绑定资源仓库，再进行上传。",adminMenu());
   }
 
   let directoryName = String(state.directoryName || "").trim();
@@ -808,7 +809,7 @@ async function finalizeUploadUnlocked(uid, state) {
   const d = ensureDirectory(directoryName);
   if (!d) {
     states.delete("m:"+uid);
-    return send(TOKEN,uid,"❌ 文件夹创建失败。",adminMenu());
+    return send(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请稍后重试。",adminMenu());
   }
 
   let stored = 0;
@@ -1080,8 +1081,8 @@ function escapeHtml(value) {
 }
 
 async function deliverFromHistory(token,chatId,userId,items) {
-  if (!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 请先加入指定群。");
-  if (!items.length) return send(token,chatId,"📭 暂无相关资源。");
+  if (!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
+  if (!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
 
   try {
     const client = await ensureHistoryClient(userId);
@@ -1136,11 +1137,11 @@ async function deliverFromHistory(token,chatId,userId,items) {
 }
 
 async function deliver(token,chatId,userId,items,sourceToken=TOKEN) {
-  if(!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 请先加入指定群。");
-  if(!items.length) return send(token,chatId,"📭 暂无相关资源。");
+  if(!(await allowed(TOKEN,userId))) return send(token,chatId,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
+  if(!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
 
   const valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
-  if(!valid.length) return send(token,chatId,"📭 暂无可发送的资源。");
+  if(!valid.length) return send(token,chatId,"📭 <b>暂无可发送的资源</b>\\n\\n请稍后再试。");
 
   let ok = 0, fail = 0, lastError = "";
   const batchSize = 10;
@@ -1304,7 +1305,7 @@ async function mainMessage(msg) {
   }
   const pendingHistory = historyInputs.get(String(uid));
   if (pendingHistory) {
-    if (t === "/cancel") { historyInputs.delete(String(uid)); return send(TOKEN,uid,"❌ 已取消历史扫描授权。",adminMenu()); }
+    if (t === "/cancel") { historyInputs.delete(String(uid)); return send(TOKEN,uid,"❌ <b>已取消扫描授权</b>\\n\\n本次授权操作已结束。",adminMenu()); }
     historyInputs.delete(String(uid));
     pendingHistory.resolve(t);
     return;
@@ -1312,11 +1313,11 @@ async function mainMessage(msg) {
 
   if(t==="/start" || t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\n\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
   if(t==="/admin") {
-    if(!admin) return send(TOKEN,uid,"⛔ 无管理员权限。");
+    if(!admin) return send(TOKEN,uid,"⛔ <b>无管理员权限</b>\\n\\n此功能仅限管理员使用。");
     return sendHtml(TOKEN,uid,"<b>👑 管理员控制台</b>\n\n"+configText()+"\n\n👇 <i>请选择需要管理的功能</i>",adminMenu());
   }
   if(t==="/状态") {
-    if(!admin) return send(TOKEN,uid,"⛔ 无管理员权限。");
+    if(!admin) return send(TOKEN,uid,"⛔ <b>无管理员权限</b>\\n\\n此功能仅限管理员使用。");
     return sendHtml(TOKEN,uid,configText(),adminMenu());
   }
   if(t==="🔐 绑定指定群" && admin)
@@ -1402,7 +1403,7 @@ async function mainMessage(msg) {
 
 
   if(t==="📂 资源目录") {
-    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
+    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
     states.delete(key);
     return sendHtml(TOKEN,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
@@ -1420,7 +1421,7 @@ async function mainMessage(msg) {
     const offset=Number(s.offset||0);
     if(offset>=all.length) {
       states.set(key,{step:"directory_page",directoryId:s.directoryId,offset});
-      return send(TOKEN,uid,"🏁 这个文件夹到头了，没有更多资源了。");
+      return send(TOKEN,uid,"🏁 <b>本文件夹已到末尾</b>\\n\\n没有更多资源可以获取了。");
     }
 
     const page=all.slice(offset,offset+10);
@@ -1429,18 +1430,18 @@ async function mainMessage(msg) {
     states.set(key,{step:"directory_page",directoryId:s.directoryId,offset:nextOffset});
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
     const safe=String(d?.name||"资源文件夹").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    if(!sent) return send(TOKEN,uid,"❌ 本批资源发送失败。请检查资源仓库权限。");
+    if(!sent) return send(TOKEN,uid,"❌ <b>本批资源发送失败</b>\\n\\n请检查资源仓库权限后再试。");
     return sendHtml(TOKEN,uid,
       "📁 <b>"+safe+"</b>\\n\\n"+
       "✅ 本次发送 <b>"+sent+"</b> 个资源。\\n"+
       "📦 进度："+nextOffset+" / "+all.length+"\\n\\n"+
-      (nextOffset<all.length?"👇 点击「➡️ 下一步」继续获取。":"🏁 这个文件夹到头了，没有更多资源了。"),
+      (nextOffset<all.length?"👇 点击「➡️ 下一步」继续获取。":"🏁 <b>本文件夹已到末尾</b>\\n\\n没有更多资源可以获取了。"),
       {reply_markup:{keyboard:nextOffset<all.length?[["➡️ 下一步"],["📂 返回文件夹","🏠 开始"]]:[["📂 返回文件夹","🏠 开始"]],resize_keyboard:true}}
     );
   }
 
   if(t==="🔎 搜索资源") {
-    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 请先加入指定群。");
+    if(!(await allowed(TOKEN,uid))) return send(TOKEN,uid,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
     states.set(key,{step:"search"});
     return sendHtml(TOKEN,uid,
       "<b>🔎 搜索资源</b>\\n\\n"+
@@ -1456,7 +1457,7 @@ async function mainMessage(msg) {
     if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
       states.delete(key);
       if(t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
-      return send(TOKEN,uid,"↩️ 已退出搜索。",admin?adminMenu():userMenu());
+      return send(TOKEN,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",admin?adminMenu():userMenu());
     }
     const query=t.trim();
     const results=search(query);
@@ -1478,7 +1479,7 @@ async function mainMessage(msg) {
       states.delete(key);
       return t==="🏠 开始"
         ? sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu())
-        : send(TOKEN,uid,"↩️ 已退出搜索。",admin?adminMenu():userMenu());
+        : send(TOKEN,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",admin?adminMenu():userMenu());
     }
     return sendHtml(TOKEN,uid,"🔎 <b>搜索结果已显示在上方</b>\\n\\n👇 请直接点击内联按钮选择资源。",resourceInlineKeyboard(s.results,Number(s.page||0)));
   }
@@ -1495,16 +1496,16 @@ async function mainMessage(msg) {
     if(t==="📭 暂无资源") return send(TOKEN,uid,"📭 当前没有可修改的文件夹。",deleteResourceMenu());
     const name=t.replace(/^📁\s*/,"").split("（")[0].trim();
     const d=getDirectoryByName(name);
-    if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹。",deleteResourceMenu());
+    if(!d) return send(TOKEN,uid,"⚠️ <b>找不到这个文件夹</b>\\n\\n请重新选择。",deleteResourceMenu());
     states.set(key,{step:"rename_folder_name",directoryId:d.id});
     return send(TOKEN,uid,"✏️ 当前名称：<b>"+escapeHtml(d.name)+"</b>\n\n请输入新的文件夹名称。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
   if(s?.step==="rename_folder_name"&&admin) {
-    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消修改名称。",adminResourceMenu()); }
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消修改名称</b>\\n\\n文件夹名称未发生变化。",adminResourceMenu()); }
     const newName=t.trim().slice(0,80);
-    if(!newName) return send(TOKEN,uid,"⚠️ 名称不能为空，请重新输入。");
+    if(!newName) return send(TOKEN,uid,"⚠️ <b>名称不能为空</b>\\n\\n请重新发送文件夹名称。");
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
-    if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ 文件夹不存在。",adminResourceMenu()); }
+    if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ <b>文件夹不存在</b>\\n\\n请重新选择。",adminResourceMenu()); }
     const oldName=d.name;
     const existing=getDirectoryByName(newName);
     if(existing && String(existing.id)!==String(d.id)) return send(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
@@ -1523,7 +1524,7 @@ async function mainMessage(msg) {
     if(t==="📭 暂无资源") return send(TOKEN,uid,"📭 当前没有可删除的资源。",deleteResourceMenu());
     const name=t.replace(/^📁\\s*/,"").split("（")[0].trim();
     const d=getDirectoryByName(name);
-    if(!d) return send(TOKEN,uid,"⚠️ 找不到这个文件夹。",deleteResourceMenu());
+    if(!d) return send(TOKEN,uid,"⚠️ <b>找不到这个文件夹</b>\\n\\n请重新选择。",deleteResourceMenu());
     const items=directoryItems(d.id);
     const rows=items.slice(0,40).map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,35)]);
     rows.push(["🗑️ 删除整个文件夹"],["⬅️ 返回文件夹"]);
@@ -1532,7 +1533,7 @@ async function mainMessage(msg) {
   }
   if(s?.step==="delete_file"&&admin) {
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
-    if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ 文件夹不存在。",adminMenu()); }
+    if(!d) { states.delete(key); return send(TOKEN,uid,"⚠️ <b>文件夹不存在</b>\\n\\n请重新选择。",adminMenu()); }
     if(t==="⬅️ 返回文件夹") { states.set(key,{step:"delete_folder"}); return send(TOKEN,uid,"🗑️ <b>选择要管理的文件夹</b>",{parse_mode:"HTML",...deleteResourceMenu()}); }
     if(t==="🗑️ 删除整个文件夹") {
       states.set(key,{step:"confirm_delete_folder",directoryId:d.id});
@@ -1549,7 +1550,7 @@ async function mainMessage(msg) {
     }
     const items=directoryItems(d.id);
     const idx=items.findIndex((x,i)=>(i+1)+". "+String(x.title||"未命名资源").slice(0,35)===t);
-    if(idx<0) return send(TOKEN,uid,"⚠️ 请重新选择要删除的文件。");
+    if(idx<0) return send(TOKEN,uid,"⚠️ <b>请选择有效的文件</b>\\n\\n请重新选择要删除的资源。");
     const item=items[idx];
     try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
     db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
@@ -1661,8 +1662,8 @@ async function mainMessage(msg) {
     );
   }
   if(s?.step==="upload_folder"&&admin) {
-    if(t==="❌ 取消") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
-    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消上传。",adminMenu()); }
+    if(t==="❌ 取消") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
+    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
 
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
     let folder=t.trim().slice(0,80);
@@ -1710,7 +1711,7 @@ async function mainMessage(msg) {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
       states.delete(key);
-      return send(TOKEN,uid,"❌ 已取消本次上传，未入库的资源不会保存。",adminMenu());
+      return send(TOKEN,uid,"❌ <b>已取消本次上传</b>\\n\\n未入库的资源不会保存。",adminMenu());
     }
     if(t==="▶️ 继续上传") {
       if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
@@ -1721,7 +1722,7 @@ async function mainMessage(msg) {
           send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
-      return send(TOKEN,uid,"▶️ 可以继续上传。");
+      return send(TOKEN,uid,"▶️ <b>可以继续上传</b>\\n\\n请继续发送资源。");
     }
     if(t==="✅ 结束上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
@@ -1731,10 +1732,10 @@ async function mainMessage(msg) {
     if(!repo()) {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       states.delete(key);
-      return send(TOKEN,uid,"❌ 资源仓库未绑定。",adminMenu());
+      return send(TOKEN,uid,"❌ <b>资源仓库未绑定</b>\\n\\n请先完成仓库绑定。",adminMenu());
     }
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
-    if(!media && !msg.text) return send(TOKEN,uid,"⚠️ 请发送文件、图片、视频、音频或带文字的资源。");
+    if(!media && !msg.text) return send(TOKEN,uid,"⚠️ <b>内容格式不正确</b>\\n\\n请发送文件、图片、视频、音频或带文字的资源。");
     try {
       const pending=Array.isArray(s.pendingUploads)?s.pendingUploads:[];
       pending.push({messageId:Number(msg.message_id),msg});
@@ -1788,7 +1789,7 @@ async function mainMessage(msg) {
       if(uploadTimers.has(timerKey)) { clearTimeout(uploadTimers.get(timerKey)); uploadTimers.delete(timerKey); }
       states.delete(key);
       logAdmin(uid,"取消广播");
-      return send(TOKEN,uid,"❌ 已取消广播。",adminMenu());
+      return send(TOKEN,uid,"❌ <b>已取消广播</b>\\n\\n本次广播未继续发送。",adminMenu());
     }
     let ok=0,fail=0;
     for(const id of db.users){
@@ -1847,7 +1848,7 @@ async function childMessage(child,msg,token) {
     "<b>👋 欢迎使用资源机器人</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能</i>",
     childMenu());
   // 使用主机器人检查指定群成员资格，子机器人无需单独加入指定群。
-  if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 请先加入指定群。");
+  if(!(await allowed(TOKEN,uid))) return send(token,uid,"🔐 <b>请先加入指定群</b>\\n\\n加入后即可继续使用资源功能。");
   if(t==="📂 资源目录") {
     if(!db.directories.length) return send(token,uid,"📂 暂无资源目录。",childMenu());
     return sendHtml(token,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
@@ -1856,7 +1857,7 @@ async function childMessage(child,msg,token) {
   if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10(uid));
   if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10));
   if(s?.step==="search"){
-    if(t==="/cancel"){states.delete(key);return send(token,uid,"↩️ 已退出搜索。",childMenu());}
+    if(t==="/cancel"){states.delete(key);return send(token,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",childMenu());}
     const results=search(t);
     if(!results.length) return sendHtml(token,uid,
       "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
