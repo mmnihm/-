@@ -374,7 +374,12 @@ async function baserowSyncResource(item) {
     if (fileIdField) payload[fileIdField.name] = baserowValueForField(fileIdField, item.fileId || "");
     if (downloadField) payload[downloadField.name] = baserowValueForField(downloadField, Number(item.downloads || 0));
 
-    // 优先使用本地保存的 Baserow 行 ID 更新，避免重复。
+    // 优先使用本地保存的 Baserow 行 ID；如果本地没有，使用共享缓存按 chatId+messageId 查找。
+    if (!item.baserowRowId) {
+      const key=String(item.chatId)+":"+String(item.messageId);
+      const cached=baserowRowsCache.get(key);
+      if(cached?.id) item.baserowRowId=cached.id;
+    }
     if (item.baserowRowId) {
       try {
         const updated = await baserowRequest(
@@ -398,6 +403,7 @@ async function baserowSyncResource(item) {
       payload
     );
     item.baserowRowId = created?.id || null;
+    if(item.baserowRowId) baserowRowsCache.set(String(item.baserowRowId),created);
     baserow.connected = true;
     baserow.lastError = "";
     baserow.lastOkAt = Date.now();
@@ -420,6 +426,241 @@ function queueBaserowResourceSync(item) {
 async function waitBaserowSyncQueue() {
   await baserowSyncQueue;
 }
+
+/* ===== 共享资源中心：Baserow 作为唯一共享数据源 ===== */
+let baserowRowsCache = new Map();
+let sharedRefreshAt = 0;
+let sharedRefreshPromise = null;
+let sharedSyncLock = false;
+
+function sharedDirectoryId(name) {
+  const clean=String(name||"").trim().replace(/\s+/g," ").toLowerCase();
+  return "dir_"+crypto.createHash("sha1").update("baserow-folder:"+clean).digest("hex").slice(0,24);
+}
+
+function sharedFolderName(value) {
+  if (value && typeof value === "object") return String(value.value ?? value.name ?? "").trim();
+  return String(value ?? "").trim();
+}
+
+function normalizeSharedDirectories() {
+  const oldToNew=new Map();
+  const next=[];
+  for(const d of Array.isArray(db.directories)?db.directories:[]) {
+    const name=String(d?.name||"").trim();
+    if(!name) continue;
+    const id=sharedDirectoryId(name);
+    oldToNew.set(String(d.id),id);
+    const exists=next.find(x=>String(x.id)===id);
+    if(!exists) next.push({...d,id,name,createdAt:d.createdAt||Date.now()});
+  }
+  db.directories=next;
+  for(const item of db.resources||[]) {
+    if(item.directoryId && oldToNew.has(String(item.directoryId))) item.directoryId=oldToNew.get(String(item.directoryId));
+  }
+}
+
+async function listAllBaserowRows() {
+  const rows=[];
+  for(let page=1; page<=1000; page++) {
+    const data=await baserowRequest(
+      "GET",
+      "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/?user_field_names=true&size=200&page="+page
+    );
+    const part=Array.isArray(data?.results)?data.results:[];
+    rows.push(...part);
+    if(!data?.next || part.length<200) break;
+  }
+  return rows;
+}
+
+function baserowRowKey(row, fields) {
+  const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+  const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+  const chat=chatField ? String(row?.[chatField.name]??"").trim() : "";
+  const message=messageField ? Number(row?.[messageField.name]??0) : 0;
+  return chat && message ? chat+":"+message : "";
+}
+
+async function baserowSyncDirectory(directory) {
+  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || !directory) return;
+  try {
+    const fields=await getBaserowFields();
+    const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+    const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+    const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+    const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+    const primary=titleField || fields.find(f=>!f.read_only && ["text","long_text"].includes(String(f.type||"")));
+    if(!primary || !folderField) throw new Error("Baserow 缺少可用于共享文件夹的“资源名称/文件夹”字段");
+
+    const markerTitle="__FOLDER__:"+directory.id+":"+Buffer.from(String(directory.name)).toString("base64url");
+    const existing=Array.from(baserowRowsCache.values()).find(row=>{
+      return String(row?.[primary.name]||"").startsWith("__FOLDER__:"+directory.id+":");
+    });
+    const payload={};
+    payload[primary.name]=baserowValueForField(primary,markerTitle);
+    const fv=baserowValueForField(folderField,directory.name);
+    if(fv!==undefined) payload[folderField.name]=fv;
+    if(messageField) payload[messageField.name]=baserowValueForField(messageField,0);
+    if(chatField) payload[chatField.name]=baserowValueForField(chatField,repo()?.chatId||"");
+    if(existing?.id) {
+      await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+existing.id+"/?user_field_names=true",payload);
+      baserowRowsCache.set("folder:"+directory.id,{...existing,...payload});
+    } else {
+      const created=await baserowRequest("POST","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/?user_field_names=true",payload);
+      baserowRowsCache.set("folder:"+directory.id,created);
+    }
+    baserow.connected=true; baserow.lastOkAt=Date.now(); baserow.lastError="";
+  } catch(e) {
+    baserow.lastError=String(e?.message||e);
+    console.error("❌ Baserow 文件夹同步失败:",baserow.lastError);
+  }
+}
+
+function queueBaserowDirectorySync(directory) {
+  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || !directory) return;
+  baserowSyncQueue=baserowSyncQueue.then(()=>baserowSyncDirectory(directory)).catch(e=>console.error("❌ Baserow 文件夹队列:",e.message));
+}
+
+async function baserowDeleteRow(rowId) {
+  if(!rowId || !BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  try {
+    await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(rowId)+"/");
+    baserowRowsCache.delete(String(rowId));
+  } catch(e) {
+    console.warn("⚠️ Baserow 删除行失败:",String(e?.message||e));
+  }
+}
+
+function queueBaserowDeleteResource(item) {
+  if(!item || !BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  const rowId=item.baserowRowId;
+  if(!rowId) return;
+  baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(rowId)).catch(e=>console.error("❌ Baserow 删除队列:",e.message));
+}
+
+async function pullBaserowSharedData() {
+  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || sharedSyncLock) return false;
+  sharedSyncLock=true;
+  try {
+    const fields=await getBaserowFields();
+    const rows=await listAllBaserowRows();
+    const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+    const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+    const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+    const captionField=baserowPickField(fields,["描述","说明","备注","Caption","Description"]);
+    const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+    const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
+    const typeField=baserowPickField(fields,["类型","文件类型","Type","File Type"]);
+    const fileIdField=baserowPickField(fields,["文件ID","File ID","FileID"]);
+    const downloadField=baserowPickField(fields,["下载","下载次数","Downloads"]);
+
+    const byKey=new Map();
+    const folderNames=new Map();
+    baserowRowsCache=new Map();
+
+    for(const row of rows) {
+      if(row?.id) baserowRowsCache.set(String(row.id),row);
+      const title=titleField ? String(row?.[titleField.name]??"").trim() : "";
+      if(title.startsWith("__FOLDER__:")) {
+        const folderValue=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+        if(folderValue) folderNames.set(sharedDirectoryId(folderValue),folderValue);
+        continue;
+      }
+      const chat=chatField ? String(row?.[chatField.name]??"").trim() : "";
+      const message=messageField ? Number(row?.[messageField.name]??0) : 0;
+      if(!chat || !Number.isFinite(message) || message<=0) continue;
+      const key=chat+":"+message;
+      const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+      if(folderName) folderNames.set(sharedDirectoryId(folderName),folderName);
+      byKey.set(key,{row,title,chat,message,folderName});
+    }
+
+    const oldByKey=new Map((db.resources||[]).map(x=>[String(x.chatId)+":"+String(x.messageId),x]));
+    const merged=[];
+    for(const [key,v] of byKey) {
+      const old=oldByKey.get(key)||{};
+      const directoryId=v.folderName ? sharedDirectoryId(v.folderName) : null;
+      merged.push({
+        ...old,
+        chatId:v.chat,
+        messageId:v.message,
+        title:v.title || old.title || ("资源 #"+v.message),
+        caption:captionField ? String(v.row?.[captionField.name]??old.caption??"") : String(old.caption||""),
+        date:dateField ? (Number(v.row?.[dateField.name]) || (new Date(v.row?.[dateField.name]||0).getTime()/1000) || old.date || Math.floor(Date.now()/1000)) : (old.date||Math.floor(Date.now()/1000)),
+        directoryId,
+        fileType:typeField ? String(v.row?.[typeField.name]??old.fileType??"") : old.fileType,
+        fileId:fileIdField ? String(v.row?.[fileIdField.name]??old.fileId??"") : old.fileId,
+        downloads:downloadField ? Number(v.row?.[downloadField.name]??old.downloads??0) : Number(old.downloads||0),
+        baserowRowId:v.row.id
+      });
+    }
+
+    const dirsById=new Map();
+    for(const d of db.directories||[]) {
+      const id=sharedDirectoryId(d.name);
+      dirsById.set(id,{...d,id});
+    }
+    for(const [id,name] of folderNames) {
+      if(!dirsById.has(id)) dirsById.set(id,{id,name,createdAt:Date.now()});
+    }
+    db.directories=Array.from(dirsById.values());
+    db.resources=merged.slice(0,MAX_RESOURCES);
+    db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
+    saveDb();
+    console.log("🔄 Baserow 共享数据已刷新：资源="+db.resources.length+"，文件夹="+db.directories.length);
+    return true;
+  } catch(e) {
+    baserow.connected=false;
+    baserow.lastError=String(e?.message||e);
+    console.error("❌ Baserow 共享数据刷新失败:",baserow.lastError);
+    return false;
+  } finally {
+    sharedSyncLock=false;
+  }
+}
+
+async function initializeSharedBaserow() {
+  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  try {
+    normalizeSharedDirectories();
+    // 先读取共享表，再把本地缺失资源补进去，避免首次启用时覆盖已有本地数据。
+    await pullBaserowSharedData();
+    const remoteKeys=new Set(baserowRowsCache.values()
+      .map(row=>baserowRowKey(row,getBaserowFieldsCacheForSync()))
+      .filter(Boolean));
+    for(const item of db.resources||[]) {
+      const key=String(item.chatId)+":"+String(item.messageId);
+      if(!remoteKeys.has(key)) queueBaserowResourceSync(item);
+    }
+    for(const d of db.directories||[]) queueBaserowDirectorySync(d);
+    await waitBaserowSyncQueue();
+    await pullBaserowSharedData();
+  } catch(e) {
+    console.error("❌ 共享数据初始化失败:",String(e?.message||e));
+  }
+}
+
+function getBaserowFieldsCacheForSync() { return Array.isArray(baserowFieldsCache)?baserowFieldsCache:[]; }
+
+async function refreshSharedData(force=false) {
+  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  const now=Date.now();
+  if(!force && now-sharedRefreshAt<5000) return;
+  if(sharedRefreshPromise) return sharedRefreshPromise;
+  sharedRefreshPromise=(async()=>{
+    try {
+      await waitBaserowSyncQueue();
+      if(db.settings.historyScan?.status==="running") return;
+      await pullBaserowSharedData();
+      sharedRefreshAt=Date.now();
+    } finally {
+      sharedRefreshPromise=null;
+    }
+  })();
+  return sharedRefreshPromise;
+}
+
 
 
 async function ensureStartCommand(token) {
@@ -1148,7 +1389,18 @@ function platformMenu() {
   return adminSettingsMenu();
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
-function ensureDirectory(name) { const clean=String(name||"").trim().slice(0,80); if(!clean)return null; let d=getDirectoryByName(clean); if(d)return d; d={id:crypto.randomUUID(),name:clean,createdAt:Date.now()}; db.directories.push(d); touchSharedData("system"); saveDb(); return d; }
+function ensureDirectory(name) {
+  const clean=String(name||"").trim().slice(0,80);
+  if(!clean)return null;
+  let d=getDirectoryByName(clean);
+  if(d)return d;
+  d={id:sharedDirectoryId(clean),name:clean,createdAt:Date.now()};
+  db.directories.push(d);
+  touchSharedData("system");
+  saveDb();
+  queueBaserowDirectorySync(d);
+  return d;
+}
 function getResourceByShareToken(token) {
   const t=String(token||"").trim();
   if(!t) return null;
@@ -1817,6 +2069,7 @@ async function binding(msg) {
 }
 
 async function mainMessage(msg) {
+  await refreshSharedData();
   if(await binding(msg)) return;
   if(msg.chat?.type!=="private") { indexResource(msg); return; }
 
@@ -2221,7 +2474,12 @@ async function mainMessage(msg) {
     const existing=getDirectoryByName(newName);
     if(existing && String(existing.id)!==String(d.id)) return send(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
     d.name=newName;
+    const oldDirectoryId=String(d.id);
+    d.id=sharedDirectoryId(newName);
+    for(const item of db.resources) if(String(item.directoryId)===oldDirectoryId) item.directoryId=d.id;
     touchSharedData(uid);
+    queueBaserowDirectorySync(d);
+    for(const item of db.resources.filter(item=>String(item.directoryId)===String(d.id))) queueBaserowResourceSync(item);
     saveDb();
     logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
     states.delete(key);
@@ -2255,6 +2513,9 @@ async function mainMessage(msg) {
       const items=directoryItems(d.id);
       let deleted=0;
       for(const item of items) { try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); deleted++; } catch(e) {} }
+      for(const item of items) queueBaserowDeleteResource(item);
+      const marker=Array.from(baserowRowsCache.values()).find(row=>String(row?.[baserowPickField(baserowFieldsCache,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"] )?.name]||"").startsWith("__FOLDER__:"+d.id+":"));
+      if(marker?.id) baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(marker.id));
       db.resources=db.resources.filter(x=>String(x.directoryId)!==String(d.id));
       db.directories=db.directories.filter(x=>String(x.id)!==String(d.id));
       touchSharedData(uid);
@@ -2266,6 +2527,7 @@ async function mainMessage(msg) {
     if(idx<0) return send(TOKEN,uid,"⚠️ <b>请选择有效的文件</b>\\n\\n请重新选择要删除的资源。");
     const item=items[idx];
     try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
+    queueBaserowDeleteResource(item);
     db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
     touchSharedData(uid);
     saveDb(); logAdmin(uid,"删除资源",item.title);
@@ -2556,6 +2818,7 @@ async function mainMessage(msg) {
 }
 
 async function childMessage(child,msg,token) {
+  await refreshSharedData();
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
   const startCommand=t.split(" ")[0].split("@")[0];
@@ -2615,6 +2878,7 @@ async function childMessage(child,msg,token) {
   }
 }
 async function handleDirectoryCallback(token, q, child=false) {
+  await refreshSharedData();
   const uid=q.from?.id;
   const data=String(q.data||"");
   const callbackId=q.id;
@@ -2745,6 +3009,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const item=db.resources.find(r=>Number(r.messageId)===Number(st.itemId)&&String(r.directoryId)===String(st.sourceId));
     if(!target||!item) { await answer("资源或目标文件夹不存在",true); return; }
     item.directoryId=target.id;
+    queueBaserowResourceSync(item);
     saveDb();
     logAdmin(uid,"移动资源",(item.title||"未命名")+" → "+target.name);
     states.delete(key);
@@ -2803,6 +3068,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       for(const item of targets) {
         try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
         const before=db.resources.length;
+        queueBaserowDeleteResource(item);
         db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
         if(db.resources.length<before) deleted++;
       }
@@ -3269,6 +3535,8 @@ async function boot(){
       runtime.lastTelegramOkAt = Date.now();
       runtime.lastError = "";
       await ensureStartCommand(TOKEN);
+      await initializeSharedBaserow();
+      console.log("🔄 Baserow 共享模式：已启用");
       console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name));
       console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
       console.log("⚙️ "+configText().replaceAll("\n"," | "));
