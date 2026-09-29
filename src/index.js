@@ -1284,10 +1284,13 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
 
   const progress=await sendHtml(TOKEN,uid,renderProgress(canResume?"resume":"processing"),{reply_markup:{inline_keyboard:[[{"text":"⏳ 后台运行","callback_data":"admin:root"}]]}});
 
-  const targetExisting=new Set(db.resources.filter(x=>String(x.chatId)===targetId).map(x=>{
-    const d=db.directories.find(y=>String(y.id)===String(x.directoryId||""));
-    return String(x.title||"").trim().toLowerCase()+"|"+String(d?.name||"").trim().toLowerCase();
-  }));
+  // 只按“源仓库 + 原消息ID”去重，绝不按文件名去重，避免同名资源被误跳过。
+  const targetExistingMigrationKeys=new Set(
+    db.resources
+      .filter(x=>String(x.chatId)===targetId && x.migratedFrom)
+      .map(x=>resourceKey(x.migratedFrom))
+      .filter(Boolean)
+  );
 
   const copyOneBatch=async batch=>{
     const ids=batch.map(x=>Number(x.messageId)).filter(x=>x>0);if(!ids.length)return [];
@@ -1325,9 +1328,12 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
     if(!pending.length){state.skipped+=batch.length;return;}
     const needCopy=[];
     for(const item of pending){
-      const d=db.directories.find(y=>String(y.id)===String(item.directoryId||""));
-      const dedupeKey=String(item.title||"").trim().toLowerCase()+"|"+String(d?.name||"").trim().toLowerCase();
-      if(dedupeKey!=="|"&&targetExisting.has(dedupeKey)){completed.add(resourceKey(item));state.skipped++;}else needCopy.push(item);
+      if(targetExistingMigrationKeys.has(resourceKey(item))){
+        completed.add(resourceKey(item));
+        state.skipped++;
+      }else{
+        needCopy.push(item);
+      }
     }
     if(!needCopy.length)return;
     try{
