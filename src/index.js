@@ -3945,6 +3945,30 @@ async function mainMessage(msg) {
       {reply_markup:uploadFolderInlineMenu()}
     );
   }
+  if(s?.step==="folder_rename"&&admin) {
+    if(t==="/cancel" || t==="❌ 取消") {
+      states.delete(key);
+      return sendHtml(TOKEN,uid,"❌ 已取消修改文件夹名称。",{reply_markup:uploadFolderInlineMenu()});
+    }
+    const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
+    const newName=String(t||"").trim().slice(0,80);
+    if(!d) {
+      states.delete(key);
+      return sendHtml(TOKEN,uid,"⚠️ 文件夹不存在。",{reply_markup:uploadFolderInlineMenu()});
+    }
+    if(!newName) return sendHtml(TOKEN,uid,"⚠️ 文件夹名称不能为空，请重新发送。");
+    const same=db.directories.find(x=>String(x.id)!==String(d.id)&&String(x.name||"").trim().toLowerCase()===newName.toLowerCase());
+    if(same) return sendHtml(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
+    const oldName=d.name;
+    d.name=newName;
+    for(const item of db.resources.filter(r=>String(r.directoryId)===String(d.id))) queueBaserowResourceSync(item);
+    queueBaserowDirectorySync(d);
+    touchSharedData(uid);
+    saveDb();
+    states.delete(key);
+    logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
+    return sendHtml(TOKEN,uid,"✅ <b>文件夹名称已修改</b>\\n\\n📁 原名称："+escapeHtml(oldName)+"\\n📁 新名称："+escapeHtml(newName),{reply_markup:uploadFolderInlineMenu()});
+  }
   if(s?.step==="upload_folder"&&admin) {
     if(t==="❌ 取消") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
