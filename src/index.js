@@ -341,6 +341,41 @@ async function getBaserowFields(force=false) {
   return baserowFieldsCache;
 }
 
+async function ensureBaserowRecoveryFields() {
+  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return [];
+  const required=[
+    {name:"文件夹",type:"text"},
+    {name:"聊天ID",type:"text"},
+    {name:"消息ID",type:"text"}
+  ];
+  let fields=await getBaserowFields(true);
+  const created=[];
+  for(const spec of required){
+    if(baserowPickField(fields,[spec.name])) continue;
+    try{
+      const field=await baserowRequest(
+        "POST",
+        "/api/database/fields/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/",
+        {name:spec.name,type:spec.type}
+      );
+      created.push(field);
+      console.log("🛠️ Baserow 自动创建字段:",spec.name);
+    }catch(e){
+      // 已被其他机器人/进程同时创建时，再刷新一次字段列表即可继续。
+      const refreshed=await getBaserowFields(true);
+      if(!baserowPickField(refreshed,[spec.name])) throw e;
+      fields=refreshed;
+      continue;
+    }
+    fields=await getBaserowFields(true);
+  }
+  if(created.length){
+    baserowFieldsCache=await getBaserowFields(true);
+    console.log("✅ Baserow 恢复字段检查完成：",created.map(x=>x?.name).filter(Boolean).join("、"));
+  }
+  return created;
+}
+
 function baserowPickField(fields, aliases) {
   const wanted = aliases.map(baserowNormName);
   return fields.find(f => wanted.includes(baserowNormName(f.name))) || null;
@@ -599,6 +634,7 @@ function queueBaserowDeleteResource(item) {
 async function repairLostFolderAssignments(uid) {
   const started=Date.now();
   try {
+    await ensureBaserowRecoveryFields();
     const fields=await getBaserowFields(true);
     const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
     const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
@@ -810,6 +846,7 @@ async function initializeSharedBaserow() {
       return;
     }
     console.log("🔗 Baserow 共享连接确认：enabled="+String(baserow.enabled)+" connected="+String(baserow.connected)+" table="+BASEROW_TABLE_ID);
+    await ensureBaserowRecoveryFields();
     normalizeSharedDirectories();
     // 首次切换共享模式时，先保留本地快照，再与 Baserow 做并集合并，绝不因为远端为空而丢失本地资源。
     const localResources=(db.resources||[]).map(x=>({...x}));
@@ -1270,7 +1307,11 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
   }
 
   let fields, rows;
-  try { fields=await getBaserowFields(true); rows=await listAllBaserowRows(); }
+  try {
+    await ensureBaserowRecoveryFields();
+    fields=await getBaserowFields(true);
+    rows=await listAllBaserowRows();
+  }
   catch(e) { return sendHtml(TOKEN,uid,"❌ <b>读取 Baserow 失败</b>\\n\\n"+escapeHtml(e?.message||e),adminMenu()); }
 
   const titleField=baserowPickField(fields,["名称","资源名称","资源名","标题","资源标题","文件名","文件名称","资源","Name","Title","Resource","Resource Name","File Name"]);
