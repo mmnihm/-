@@ -2423,7 +2423,6 @@ function folderMoveTargetMenu(sourceId) {
   if(!rows.length) rows.push([{text:"📭 没有其他文件夹",callback_data:"noop"}]);
   rows.push([{text:"❌ 取消",callback_data:"folder_manage_back:"+sourceId}]);
   return {inline_keyboard:rows};
-};
 }
 function resourceMoveMenu(items,page=0,selected=[]) {
   const start=page*10;
