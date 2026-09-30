@@ -3098,6 +3098,89 @@ async function binding(msg) {
   return false;
 }
 
+async function backupRecoveryPreview(uid) {
+  const backup = readJsonFile(BACKUP_FILE);
+  if (!backup || typeof backup !== "object") {
+    return sendHtml(TOKEN,uid,
+      "<b>🗃️ 备份恢复</b>\n━━━━━━━━━━━━━━\n\n❌ 没有找到可读取的备份文件。\n\n📁 文件："+escapeHtml(BACKUP_FILE),
+      adminMenu());
+  }
+  const currentResources = Array.isArray(db.resources) ? db.resources : [];
+  const currentDirs = Array.isArray(db.directories) ? db.directories : [];
+  const backupResources = Array.isArray(backup.resources) ? backup.resources : [];
+  const backupDirs = Array.isArray(backup.directories) ? backup.directories : [];
+  const currentKeys = new Set(currentResources.map(x=>String(x.chatId||"")+":"+String(x.messageId||"")));
+  const missingResources = backupResources.filter(x=>{
+    const k=String(x.chatId||"")+":"+String(x.messageId||"");
+    return k !== ":" && !currentKeys.has(k);
+  });
+  const currentDirNames = new Set(currentDirs.map(x=>String(x.name||"").trim().replace(/\\s+/g," ").toLowerCase()).filter(Boolean));
+  const missingDirs = backupDirs.filter(x=>{
+    const n=String(x.name||"").trim().replace(/\\s+/g," ").toLowerCase();
+    return n && !currentDirNames.has(n);
+  });
+  const backupSavedAt = Number(backup?.settings?.lastSavedAt || backup?.savedAt || 0);
+  return sendHtml(TOKEN,uid,
+    "<b>🗃️ 备份恢复</b>\n━━━━━━━━━━━━━━\n\n"+
+    "💾 备份文件：<b>已找到</b>\n"+
+    (backupSavedAt ? "🕐 备份时间："+escapeHtml(new Date(backupSavedAt).toLocaleString("zh-CN"))+"\n" : "")+
+    "📚 当前资源："+currentResources.length+"\n"+
+    "📚 备份资源："+backupResources.length+"\n"+
+    "➕ 可恢复资源："+missingResources.length+"\n"+
+    "📁 当前目录："+currentDirs.length+"\n"+
+    "📁 备份目录："+backupDirs.length+"\n"+
+    "➕ 可恢复目录："+missingDirs.length+"\n\n"+
+    "⚠️ <b>安全模式</b>：只合并当前缺少的数据，不删除当前资源、不覆盖当前仓库绑定。",
+    {reply_markup:{inline_keyboard:[
+      [{text:"♻️ 合并恢复备份",callback_data:"admin:backup_restore"}],
+      [{text:"🔄 重新检查",callback_data:"admin:backup"}],
+      [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
+    ]}});
+}
+
+async function backupRecoveryMerge(uid) {
+  const backup = readJsonFile(BACKUP_FILE);
+  if (!backup || typeof backup !== "object") return backupRecoveryPreview(uid);
+  const backupDirs = Array.isArray(backup.directories) ? backup.directories : [];
+  const backupResources = Array.isArray(backup.resources) ? backup.resources : [];
+  const currentDirByName = new Map((db.directories||[]).map(d=>[String(d.name||"").trim().replace(/\\s+/g," ").toLowerCase(),d]));
+  const dirMap = new Map();
+  let restoredDirs=0, restoredResources=0;
+  for (const bd of backupDirs) {
+    const name=String(bd?.name||"").trim();
+    if(!name) continue;
+    const norm=name.replace(/\\s+/g," ").toLowerCase();
+    let d=currentDirByName.get(norm);
+    if(!d) {
+      d={...bd,id:bd.id||sharedDirectoryId(name),name,createdAt:bd.createdAt||Date.now(),restoredFromBackup:true};
+      db.directories.push(d);
+      currentDirByName.set(norm,d);
+      restoredDirs++;
+    }
+    if(bd?.id) dirMap.set(String(bd.id),String(d.id));
+  }
+  const currentKeys = new Set((db.resources||[]).map(x=>String(x.chatId||"")+":"+String(x.messageId||"")));
+  for (const br of backupResources) {
+    const k=String(br?.chatId||"")+":"+String(br?.messageId||"");
+    if(k===":" || currentKeys.has(k)) continue;
+    const item={...br};
+    if(br?.directoryId && dirMap.has(String(br.directoryId))) item.directoryId=dirMap.get(String(br.directoryId));
+    db.resources.push(item);
+    currentKeys.add(k);
+    restoredResources++;
+  }
+  touchSharedData(uid);
+  saveDb();
+  try { await refreshSharedData(true); } catch {}
+  logAdmin(uid,"合并恢复备份","恢复目录 "+restoredDirs+" 个，资源 "+restoredResources+" 个");
+  return sendHtml(TOKEN,uid,
+    "<b>✅ 备份合并恢复完成</b>\n━━━━━━━━━━━━━━\n\n"+
+    "📁 恢复目录：<b>"+restoredDirs+"</b> 个\n"+
+    "📦 恢复资源：<b>"+restoredResources+"</b> 个\n\n"+
+    "🛡️ 当前已有资源未覆盖\n🛡️ 当前仓库绑定未修改\n\n<i>如果上午的资源就在备份中，现在即可重新出现在目录。</i>",
+    adminMenu());
+}
+
 async function mainMessage(msg) {
   // 共享数据刷新放到后台，绝不能阻塞 Telegram 菜单响应；后台每 5 秒也会自动同步。
   refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
@@ -4121,7 +4204,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:ops")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📊 数据与运营</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminOpsInline()});
     if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
     if(data==="admin:bot")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🤖 机器人管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminBotInline()});
-    if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
+    if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});\n     if(data==="admin:backup") return backupRecoveryPreview(uid);\n     if(data==="admin:backup_restore") return backupRecoveryMerge(uid);
     if(data==="admin:upload"){
       if(!repo()){
         await answer("尚未绑定资源仓库",true);
