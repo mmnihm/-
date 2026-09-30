@@ -2373,6 +2373,30 @@ function autoAssignResourceTagFolder(item) {
   }
   return folder;
 }
+async function cleanupNumericTagFolders() {
+  const bad=(db.directories||[]).filter(d=>/^\\d+$/.test(String(d?.name||"").trim()));
+  if(!bad.length) return {folders:0,resources:0};
+  let resources=0;
+  for(const d of bad) {
+    for(const item of (db.resources||[])) {
+      if(String(item.directoryId)===String(d.id)) {
+        item.directoryId=null;
+        item.autoTagFolder=null;
+        queueBaserowResourceSync(item);
+        resources++;
+      }
+    }
+    for(const row of Array.from(baserowRowsCache.values())) {
+      const vals=Object.values(row||{}).map(v=>String(v||""));
+      if(vals.some(v=>v.startsWith("__FOLDER__:"+String(d.id)+":")) && row?.id) await baserowDeleteRow(row.id);
+    }
+  }
+  db.directories=db.directories.filter(d=>!bad.includes(d));
+  touchSharedData("system");
+  saveDb();
+  return {folders:bad.length,resources};
+}
+
 function autoCreateTagFoldersForExistingResources() {
   let created=0, assigned=0;
   for(const item of (db.resources||[])) {
@@ -5140,6 +5164,8 @@ async function boot(){
             console.log("🔎 Baserow 共享配置:", "enabled="+baserow.enabled, "table="+BASEROW_TABLE_ID);
             // 初始化完成后立即强制刷新一次，确保刚启动的机器人立刻拿到其他机器人已经写入的目录。
             await refreshSharedData(true);
+            const cleaned=await cleanupNumericTagFolders();
+            if(cleaned.folders) console.log("🧹 已清理纯数字标签文件夹:", "folders="+cleaned.folders, "resourcesUncategorized="+cleaned.resources);
             console.log("✅ Baserow 启动后首次强制刷新完成", "pid=" + PROCESS_ID);
           })
           .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
