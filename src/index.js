@@ -2464,7 +2464,13 @@ async function finalizeUploadUnlocked(uid, state) {
 
           const resourceMsg={
             ...batch[n].msg,
-            chat:{...(batch[n].msg?.chat||{}),id:r.chatId},
+            chat:{
+              ...(batch[n].msg?.chat||{}),
+              id:r.chatId,
+              title:r.title||batch[n].msg?.chat?.title||r.chatId,
+              username:r.username||batch[n].msg?.chat?.username||"",
+              type:r.type||"supergroup"
+            },
             message_id:copiedId
           };
           indexResource(resourceMsg);
@@ -2500,7 +2506,13 @@ async function finalizeUploadUnlocked(uid, state) {
 
           const resourceMsg={
             ...entry.msg,
-            chat:{...(entry.msg?.chat||{}),id:r.chatId},
+            chat:{
+              ...(entry.msg?.chat||{}),
+              id:r.chatId,
+              title:r.title||entry.msg?.chat?.title||r.chatId,
+              username:r.username||entry.msg?.chat?.username||"",
+              type:r.type||"supergroup"
+            },
             message_id:copiedId
           };
           indexResource(resourceMsg);
