@@ -1845,10 +1845,15 @@ async function finalizeUploadUnlocked(uid, state) {
         indexResource(resourceMsg);
         const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
         if(!item) throw new Error("资源索引写入失败");
+
+        // 关键修复：先绑定文件夹，再把最终资源对象重新排入 Baserow 同步队列。
+        // indexResource() 可能已经排入一次同步，此处的第二次同步会使用最新的 directoryId，
+        // 从而确保共享数据库里的“文件夹”字段不会停留为空。
         item.directoryId=d.id;
         item.repositoryMessageId=copiedId;
         item.sourceUserId=String(uid);
         item.indexedAt=Date.now();
+        queueBaserowResourceSync(item);
         stored++;
       }
     } catch(e) {
