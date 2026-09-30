@@ -1574,7 +1574,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
   const state=canResume?previous:{
     status:"running",taskKey,ownerId:String(uid),source:sourceId,target:targetId,sourceId,targetId,
     sourceTitle,targetTitle,scanned:0,queued:0,migrated:0,skipped:0,failed:0,current:0,total:0,
-    startedAt,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[],progressMessageId:null
+    startedAt,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[],progressMessageId:null,autoSync:Boolean(previous.autoSync)
   };
 
   state.status="running";
