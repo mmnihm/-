@@ -2395,6 +2395,36 @@ function moveFolderMenu(excludeId=null) {
   rows.push([{text:"❌ 取消",callback_data:"move_cancel"}]);
   return {inline_keyboard:rows};
 }
+function folderManageMenu(directoryId) {
+  const d=db.directories.find(x=>String(x.id)===String(directoryId));
+  if(!d) return {inline_keyboard:[[{text:"⬅️ 返回文件夹",callback_data:"upload_folder_back"}]]};
+  const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+  return {inline_keyboard:[
+    [{text:"📤 继续上传",callback_data:"folder_manage_upload:"+d.id}],
+    [{text:"📂 查看资源",callback_data:"folder_manage_view:"+d.id}],
+    [{text:"✏️ 修改名称",callback_data:"folder_manage_rename:"+d.id},{text:"🔄 移动资源",callback_data:"folder_manage_move:"+d.id}],
+    [{text:"🗑️ 删除文件夹",callback_data:"folder_manage_delete:"+d.id}],
+    [{text:"⬅️ 返回文件夹列表",callback_data:"admin:upload"}]
+  ]};
+}
+function folderManageText(directoryId) {
+  const d=db.directories.find(x=>String(x.id)===String(directoryId));
+  if(!d) return "<b>⚠️ 文件夹不存在</b>";
+  const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+  return "<b>📁 "+escapeHtml(d.name)+"</b>\\n━━━━━━━━━━━━━━\\n\\n📦 资源数量：<b>"+count+"</b>\\n\\n👇 请选择操作";
+}
+function folderMoveTargetMenu(sourceId) {
+  const rows=[];
+  for(const d of db.directories) {
+    if(String(d.id)===String(sourceId)) continue;
+    const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+    rows.push([{text:"📁 "+String(d.name||"未命名").slice(0,24)+" · "+count,callback_data:"folder_move_to:"+d.id}]);
+  }
+  if(!rows.length) rows.push([{text:"📭 没有其他文件夹",callback_data:"noop"}]);
+  rows.push([{text:"❌ 取消",callback_data:"folder_manage_back:"+sourceId}]);
+  return {inline_keyboard:rows};
+};
+}
 function resourceMoveMenu(items,page=0,selected=[]) {
   const start=page*10;
   const pageItems=items.slice(start,start+10);
@@ -4569,6 +4599,88 @@ async function handleDirectoryCallback(token, q, child=false) {
     });
   }
 
+  // 文件夹管理：继续上传、查看、改名、移动、删除。
+  if(!child && isAdmin(uid) && data.startsWith("folder_manage:")) {
+    return;
+  }
+  if(!child && isAdmin(uid) && data.startsWith("folder_manage_upload:")) {
+    const directoryId=data.slice("folder_manage_upload:".length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(!d){await answer("文件夹不存在",true);return;}
+    states.set("m:"+uid,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    await answer("已进入上传");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n📤 <b>继续发送文件</b>\\n收到的文件会自动归入此文件夹。\\n\\n完成后点击「✅ 结束上传」。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}});
+  }
+  if(!child && isAdmin(uid) && data.startsWith("folder_manage_view:")) {
+    const directoryId=data.slice("folder_manage_view:".length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(!d){await answer("文件夹不存在",true);return;}
+    const all=directoryItems(d.id);
+    await answer();
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n📦 共 <b>"+all.length+"</b> 个资源\\n📤 每次获取 <b>10 个</b>\\n\\n👇 点击下方开始获取",parse_mode:"HTML",reply_markup:folderSummaryKeyboard(d.id,all.length,0)});
+  }
+  if(!child && isAdmin(uid) && data.startsWith("folder_manage_rename:")) {
+    const directoryId=data.slice("folder_manage_rename:".length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(!d){await answer("文件夹不存在",true);return;}
+    states.set("m:"+uid,{step:"folder_rename",directoryId:d.id,oldName:d.name});
+    await answer("请输入新的文件夹名称");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✏️ <b>修改文件夹名称</b>\\n\\n当前名称：<b>"+escapeHtml(d.name)+"</b>\\n\\n请直接发送新的名称。\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消",callback_data:"folder_manage_back:"+d.id}]]}});
+  }
+  if(!child && isAdmin(uid) && data.startsWith("folder_manage_move:")) {
+    const directoryId=data.slice("folder_manage_move:".length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(!d){await answer("文件夹不存在",true);return;}
+    await answer();
+    states.set("m:"+uid,{step:"folder_move",sourceId:d.id});
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"🔄 <b>移动文件夹内资源</b>\\n\\n📁 来源：<b>"+escapeHtml(d.name)+"</b>\\n📦 资源：<b>"+db.resources.filter(r=>String(r.directoryId)===String(d.id)).length+"</b>\\n\\n👇 请选择目标文件夹",parse_mode:"HTML",reply_markup:folderMoveTargetMenu(d.id)});
+  }
+  if(!child && isAdmin(uid) && data.startsWith("folder_move_to:")) {
+    const targetId=data.slice("folder_move_to:".length);
+    const sourceId=String(data.match(/^folder_move_to:(.+)$/)?.[1]||"");
+    const st=states.get("m:"+uid);
+    if(!st || st.step!=="folder_move" || !st.sourceId){await answer("操作已过期，请重新选择",true);return;}
+    const target=db.directories.find(x=>String(x.id)===String(targetId));
+    const source=db.directories.find(x=>String(x.id)===String(st.sourceId));
+    if(!target||!source){await answer("文件夹不存在",true);return;}
+    const items=db.resources.filter(r=>String(r.directoryId)===String(source.id));
+    for(const item of items){item.directoryId=target.id;queueBaserowResourceSync(item);}
+    touchSharedData(uid);saveDb();states.delete("m:"+uid);
+    await answer("已移动 "+items.length+" 个资源");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✅ <b>移动完成</b>\\n\\n📁 原文件夹："+escapeHtml(source.name)+"\\n📁 目标文件夹："+escapeHtml(target.name)+"\\n📦 已移动："+items.length+" 个资源",parse_mode:"HTML",reply_markup:folderManageMenu(target.id)});
+  }
+  if(!child && isAdmin(uid) && data.startsWith("folder_manage_delete:")) {
+    const directoryId=data.slice("folder_manage_delete:".length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(!d){await answer("文件夹不存在",true);return;}
+    const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+    await answer();
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"🗑️ <b>删除文件夹</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n📦 当前资源：<b>"+count+"</b>\\n\\n请选择删除方式：",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+      [{text:"🗑️ 只删文件夹，保留资源",callback_data:"folder_delete_keep:"+d.id}],
+      [{text:"⚠️ 文件夹 + 资源一起删除",callback_data:"folder_delete_all:"+d.id}],
+      [{text:"⬅️ 返回",callback_data:"folder_manage_back:"+d.id}]
+    ]}});
+  }
+  if(!child && isAdmin(uid) && (data.startsWith("folder_delete_keep:") || data.startsWith("folder_delete_all:"))) {
+    const allDelete=data.startsWith("folder_delete_all:");
+    const directoryId=data.slice((allDelete?"folder_delete_all:":"folder_delete_keep:").length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(!d){await answer("文件夹不存在",true);return;}
+    const items=db.resources.filter(r=>String(r.directoryId)===String(d.id));
+    if(allDelete){for(const item of items)queueBaserowDeleteResource(item);db.resources=db.resources.filter(r=>String(r.directoryId)!==String(d.id));}
+    else {for(const item of items){item.directoryId=null;queueBaserowResourceSync(item);}}
+    db.directories=db.directories.filter(x=>String(x.id)!==String(d.id));
+    touchSharedData(uid);saveDb();
+    await answer("删除完成");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✅ <b>文件夹已删除</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n📦 "+(allDelete?"同时删除资源："+items.length:"资源已保留："+items.length),parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+  }
+  if(!child && isAdmin(uid) && data.startsWith("folder_manage_back:")) {
+    const directoryId=data.slice("folder_manage_back:".length);
+    const d=db.directories.find(x=>String(x.id)===String(directoryId));
+    if(d){await answer();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:folderManageText(d.id),parse_mode:"HTML",reply_markup:folderManageMenu(d.id)});}
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\\n\\n👇 请选择文件夹",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+  }
+
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
   if(!child && isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
     if(data==="upload_cancel") {
@@ -4605,18 +4717,13 @@ async function handleDirectoryCallback(token, q, child=false) {
         reply_markup:uploadFolderInlineMenu()
       });
     }
-    states.set("m:"+uid,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
-    await answer("已选择："+d.name);
+    await answer("已打开文件夹");
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
-      text:"📁 <b>"+escapeHtml(d.name)+"</b>\n\n"+
-        "已选择此文件夹，现在可以直接发送文件。\n\n"+
-        "📤 <b>发送文件 → 自动归入此文件夹</b>\n\n"+
-        "完成后点击：\n"+
-        "<b>✅ 结束上传</b>",
+      text:folderManageText(d.id),
       parse_mode:"HTML",
-      reply_markup:{inline_keyboard:[]}
+      reply_markup:folderManageMenu(d.id)
     });
   }
 
