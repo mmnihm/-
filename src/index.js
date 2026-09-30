@@ -3686,7 +3686,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     ]}});
     if(data==="adm:nonmember")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"✏️ 非会员提示"});
     if(data==="adm:post")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📣 获取后推广"});
-    if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Baserow 历史恢复已启动</b>\\n\\n📚 读取现有 Baserow 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverBaserowHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }\n    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库"};
+    if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Baserow 历史恢复已启动</b>\\n\\n📚 读取现有 Baserow 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverBaserowHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }
+    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
