@@ -2350,11 +2350,12 @@ function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,
 function extractResourceTags(item) {
   const text=String(item?.caption||"")+" "+String(item?.title||"");
   const tags=[];
-  const re=/(^|\s)#([\p{L}\p{N}_-]{1,40})/gu;
+  const re=/#([\\p{L}\\p{N}_-]{1,40})/gu;
   let m;
   while((m=re.exec(text))) {
-    const tag=String(m[2]||"").trim();
-    if(tag && !tags.includes(tag)) tags.push(tag);
+    const tag=String(m[1]||"").trim();
+    if(!tag || !/[\\p{L}]/u.test(tag) || tags.includes(tag)) continue;
+    tags.push(tag);
   }
   return tags.slice(0,10);
 }
