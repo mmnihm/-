@@ -997,8 +997,7 @@ async function initializeSharedBaserow() {
     await waitBaserowDirectorySyncQueue();
     await pullBaserowSharedData();
   } catch(e) {
-    console.error("❌ 共享数据初始化失败:",String(e?.message||e));
-  }
+    console.error("❌ 共享数据初始化失败:",String(e?.message||e));  }
 }
 
 function getBaserowFieldsCacheForSync() { return Array.isArray(baserowFieldsCache)?baserowFieldsCache:[]; }
@@ -1997,7 +1996,6 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
       }
       return ok;
     };
-
     const applySingle=async item=>{
       const key=resourceKey(item);
       const copied=await copyOneSingle(item);
@@ -2204,6 +2202,7 @@ function userFeatureListText(title,items,extra=""){return"<b>"+title+"</b>\n━�
 function adminMaintenanceMenu(){return{inline_keyboard:[
  [{text:"🔄 重复资源检查",callback_data:"admin:dupes"},{text:"🧹 仓库健康检查",callback_data:"admin:health"}],
  [{text:"🏷️ 标签统计",callback_data:"admin:tags"}],
+ [{text:"🗃️ 备份恢复",callback_data:"admin:backup"}],
  [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
 ]};}
 function adminRootInline(){return{inline_keyboard:[
@@ -2997,8 +2996,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   if(ok>0 && !member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok);
 
   if(fail>0) {
-    const total=valid.length;
-    if(ok===0) {
+    const total=valid.length;    if(ok===0) {
       const isChatNotFound=/chat not found/i.test(lastError);
       const isKicked=/bot was kicked|bot is not a member|kicked from the channel|Forbidden/i.test(lastError);
       return send(token,chatId,
@@ -3997,8 +3995,7 @@ async function mainMessage(msg) {
     );
   }
 
-  if(s?.step==="broadcast"&&admin) {
-    const timerKey=key+":broadcast";
+  if(s?.step==="broadcast"&&admin) {    const timerKey=key+":broadcast";
     if(t==="/cancel") {
       if(uploadTimers.has(timerKey)) { clearTimeout(uploadTimers.get(timerKey)); uploadTimers.delete(timerKey); }
       states.delete(key);
