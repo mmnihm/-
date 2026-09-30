@@ -1531,11 +1531,12 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
 
     state.scanned=ordered.length;
     state.total=ordered.length;
+    console.log("🔄 MIGRATION CHECKPOINT:", {taskKey, completed:completed.size, failed:failedKeys.size, total:ordered.length, current:Number(state.current||0)});
     state.queued=ordered.filter(x=>!completed.has(resourceKey(x))).length;
     state.migrated=Math.max(0,Number(state.migrated)||0);
     state.skipped=Math.max(0,Number(state.skipped)||0);
     state.failed=failedKeys.size;
-    state.current=0;
+    state.current=Math.min(Number(state.current)||0, ordered.length);
     saveDb();
 
     const ensureTargetDirectory=(sourceItem)=>{
@@ -1590,7 +1591,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
         }catch(e){
           last=e;
           console.warn("MIGRATION BATCH RETRY",attempt,"size=",batch.length,e?.message||e);
-          if(attempt<3) await sleep(1500*attempt);
+          if(attempt<3) await sleep(2500*attempt);
         }
       }
       throw last||new Error("复制批次失败");
@@ -1606,7 +1607,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
         }catch(e){
           last=e;
           console.warn("MIGRATION SINGLE RETRY",attempt,"resource=",resourceKey(item),e?.message||e);
-          if(attempt<3) await sleep(1000*attempt);
+          if(attempt<3) await sleep(2000*attempt);
         }
       }
       throw last||new Error("单条复制失败");
@@ -1627,6 +1628,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
         }
         completed.add(key);
         failedKeys.delete(key);
+        if(ok % 5 === 0) { state.completedKeys=[...completed].slice(-Math.max(MAX_RESOURCES,25000)); state.failedKeys=[...failedKeys].slice(-Math.max(MAX_RESOURCES,25000)); saveDb(); }
         state.migrated++;
         ok++;
       }
@@ -1683,8 +1685,13 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
     for(let i=0;i<ordered.length;i+=10){
       const batch=ordered.slice(i,i+10);
       state.current=Math.min(i+batch.length,ordered.length);
+      state.queued=Math.max(0,ordered.length-completed.size);
+      state.completedKeys=[...completed].slice(-Math.max(MAX_RESOURCES,25000));
+      state.failedKeys=[...failedKeys].slice(-Math.max(MAX_RESOURCES,25000));
+      saveDb();
       await processBatch(batch);
       state.failed=failedKeys.size;
+      state.current=Math.min(i+batch.length,ordered.length);
       state.completedKeys=[...completed].slice(-Math.max(MAX_RESOURCES,25000));
       state.failedKeys=[...failedKeys].slice(-Math.max(MAX_RESOURCES,25000));
       state.queued=Math.max(0,ordered.length-completed.size);
