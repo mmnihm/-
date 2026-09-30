@@ -719,9 +719,15 @@ async function pullBaserowSharedData() {
     }
     db.directories=Array.from(dirsById.values());
     if((chatField && messageField) || urlField) {
-      db.resources=merged.slice(0,MAX_RESOURCES);
-      if(!chatField || !messageField) console.log("🔗 已从 Baserow 网址恢复 Telegram 资源："+db.resources.length);
-      if(!chatField || !messageField) await backfillBaserowFolderAssignments(rows,fields,folderField,titleField);
+      // 关键保护：Baserow 结构异常、旧表缺少定位字段、或当前只解析出少量无效网址时，
+      // 绝不能用空的 merged 覆盖本地资源，否则机器人启动后目录会“全部消失”。
+      if(merged.length>0 || (db.resources||[]).length===0) {
+        db.resources=merged.slice(0,MAX_RESOURCES);
+        if(!chatField || !messageField) console.log("🔗 已从 Baserow 网址恢复 Telegram 资源："+db.resources.length);
+        if(!chatField || !messageField) await backfillBaserowFolderAssignments(rows,fields,folderField,titleField);
+      } else {
+        console.warn("⚠️ Baserow 本次未恢复到有效资源，保留本地资源："+String((db.resources||[]).length));
+      }
     } else {
       console.warn("⚠️ Baserow 缺少聊天ID/消息ID/网址字段，无法恢复 Telegram 资源；保留本地资源："+String((db.resources||[]).length));
     }
