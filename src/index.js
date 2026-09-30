@@ -644,6 +644,7 @@ async function pullBaserowSharedData() {
 
     const byKey=new Map();
     const folderNames=new Map();
+    let urlNonEmpty=0, telegramPrivateMatches=0, telegramUrlMatches=0;
     baserowRowsCache=new Map();
 
     for(const row of rows) {
@@ -663,11 +664,12 @@ async function pullBaserowSharedData() {
       // 兼容旧表：如果没有聊天ID/消息ID，尝试从“网址”中的 Telegram 消息链接恢复。
       if((!chat || !Number.isFinite(message) || message<=0) && urlField) {
         const url=String(row?.[urlField.name]??"").trim();
-        let m=url.match(/t\.me\/c\/(\\d+)\/(\\d+)/i);
-        if(m) { chat="-100"+m[1]; message=Number(m[2]); }
+        if(url) urlNonEmpty++;
+        let m=url.match(/t\.me\/c\/(\d+)\/(\d+)/i);
+        if(m) { chat="-100"+m[1]; message=Number(m[2]); telegramPrivateMatches++; }
         else {
           m=url.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\d+)/i);
-          if(m) { chat="@"+m[1]; message=Number(m[2]); }
+          if(m) { chat="@"+m[1]; message=Number(m[2]); telegramUrlMatches++; }
         }
       }
       if(!chat || !Number.isFinite(message) || message<=0) continue;
@@ -677,6 +679,7 @@ async function pullBaserowSharedData() {
       byKey.set(key,{row,title,chat,message,folderName});
     }
 
+    console.log("🧪 Baserow 资源恢复诊断：网址非空="+urlNonEmpty+" 私有链接匹配="+telegramPrivateMatches+" 公开链接匹配="+telegramUrlMatches+" 可恢复="+byKey.size+" 总行="+rows.length);
     const oldByKey=new Map((db.resources||[]).map(x=>[String(x.chatId)+":"+String(x.messageId),x]));
     const merged=[];
     for(const [key,v] of byKey) {
