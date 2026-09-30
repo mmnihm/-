@@ -3926,7 +3926,8 @@ async function mainMessage(msg) {
     },UPLOAD_TIMEOUT_MS));
 
     const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
-    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:firstPending});\n    console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+cleanFolder, "first="+(media?"yes":"no"), "pending="+firstPending.length);
+    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:firstPending});
+    console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+cleanFolder, "first="+(media?"yes":"no"), "pending="+firstPending.length);
     if(media) {
       // 第一个文件也不单独回复，后续文件直接进入同一个上传会话。
       return;
