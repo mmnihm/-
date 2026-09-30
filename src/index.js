@@ -2375,8 +2375,40 @@ function autoAssignResourceTagFolder(item) {
 }
 async function cleanupNumericTagFolders() {
   const bad=(db.directories||[]).filter(d=>/^\d+$/.test(String(d?.name||"").trim()));
-  if(!bad.length) return {folders:0,resources:0};
   let resources=0;
+  let rows=0;
+
+  // 直接读取 Baserow 全表，避免旧的数字文件夹记录不在缓存中。
+  if(BASEROW_TOKEN && BASEROW_TABLE_ID) {
+    try {
+      const fields=await getBaserowFields();
+      const allRows=await listAllBaserowRows();
+      const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+      const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+      const badIds=new Set(bad.map(d=>String(d.id)));
+
+      for(const row of allRows) {
+        if(!row?.id || !titleField) continue;
+        const title=String(row?.[titleField.name]??"").trim();
+        if(!title.startsWith("__FOLDER__:")) continue;
+
+        const markerId=title.split(":")[1]||"";
+        let folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+        if(!folderName) {
+          const encoded=title.split(":")[2]||"";
+          try { folderName=Buffer.from(encoded,"base64url").toString("utf8").trim(); } catch {}
+        }
+
+        if(badIds.has(String(markerId)) || /^\d+$/.test(folderName)) {
+          await baserowDeleteRow(row.id);
+          rows++;
+        }
+      }
+    } catch(e) {
+      console.warn("⚠️ 清理 Baserow 数字文件夹失败:",String(e?.message||e));
+    }
+  }
+
   for(const d of bad) {
     for(const item of (db.resources||[])) {
       if(String(item.directoryId)===String(d.id)) {
@@ -2386,15 +2418,12 @@ async function cleanupNumericTagFolders() {
         resources++;
       }
     }
-    for(const row of Array.from(baserowRowsCache.values())) {
-      const vals=Object.values(row||{}).map(v=>String(v||""));
-      if(vals.some(v=>v.startsWith("__FOLDER__:"+String(d.id)+":")) && row?.id) await baserowDeleteRow(row.id);
-    }
   }
+
   db.directories=db.directories.filter(d=>!bad.includes(d));
   touchSharedData("system");
   saveDb();
-  return {folders:bad.length,resources};
+  return {folders:bad.length,resources,rows};
 }
 
 function autoCreateTagFoldersForExistingResources() {
