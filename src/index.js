@@ -2291,10 +2291,15 @@ function adminResourceMenu(){return{reply_markup:adminResourceInline()};}
 function adminSettingsMenu(){return{reply_markup:adminSettingsInline()};}
 function adminOpsMenu(){return{reply_markup:adminOpsInline()};}
 function adminBotMenu(){return{reply_markup:adminBotInline()};}
-function uploadFolderInlineMenu() {
+function uploadFolderInlineMenu(page=0) {
+  const all=db.directories;
+  const pageSize=10;
+  const currentPage=Math.max(0,Number(page)||0);
+  const start=currentPage*pageSize;
+  const current=all.slice(start,start+pageSize);
   const rows=[];
   let row=[];
-  for(const d of db.directories) {
+  for(const d of current) {
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
     const name=String(d.name||"未命名").slice(0,18);
     row.push({
@@ -2307,6 +2312,13 @@ function uploadFolderInlineMenu() {
     }
   }
   if(row.length) rows.push(row);
+  if(!rows.length) rows.push([{text:"📭 暂无文件夹",callback_data:"noop"}]);
+
+  const nav=[];
+  if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"uploadsp:"+(currentPage-1)});
+  if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"uploadsp:"+(currentPage+1)});
+  if(nav.length) rows.push(nav);
+
   rows.push([
     {text:"➕ 新建文件夹",callback_data:"upload_new"},
     {text:"❌ 取消",callback_data:"upload_cancel"}
@@ -4541,6 +4553,19 @@ async function handleDirectoryCallback(token, q, child=false) {
       text:"✅ <b>已结束本次上传</b>",
       parse_mode:"HTML",
       reply_markup:{inline_keyboard:[]}
+    });
+  }
+
+  // 上传资源的文件夹选择最多显示 10 个，超过后使用分页。
+  if(!child && isAdmin(uid) && data.startsWith("uploadsp:")) {
+    const page=Math.max(0,Number(data.slice("uploadsp:".length))||0);
+    await answer();
+    return safeEdit(token,{
+      chat_id:chatId,
+      message_id:messageId,
+      text:"<b>📤 上传资源</b>\\n━━━━━━━━━━━━━━\\n\\n👇 请选择文件夹\\n\\n📁 每页最多显示 <b>10</b> 个\\n📌 选择后可连续发送文件",
+      parse_mode:"HTML",
+      reply_markup:uploadFolderInlineMenu(page)
     });
   }
 
