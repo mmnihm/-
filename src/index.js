@@ -386,6 +386,7 @@ async function baserowSyncResource(item) {
     const chatField = baserowPickField(fields, ["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
     const messageField = baserowPickField(fields, ["消息ID","资源ID","Message ID","MessageID"]);
     const captionField = baserowPickField(fields, ["描述","说明","备注","Caption","Description"]);
+    const urlField = baserowPickField(fields, ["网址","链接","链接地址","URL","Url","Link"]);
     const folderField = baserowPickField(fields, ["文件夹","目录","分类","Folder","Directory","Category"]);
     const dateField = baserowPickField(fields, ["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
     const typeField = baserowPickField(fields, ["类型","文件类型","Type","File Type"]);
@@ -401,6 +402,14 @@ async function baserowSyncResource(item) {
     if (chatField) payload[chatField.name] = baserowValueForField(chatField, item.chatId);
     if (messageField) payload[messageField.name] = baserowValueForField(messageField, item.messageId);
     if (captionField) payload[captionField.name] = baserowValueForField(captionField, item.caption || "");
+    if (urlField) {
+      const cid=String(item.chatId||"").trim();
+      const mid=Number(item.messageId||0);
+      let telegramUrl="";
+      if(/^-100\d+$/.test(cid) && mid>0) telegramUrl="https://t.me/c/"+cid.slice(4)+"/"+mid;
+      else if(item.chatUsername && mid>0) telegramUrl="https://t.me/"+String(item.chatUsername).replace(/^@/,"")+"/"+mid;
+      if(telegramUrl) payload[urlField.name]=baserowValueForField(urlField,telegramUrl);
+    }
     if (folderField) {
       const d = db.directories.find(x => String(x.id) === String(item.directoryId || ""));
       const folderValue = baserowValueForField(folderField, d?.name || "");
@@ -790,8 +799,8 @@ async function refreshSharedData(force=false) {
     try {
       // 共享目录读取不能等待资源写入队列；否则历史扫描/批量同步时，
       // 前面的几千条 Baserow 写入会把目录刷新一直排队，导致其他机器人看不到新目录。
-      if(db.settings.historyScan?.status==="running") {
-        console.log("⏸️ Baserow 共享刷新：历史扫描进行中，跳过本轮");
+      if(db.settings.historyScan?.status==="running" || db.settings.baserowRecovery?.status==="running") {
+        console.log("⏸️ Baserow 共享刷新：后台历史任务进行中，跳过本轮");
         return;
       }
       console.log("🔄 Baserow 共享刷新开始");
