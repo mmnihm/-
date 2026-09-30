@@ -3946,6 +3946,7 @@ function startChild(child){
 let bootActive = false;
 let backgroundTimersStarted = false;
 let sharedBaserowInitStarted = false;
+let sharedBaserowRefreshTimerStarted = false;
 
 async function boot(){
   if (bootActive) {
@@ -3965,12 +3966,19 @@ async function boot(){
   if (!backgroundTimersStarted) {
     backgroundTimersStarted = true;
     setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
-    // 跨机器人目录同步：每 5 秒检查一次远端共享数据，refreshSharedData 自带节流与同步队列保护。
-    setInterval(() => { refreshSharedData(false).catch(e=>console.warn("⚠️ 跨机器人目录同步异常:",String(e?.message||e))); }, 5000);
     setInterval(() => {
       const s = runtimeStatus();
       console.log("🫀 HEARTBEAT:", "connected="+s.mainConnected, "uptime="+s.uptimeSeconds+"s", "lastPoll="+(s.lastPollAt||"-"), "lastUpdate="+(s.lastUpdateAt||"-"), "error="+(s.lastError||"-"));
     }, 30000);
+  }
+
+  // Baserow 共享刷新独立于其他后台定时器，避免被后台初始化状态影响。
+  if (!sharedBaserowRefreshTimerStarted) {
+    sharedBaserowRefreshTimerStarted = true;
+    console.log("🔁 Baserow 共享刷新定时器已启动：每 5 秒检查一次");
+    setInterval(() => {
+      refreshSharedData(false).catch(e => console.warn("⚠️ 跨机器人目录同步异常:", String(e?.message || e)));
+    }, 5000);
   }
   processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除初始化失败：",e.message));
 
@@ -4005,7 +4013,13 @@ async function boot(){
         sharedBaserowInitStarted = true;
         console.log("🔄 Baserow 共享模式：后台初始化，不阻塞 Telegram", "pid=" + PROCESS_ID);
         initializeSharedBaserow()
-          .then(()=>console.log("✅ Baserow 共享初始化完成", "pid=" + PROCESS_ID))
+          .then(async()=>{
+            console.log("✅ Baserow 共享初始化完成", "pid=" + PROCESS_ID);
+            console.log("🔎 Baserow 共享配置:", "enabled="+baserow.enabled, "table="+BASEROW_TABLE_ID);
+            // 初始化完成后立即强制刷新一次，确保刚启动的机器人立刻拿到其他机器人已经写入的目录。
+            await refreshSharedData(true);
+            console.log("✅ Baserow 启动后首次强制刷新完成", "pid=" + PROCESS_ID);
+          })
           .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
       }
       console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name), "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
