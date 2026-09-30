@@ -234,9 +234,29 @@ async function tg(token, method, body = {}) {
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
 
-const BASEROW_API_URL = String(process.env.BASEROW_API_URL || "https://api.baserow.io").replace(/\/$/, "");
+function normalizeBaserowApiUrl(value) {
+  let raw=String(value||"https://api.baserow.io").trim();
+  // 防止部署平台把多个环境变量错误拼到 BASEROW_API_URL 中。
+  raw=raw.replace(/^BASEROW_API_URL\s*=\s*/i,"").trim();
+  raw=raw.replace(/\s+BASEROW_TABLE_ID\s*=.*$/i,"").trim();
+  raw=raw.replace(/[？?].*$/,"").replace(/\/$/,"");
+  if(!/^https?:\/\//i.test(raw)) raw="https://"+raw;
+  try {
+    const u=new URL(raw);
+    return u.origin;
+  } catch {
+    return "https://api.baserow.io";
+  }
+}
+function normalizeBaserowTableId(value) {
+  const raw=String(value||"1229166").trim();
+  const m=raw.match(/(?:BASEROW_TABLE_ID\s*=\s*)?(\d+)/i);
+  return m ? m[1] : "1229166";
+}
+
+const BASEROW_API_URL = normalizeBaserowApiUrl(process.env.BASEROW_API_URL);
 const BASEROW_TOKEN = String(process.env.BASEROW_TOKEN || "").trim();
-const BASEROW_TABLE_ID = String(process.env.BASEROW_TABLE_ID || "1229166").trim();
+const BASEROW_TABLE_ID = normalizeBaserowTableId(process.env.BASEROW_TABLE_ID);
 
 console.log("🧪 BASEROW ENV:", "token=" + (BASEROW_TOKEN ? "已读取" : "❌未读取"), "tokenLength=" + BASEROW_TOKEN.length, "table=" + (BASEROW_TABLE_ID || "❌空"), "api=" + BASEROW_API_URL);
 
