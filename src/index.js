@@ -3799,7 +3799,9 @@ async function mainMessage(msg) {
 
   if(t==="📤 上传资源"&&admin) {
     if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
-    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }\n    if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }\n    states.set(key,{step:"upload_folder",pendingUploads:[]});
+    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+    if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
+    states.set(key,{step:"upload_folder",pendingUploads:[]});
     return sendHtml(TOKEN,uid,
       "<b>📤 上传资源</b>\\n\\n"+
       "请选择要使用的文件夹：\\n"+
