@@ -2470,35 +2470,45 @@ async function deleteAllFoldersKeepResources() {
       const fields=await getBaserowFields(true);
       const rows=await listAllBaserowRows();
       const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+      const markerRows=[];
+      const resourceRows=[];
       for(const row of rows) {
         if(!row?.id) continue;
-        if(isBaserowFolderMarkerRow(row,fields)) {
-          try {
-            await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/");
-            baserowRowsCache.delete(String(row.id));
-            folders++;
-          } catch(e) {
-            errors++;
-            console.warn("⚠️ 删除 Baserow 文件夹标记失败:",String(e?.message||e));
-          }
-          continue;
-        }
-        if(folderField && sharedFolderName(row?.[folderField.name])) {
-          try {
-            await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",{[folderField.name]:null});
-            baserowRowsCache.delete(String(row.id));
-            resources++;
-          } catch(e) {
-            errors++;
-            console.warn("⚠️ 清空资源文件夹失败:",String(e?.message||e));
-          }
-        }
+        if(isBaserowFolderMarkerRow(row,fields)) markerRows.push(row);
+        else if(folderField && sharedFolderName(row?.[folderField.name])) resourceRows.push(row);
       }
+
+      // Baserow 文件夹可能有上千条，不能一条一条串行删除，否则 Telegram 看起来会像“没反应”。
+      const worker=async(list, handler)=>{
+        let index=0;
+        const concurrency=Math.min(12,Math.max(1,list.length));
+        await Promise.all(Array.from({length:concurrency},async()=>{
+          while(true){
+            const n=index++;
+            if(n>=list.length) return;
+            try { await handler(list[n]); }
+            catch(e) { errors++; console.warn("⚠️ Baserow 批量处理失败:",String(e?.message||e)); }
+          }
+        }));
+      };
+
+      await worker(markerRows,async(row)=>{
+        await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/");
+        baserowRowsCache.delete(String(row.id));
+        folders++;
+      });
+
+      await worker(resourceRows,async(row)=>{
+        await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",{[folderField.name]:null});
+        baserowRowsCache.delete(String(row.id));
+        resources++;
+      });
     } catch(e) {
       errors++;
       console.error("❌ 删除所有 Baserow 文件夹失败:",String(e?.message||e));
     }
   }
+
   for(const item of (db.resources||[])) {
     if(item.directoryId || item.autoTagFolder) {
       item.directoryId=null;
@@ -4502,15 +4512,22 @@ async function handleDirectoryCallback(token, q, child=false) {
     ]}});
   }
   if(route==="folders_all_do"){
-    await answer("已开始删除文件夹，请稍候…");
-    await safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 正在删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n⏳ 正在清理 Baserow 文件夹记录…\n📦 所有资源都会保留，请不要重复点击。",parse_mode:"HTML"});
+    console.log("🗑️ DELETE ALL FOLDERS CLICK:", "uid="+uid, "chat="+chatId, "message="+messageId);
+    await answer("正在删除所有文件夹，请稍候…");
+    const progress=await tg(token,"sendMessage",{chat_id:chatId,text:"<b>🧹 正在删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n⏳ 正在清理 Baserow 文件夹记录…\n📦 所有资源都会保留。",parse_mode:"HTML"});
     try {
       const result=await deleteAllFoldersKeepResources();
-      await safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 所有文件夹清理完成</b>\n━━━━━━━━━━━━━━\n\n🗑️ 删除文件夹：<b>"+result.folders+"</b>\n📦 保留资源：<b>"+db.resources.length+"</b>\n🔗 解除文件夹归属：<b>"+result.resources+"</b>\n"+(result.errors?"⚠️ 失败记录：<b>"+result.errors+"</b>\n":"")+"\n所有资源/Telegram 文件均未删除。",parse_mode:"HTML",reply_markup:adminResourceInline()});
+      const progressId=progress?.message_id;
+      const body={chat_id:chatId,message_id:progressId,text:"<b>✅ 所有文件夹清理完成</b>\n━━━━━━━━━━━━━━\n\n🗑️ 删除文件夹：<b>"+result.folders+"</b>\n📦 保留资源：<b>"+db.resources.length+"</b>\n🔗 解除文件夹归属：<b>"+result.resources+"</b>\n"+(result.errors?"⚠️ 失败记录：<b>"+result.errors+"</b>\n":"")+"\n所有资源/Telegram 文件均未删除。",parse_mode:"HTML",reply_markup:adminResourceInline()};
+      if(progressId) await safeEdit(token,body);
+      else await sendHtml(token,chatId,body.text,adminResourceMenu());
       await refreshSharedData(true);
     } catch(e) {
       console.error("❌ 删除所有文件夹任务失败:",String(e?.message||e));
-      await safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 删除文件夹失败</b>\n━━━━━━━━━━━━━━\n\n"+escapeHtml(String(e?.message||e)),parse_mode:"HTML",reply_markup:adminResourceInline()});
+      const msg="<b>❌ 删除文件夹失败</b>\n━━━━━━━━━━━━━━\n\n"+escapeHtml(String(e?.message||e));
+      const progressId=progress?.message_id;
+      if(progressId) await safeEdit(token,{chat_id:chatId,message_id:progressId,text:msg,parse_mode:"HTML",reply_markup:adminResourceInline()});
+      else await sendHtml(token,chatId,msg,adminResourceMenu());
     }
     return;
   }
