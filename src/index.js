@@ -3095,20 +3095,6 @@ async function binding(msg) {
     return true;
   }
 
-  // 私聊点击“绑定资源仓库”后，转发仓库中的任意一条消息给主机器人即可绑定。
-  if(msg.chat?.type==="private" && msg.forward_origin?.chat) {
-    const fc=msg.forward_origin.chat;
-    db.settings.repository={
-      chatId:String(fc.id),
-      title:fc.title||fc.username||String(fc.id),
-      username:fc.username||"",
-      type:fc.type||"channel"
-    };
-    saveDb();
-    await send(TOKEN,msg.from.id,"✅ 资源仓库绑定成功。\\n\\n📦 "+(fc.title||fc.username||fc.id)+"\\n🆔 "+fc.id+"\\n\\n现在把主机器人加入该仓库并确保有读取消息权限。\\n新资源会自动建立索引。");
-    return true;
-  }
-
   return false;
 }
 
@@ -3133,8 +3119,11 @@ async function mainMessage(msg) {
       states.delete(key);
       return sendHtml(TOKEN,uid,"↩️ <b>已取消绑定资源仓库</b>\n\n当前仓库："+(repo()?.title ? "✅ "+escapeHtml(repo().title) : "❌ 未绑定"),adminMenu());
     }
-    const target=String(t||"").trim();
-    if(!target) return send(TOKEN,uid,"⚠️ 请发送 Chat ID、@用户名，或转发仓库消息。");
+    // 只有明确进入“绑定仓库”状态后，才允许用 Chat ID/@用户名/转发消息完成绑定。
+    // 普通转发消息绝不能自动触发绑定。
+    let target=String(t||"").trim();
+    if(!target && msg.forward_origin?.chat) target=String(msg.forward_origin.chat.id||"").trim();
+    if(!target) return send(TOKEN,uid,"⚠️ 请发送 Chat ID、@用户名，或在点击「📦 绑定资源仓库」后转发仓库消息。");
     try {
       const chat=await main("getChat",{chat_id:target});
       const me=await main("getMe");
@@ -3279,7 +3268,7 @@ async function mainMessage(msg) {
       "① <b>直接发送仓库 Chat ID / @用户名</b>\n"+
       "例如：<code>-1001234567890</code> 或 <code>@my_channel</code>\n\n"+
       "② <b>转发仓库中的任意一条消息</b>给我\n"+
-      "机器人会自动识别仓库并验证访问权限。\n\n"+
+      "仅在当前处于“绑定仓库”状态时才会执行绑定；普通转发不会绑定。\n\n"+
       "⚠️ 绑定前请先把主机器人加入仓库；频道建议设为管理员。\n\n"+
       "发送 <code>/cancel</code> 可取消。",
       {reply_markup:{inline_keyboard:[[{text:"❌ 取消绑定",callback_data:"bind_repo_cancel"}]]}});
