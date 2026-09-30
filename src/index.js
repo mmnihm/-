@@ -1407,6 +1407,7 @@ function indexHistoryMessage(message, chatId) {
     date:message?.date ? Math.floor(new Date(message.date).getTime()/1000) : Math.floor(Date.now()/1000),
     directoryId:null
   };
+  autoAssignResourceTagFolder(item);
   const i=db.resources.findIndex(x=>x.chatId===item.chatId&&x.messageId===item.messageId);
   if(i>=0) {
     db.resources[i]={...db.resources[i],...item,directoryId:item.directoryId ?? db.resources[i].directoryId ?? null};
@@ -2230,6 +2231,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
  [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],
  [{text:"🛠️ 恢复文件夹资源",callback_data:"adm:folder_repair"}],
+ [{text:"🏷️ 标签自动建文件夹",callback_data:"adm:tagfolders"}],
  [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步",callback_data:"adm:auto"}],
  [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
@@ -2345,6 +2347,45 @@ function platformMenu() {
   return adminSettingsMenu();
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
+function extractResourceTags(item) {
+  const text=String(item?.caption||"")+" "+String(item?.title||"");
+  const tags=[];
+  const re=/(^|\s)#([\p{L}\p{N}_-]{1,40})/gu;
+  let m;
+  while((m=re.exec(text))) {
+    const tag=String(m[2]||"").trim();
+    if(tag && !tags.includes(tag)) tags.push(tag);
+  }
+  return tags.slice(0,10);
+}
+function autoAssignResourceTagFolder(item) {
+  if(!item) return null;
+  const tags=extractResourceTags(item);
+  if(!tags.length) return null;
+  const tag=tags[0];
+  const folder=ensureDirectory(tag);
+  if(folder) {
+    item.directoryId=String(folder.id);
+    item.autoTagFolder=tag;
+    item.tags=tags;
+  }
+  return folder;
+}
+function autoCreateTagFoldersForExistingResources() {
+  let created=0, assigned=0;
+  for(const item of (db.resources||[])) {
+    const before=String(item.directoryId||"");
+    const folder=autoAssignResourceTagFolder(item);
+    if(folder) {
+      if(!db.directories.some(d=>String(d.id)===String(folder.id))) created++;
+      if(before!==String(folder.id)) assigned++;
+      queueBaserowResourceSync(item);
+    }
+  }
+  saveDb();
+  touchSharedData("system");
+  return {created,assigned};
+}
 function ensureDirectory(name) {
   const clean=String(name||"").trim().slice(0,80);
   if(!clean)return null;
@@ -4309,7 +4350,11 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
     if(route==="auto_stop") { await stopRepositoryAutoSync(); return showRepositoryAutoSyncStatus(uid); }
     if(route==="auto_resume") { const a=repositoryAutoSyncState(); if(!a.sourceId||!a.targetId) return showRepositoryAutoSyncStatus(uid); a.enabled=true; a.status="running"; a.updatedAt=Date.now(); saveDb(); processRepositoryAutoSyncQueue().catch(()=>{}); return showRepositoryAutoSyncStatus(uid); }
-    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步",auto_status:"⚡ 自动同步",auto_stop:"⏸️ 停止自动同步",auto_resume:"▶️ 继续自动同步"};
+    if(route==="tagfolders"){
+    const result=autoCreateTagFoldersForExistingResources();
+    return mainMessage(uid,"🏷️ <b>标签自动分类完成</b>\\n\\n📁 新建/识别标签文件夹：<b>"+result.created+"</b>\\n📦 自动归类资源：<b>"+result.assigned+"</b>\\n\\n规则：资源中的第一个 #标签 会作为文件夹名称。",{reply_markup:adminMenu()});
+  }
+  const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步",auto_status:"⚡ 自动同步",auto_stop:"⏸️ 停止自动同步",auto_resume:"▶️ 继续自动同步"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
