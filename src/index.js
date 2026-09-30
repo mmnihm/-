@@ -2374,7 +2374,7 @@ function autoAssignResourceTagFolder(item) {
   return folder;
 }
 async function cleanupNumericTagFolders() {
-  const bad=(db.directories||[]).filter(d=>/^\\d+$/.test(String(d?.name||"").trim()));
+  const bad=(db.directories||[]).filter(d=>/^\d+$/.test(String(d?.name||"").trim()));
   if(!bad.length) return {folders:0,resources:0};
   let resources=0;
   for(const d of bad) {
