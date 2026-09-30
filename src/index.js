@@ -3338,12 +3338,21 @@ async function mainMessage(msg) {
     );
   }
 
-  if(t==="📦 资源仓库" && admin)
-    return send(TOKEN,uid,
-      "📦 资源仓库设置\\n\\n"+
-      "推荐：把主机器人加入资源频道并设为管理员，\\n"+
-      "然后从频道转发任意一条消息给主机器人。\\n\\n"+
-      "当前： "+(repo()?"✅ "+repo().title:"❌ 未绑定"));
+  if(t==="📦 资源仓库" && admin) {
+    states.set(key,{step:"bind_repository"});
+    return sendHtml(TOKEN,uid,
+      "<b>📦 绑定资源仓库</b>\\n━━━━━━━━━━━━━━\\n\\n"+
+      "当前仓库："+(repo()?"✅ <b>"+escapeHtml(repo().title)+"</b>\\n🆔 <code>"+escapeHtml(String(repo().chatId||""))+"</code>":"❌ 未绑定")+"\\n\\n"+
+      "请选择一种方式：\\n"+
+      "① 直接发送仓库 Chat ID 或 @用户名\\n"+
+      "② 从目标频道/群转发任意一条消息给机器人\\n\\n"+
+      "⚠️ 请先确保机器人已经加入目标仓库并拥有读取消息权限。\\n"+
+      "发送 <code>/cancel</code> 可取消。",
+      {reply_markup:{inline_keyboard:[
+        [{text:"🔄 重新绑定",callback_data:"adm:repo_bind"}],
+        [{text:"❌ 取消",callback_data:"admin:resource"}]
+      ]}});
+  }
 
   if(t==="🔐 指定群管理" && admin)
     return send(TOKEN,uid,
