@@ -4120,7 +4120,24 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
     if(data==="admin:bot")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🤖 机器人管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminBotInline()});
     if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
-    if(data==="admin:upload")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+    if(data==="admin:upload"){
+      if(!repo()){
+        await answer("尚未绑定资源仓库",true);
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 尚未绑定资源仓库</b>\n\n请先绑定资源仓库。",parse_mode:"HTML",reply_markup:adminResourceInline()});
+      }
+      const key="m:"+uid;
+      if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
+      states.set(key,{step:"upload_folder",pendingUploads:[]});
+      await answer("已进入上传模式");
+      return safeEdit(token,{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹\n\n📁 选择后直接连续发送文件\n📌 上传过程中不会逐条回复。",
+        parse_mode:"HTML",
+        reply_markup:uploadFolderInlineMenu()
+      });
+    }
     if(data==="admin:prompts")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📝 用户提示</b>\n━━━━━━━━━━━━━━\n\n👇 请选择要编辑的提示",parse_mode:"HTML",reply_markup:{inline_keyboard:[
       [{text:"✏️ 非会员提示",callback_data:"adm:nonmember"},{text:"✏️ 获取后提示",callback_data:"adm:post"}],
       [{text:"⬅️ 返回",callback_data:"admin:ops"}]
