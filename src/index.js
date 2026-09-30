@@ -3799,7 +3799,7 @@ async function mainMessage(msg) {
 
   if(t==="📤 上传资源"&&admin) {
     if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
-    states.set(key,{step:"upload_folder"});
+    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }\n    if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }\n    states.set(key,{step:"upload_folder",pendingUploads:[]});
     return sendHtml(TOKEN,uid,
       "<b>📤 上传资源</b>\\n\\n"+
       "请选择要使用的文件夹：\\n"+
@@ -3841,7 +3841,7 @@ async function mainMessage(msg) {
     },UPLOAD_TIMEOUT_MS));
 
     const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
-    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:firstPending});
+    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:firstPending});\n    console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+cleanFolder, "first="+(media?"yes":"no"), "pending="+firstPending.length);
     if(media) {
       // 第一个文件也不单独回复，后续文件直接进入同一个上传会话。
       return;
