@@ -2390,7 +2390,16 @@ async function cleanupNumericTagFolders() {
       for(const row of allRows) {
         if(!row?.id || !titleField) continue;
         const title=String(row?.[titleField.name]??"").trim();
-        if(!title.startsWith("__FOLDER__:")) continue;
+        const folderNameRaw=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+        if(!title.startsWith("__FOLDER__:") && !/^\\d+$/.test(folderNameRaw)) continue;
+
+        if(!title.startsWith("__FOLDER__:")) {
+          try {
+            await baserowDeleteRow(row.id);
+            rows++;
+          } catch {}
+          continue;
+        }
 
         const markerId=title.split(":")[1]||"";
         let folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
