@@ -2394,10 +2394,17 @@ async function cleanupNumericTagFolders() {
         if(!title.startsWith("__FOLDER__:") && !/^\\d+$/.test(folderNameRaw)) continue;
 
         if(!title.startsWith("__FOLDER__:")) {
+          // 资源本身不能删除，只清空数字文件夹归属。
           try {
-            await baserowDeleteRow(row.id);
-            rows++;
-          } catch {}
+            await baserowRequest(
+              "PATCH",
+              "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",
+              {[folderField.name]: null}
+            );
+            baserowRowsCache.delete(String(row.id));
+          } catch(e) {
+            console.warn("⚠️ 清理资源数字文件夹失败:",String(e?.message||e));
+          }
           continue;
         }
 
