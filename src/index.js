@@ -2593,7 +2593,7 @@ function folderFileKeyboard(items) {
 }
 function directoryInlineKeyboard(page=0) {
   const all=db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id)));
-  const pageSize=20;
+  const pageSize=10;
   const start=Math.max(0,Number(page)||0)*pageSize;
   const current=all.slice(start,start+pageSize);
   const rows=[];
