@@ -1208,7 +1208,7 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
   const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
   if(!titleField) return sendHtml(TOKEN,uid,"❌ <b>Baserow 缺少资源名称字段</b>\\n\\n请保留“资源名称/名称/标题”其中一个字段。",adminMenu());
 
-  const normalizeMatchTitle = value => String(value||"").replace(/\\u200b/g,"").replace(/[^\\p{L}\\p{N}]+/gu,"").trim().toLowerCase();
+  const normalizeMatchTitle = value => String(value||"").replace(/\u200b/g,"").replace(/[^\p{L}\p{N}]+/gu,"").trim().toLowerCase();
   const parseRowDate = row => {
     if(!dateField) return 0;
     const raw=row?.[dateField.name], n=Number(raw);
