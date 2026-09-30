@@ -634,6 +634,7 @@ async function pullBaserowSharedData() {
     const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
     const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
     const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+    const urlField=baserowPickField(fields,["网址","链接","链接地址","URL","Url","Link"]);
     const captionField=baserowPickField(fields,["描述","说明","备注","Caption","Description"]);
     const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
     const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
@@ -657,8 +658,18 @@ async function pullBaserowSharedData() {
         if(folderValue) folderNames.set(sharedDirectoryId(folderValue),folderValue);
         continue;
       }
-      const chat=chatField ? String(row?.[chatField.name]??"").trim() : "";
-      const message=messageField ? Number(row?.[messageField.name]??0) : 0;
+      let chat=chatField ? String(row?.[chatField.name]??"").trim() : "";
+      let message=messageField ? Number(row?.[messageField.name]??0) : 0;
+      // 兼容旧表：如果没有聊天ID/消息ID，尝试从“网址”中的 Telegram 消息链接恢复。
+      if((!chat || !Number.isFinite(message) || message<=0) && urlField) {
+        const url=String(row?.[urlField.name]??"").trim();
+        let m=url.match(/t\.me\/c\/(\\d+)\/(\\d+)/i);
+        if(m) { chat="-100"+m[1]; message=Number(m[2]); }
+        else {
+          m=url.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\\d+)/i);
+          if(m) { chat="@"+m[1]; message=Number(m[2]); }
+        }
+      }
       if(!chat || !Number.isFinite(message) || message<=0) continue;
       const key=chat+":"+message;
       const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
@@ -695,11 +706,12 @@ async function pullBaserowSharedData() {
       if(!dirsById.has(id)) dirsById.set(id,{id,name,createdAt:Date.now()});
     }
     db.directories=Array.from(dirsById.values());
-    if(chatField && messageField) {
+    if((chatField && messageField) || urlField) {
       db.resources=merged.slice(0,MAX_RESOURCES);
+      if(!chatField || !messageField) console.log("🔗 已从 Baserow 网址恢复 Telegram 资源："+db.resources.length);
+      if(!chatField || !messageField) await backfillBaserowFolderAssignments(rows,fields,folderField,titleField);
     } else {
-      console.warn("⚠️ Baserow 缺少聊天ID/消息ID字段，保留本地资源："+String((db.resources||[]).length));
-      await backfillBaserowFolderAssignments(rows,fields,folderField,titleField);
+      console.warn("⚠️ Baserow 缺少聊天ID/消息ID/网址字段，无法恢复 Telegram 资源；保留本地资源："+String((db.resources||[]).length));
     }
     db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
     saveDb();
