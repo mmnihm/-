@@ -1645,20 +1645,34 @@ function adminBotInline(){return{inline_keyboard:[
 ]};}
 function quotaSettingsText(){return"<b>🎁 会员 / 非会员额度</b>\n━━━━━━━━━━━━━━\n\n👤 非会员每日免费：<b>"+nonMemberDailyLimit()+"</b> 个资源\n💎 会员：不限量\n\n👇 修改额度";}
 
+function userHomeInlineKeyboard() {
+  return {reply_markup:{inline_keyboard:[
+    [{text:"📂 资源目录",callback_data:"user:dirs"},{text:"🔎 搜索资源",callback_data:"user:search"}],
+    [{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}],
+    [{text:"⭐ 我的资源",callback_data:"hub"},{text:"🤖 克隆机器人",callback_data:"user:clone"}]
+  ]}};
+}
 function userMenu() {
-  return {reply_markup:{keyboard:[
-    ["📂 资源目录","🔎 搜索资源"],
-    ["🎲 随机获取","🆕 最新资源"],
-    ["⭐ 我的资源","🤖 克隆机器人"],
-    ["🏠 开始"]
-  ],resize_keyboard:true,input_field_placeholder:"选择功能"}};
+  return userHomeInlineKeyboard();
 }
 function childMenu() {
-  return {reply_markup:{keyboard:[
-    ["📂 资源目录","🔎 搜索资源"],
-    ["🎲 随机获取","🆕 最新资源"],
-    ["⭐ 我的资源","🏠 开始"]
-  ],resize_keyboard:true,input_field_placeholder:"选择功能"}};
+  return userHomeInlineKeyboard();
+}
+
+const replyKeyboardClearedChats = new Set();
+async function ensureUserInlineMode(token, chatId) {
+  const key = tokenFingerprint(token) + ":" + String(chatId);
+  if (replyKeyboardClearedChats.has(key)) return;
+  try {
+    await tg(token, "sendMessage", {
+      chat_id: chatId,
+      text: "\u2063",
+      reply_markup: {remove_keyboard:true}
+    });
+    replyKeyboardClearedChats.add(key);
+  } catch (e) {
+    console.warn("⚠️ 清理旧键盘失败:", String(e?.message || e));
+  }
 }
 function backMenu(admin=false) {
   return admin
@@ -2422,6 +2436,7 @@ async function mainMessage(msg) {
   recordUserActivity(uid);
   const t=msg.text||"";
   const admin=isAdmin(uid);
+  if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
   const s=states.get(key);
 
@@ -3219,7 +3234,9 @@ async function childMessage(child,msg,token) {
   refreshSharedData(false).catch(e=>console.warn("⚠️ 子机器人共享目录刷新失败:",String(e?.message||e)));
   // 子机器人消息处理同样不能等待 Baserow，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
-  const uid=msg.from.id,t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
+  const uid=msg.from.id;
+  await ensureUserInlineMode(token, uid);
+  const t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
   const startCommand=t.split(" ")[0].split("@")[0];
 
   // 主机器人和所有子机器人共用同一个 db.resources / db.directories。
@@ -3300,6 +3317,34 @@ async function handleDirectoryCallback(token, q, child=false) {
   await answer();
   // 两个独立机器人实例使用同一个 Baserow 时，点击目录/管理按钮前先拉取共享目录。
   await refreshSharedData(false).catch(e=>console.warn("⚠️ 回调共享目录刷新失败:",String(e?.message||e)));
+
+  if(data==="user:dirs") {
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});
+  }
+  if(data==="user:search") {
+    states.set("m:"+uid,{step:"search"});
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n💡 支持模糊搜索，最多返回 10 条。\n↩️ 发送 <code>/cancel</code> 可退出搜索。",
+      parse_mode:"HTML",
+      reply_markup:{inline_keyboard:[[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
+  }
+  if(data==="user:random") {
+    return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
+  }
+  if(data==="user:latest") {
+    return deliver(token,uid,uid,db.resources.slice(0,10),token,{mode:"latest",offset:0,total:db.resources.length});
+  }
+  if(data==="user:clone") {
+    states.set("m:"+uid,{step:"token"});
+    return send(token,uid,"🤖 创建子机器人\n\n请把你在 BotFather 创建的 Bot Token 发给我。\n\n发送 /cancel 可取消。");
+  }
+  if(data==="user:home") {
+    states.delete("m:"+uid);
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"<b>👋 欢迎使用资源平台</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n🤖 <b>平台功能</b>：克隆机器人\n\n👇 <i>请选择下方功能开始使用</i>",
+      parse_mode:"HTML",
+      reply_markup:userHomeInlineKeyboard().reply_markup});
+  }
 
   if(data==="hub"||data.startsWith("hub:")){
     const mode=data.split(":")[1]||"home";
