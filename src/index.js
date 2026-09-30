@@ -540,11 +540,21 @@ async function baserowSyncResource(item) {
   }
 }
 
+function requestSharedDataRefresh() {
+  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  if (sharedImmediateRefreshTimer) clearTimeout(sharedImmediateRefreshTimer);
+  sharedImmediateRefreshTimer = setTimeout(() => {
+    sharedImmediateRefreshTimer = null;
+    refreshSharedData(true).catch(e => console.warn("⚠️ 操作后立即刷新异常:", String(e?.message || e)));
+  }, 1200);
+}
+
 function queueBaserowResourceSync(item) {
   if (!BASEROW_TOKEN || !BASEROW_TABLE_ID || !item) return;
   baserowSyncQueue = baserowSyncQueue
     .then(() => baserowSyncResource(item))
     .catch(e => console.error("❌ Baserow 同步队列:", e.message));
+  requestSharedDataRefresh();
 }
 
 async function waitBaserowSyncQueue() {
@@ -555,6 +565,7 @@ async function waitBaserowSyncQueue() {
 let baserowRowsCache = new Map();
 let sharedRefreshAt = 0;
 let sharedRefreshPromise = null;
+let sharedImmediateRefreshTimer = null;
 let sharedSyncLock = false;
 
 function sharedDirectoryId(name) {
@@ -648,6 +659,7 @@ function queueBaserowDirectorySync(directory) {
   baserowDirectorySyncQueue=baserowDirectorySyncQueue
     .then(()=>baserowSyncDirectory(directory))
     .catch(e=>console.error("❌ Baserow 文件夹队列:",e.message));
+  requestSharedDataRefresh();
 }
 
 async function waitBaserowDirectorySyncQueue() {
@@ -669,6 +681,7 @@ function queueBaserowDeleteResource(item) {
   const rowId=item.baserowRowId;
   if(!rowId) return;
   baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(rowId)).catch(e=>console.error("❌ Baserow 删除队列:",e.message));
+  requestSharedDataRefresh();
 }
 
 async function repairLostFolderAssignments(uid) {
@@ -1005,7 +1018,7 @@ function getBaserowFieldsCacheForSync() { return Array.isArray(baserowFieldsCach
 async function refreshSharedData(force=false) {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
   const now=Date.now();
-  if(!force && now-sharedRefreshAt<5000) return;
+  if(!force && now-sharedRefreshAt<300000) return;
   if(sharedRefreshPromise) return sharedRefreshPromise;
   sharedRefreshPromise=(async()=>{
     const started=Date.now();
@@ -4877,10 +4890,10 @@ async function boot(){
   // Baserow 共享刷新独立于其他后台定时器，避免被后台初始化状态影响。
   if (!sharedBaserowRefreshTimerStarted) {
     sharedBaserowRefreshTimerStarted = true;
-    console.log("🔁 Baserow 共享刷新定时器已启动：每 5 秒检查一次");
+    console.log("🔁 Baserow 共享刷新定时器已启动：每 5 分钟检查一次；资源/文件夹操作后立即刷新");
     setInterval(() => {
       refreshSharedData(false).catch(e => console.warn("⚠️ 跨机器人目录同步异常:", String(e?.message || e)));
-    }, 5000);
+    }, 300000);
   }
   processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除初始化失败：",e.message));
 
