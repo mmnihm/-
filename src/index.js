@@ -1325,9 +1325,9 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
     let reachedEnd=false;
     while(!reachedEnd) {
       let batchCount=0;
-      for await(const message of client.iterMessages(entity,{limit:500,offsetId:0})) {
+      for await(const message of client.iterMessages(entity,{limit:500,offsetId:resumeMessageId||0})) {
         const messageId=Number(message?.id||0);
-        if(previousLast>0 && messageId>0 && messageId<=resumeMessageId) { reachedEnd=true; break; }
+        if(!messageId) continue;
       if(previousLast>0 && messageId>0 && messageId<=previousLast) break;
       if(!messageId) continue;
       state.scanned++; state.lastMessageId=messageId;
