@@ -2247,6 +2247,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],
  [{text:"🛠️ 恢复文件夹资源",callback_data:"adm:folder_repair"}],
  [{text:"🏷️ 标签自动建文件夹",callback_data:"adm:tagfolders"}],
+ [{text:"🗑️ 删除所有文件夹",callback_data:"adm:folders_all_confirm"}],
  [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步",callback_data:"adm:auto"}],
  [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
@@ -2463,6 +2464,57 @@ async function cleanupNumericTagFolders() {
   touchSharedData("system");
   saveDb();
   return {folders:bad.length,resources,rows};
+}
+
+
+async function deleteAllFoldersKeepResources() {
+  let folders=0, resources=0;
+  const folderIds=new Set((db.directories||[]).map(d=>String(d.id)));
+  if(BASEROW_TOKEN && BASEROW_TABLE_ID) {
+    const fields=await getBaserowFields();
+    const rows=await listAllBaserowRows();
+    const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+    const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+    for(const row of rows) {
+      if(!row?.id) continue;
+      let title=titleField ? String(row?.[titleField.name]??"").trim() : "";
+      if(!title.startsWith("__FOLDER__:")) {
+        for(const key of Object.keys(row||{})) {
+          const value=String(row?.[key]??"").trim();
+          if(value.startsWith("__FOLDER__:")) { title=value; break; }
+        }
+      }
+      if(title.startsWith("__FOLDER__:")) {
+        await baserowDeleteRow(row.id);
+        folders++;
+        continue;
+      }
+      if(folderField) {
+        const folderName=sharedFolderName(row?.[folderField.name]);
+        if(folderName) {
+          await baserowRequest(
+            "PATCH",
+            "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",
+            {[folderField.name]: null}
+          );
+          baserowRowsCache.delete(String(row.id));
+          resources++;
+        }
+      }
+    }
+  }
+  for(const item of (db.resources||[])) {
+    if(item.directoryId || item.autoTagFolder) {
+      item.directoryId=null;
+      item.autoTagFolder=null;
+      resources++;
+      queueBaserowResourceSync(item);
+    }
+  }
+  db.directories=[];
+  touchSharedData("system");
+  saveDb();
+  return {folders,resources};
 }
 
 function autoCreateTagFoldersForExistingResources() {
@@ -4447,7 +4499,17 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
     if(route==="auto_stop") { await stopRepositoryAutoSync(); return showRepositoryAutoSyncStatus(uid); }
     if(route==="auto_resume") { const a=repositoryAutoSyncState(); if(!a.sourceId||!a.targetId) return showRepositoryAutoSyncStatus(uid); a.enabled=true; a.status="running"; a.updatedAt=Date.now(); saveDb(); processRepositoryAutoSyncQueue().catch(()=>{}); return showRepositoryAutoSyncStatus(uid); }
-    if(route==="tagfolders"){
+    if(route==="folders_all_confirm"){
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚠️ 删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n这只会删除文件夹及文件夹标记。\n📦 所有资源/文件都会保留。\n🔗 资源会变成未分类。\n\n确定继续吗？",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+      [{text:"🗑️ 确定删除所有文件夹",callback_data:"adm:folders_all_do"}],
+      [{text:"⬅️ 取消",callback_data:"admin:resource"}]
+    ]}});
+  }
+  if(route==="folders_all_do"){
+    const result=await deleteAllFoldersKeepResources();
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 所有文件夹已删除</b>\n━━━━━━━━━━━━━━\n\n🗑️ 删除文件夹：<b>"+result.folders+"</b>\n📦 保留资源：<b>"+db.resources.length+"</b>\n🔗 解除文件夹归属：<b>"+result.resources+"</b>\n\n所有资源仍然保留。",parse_mode:"HTML",reply_markup:adminResourceInline()});
+  }
+  if(route==="tagfolders"){
     const result=autoCreateTagFoldersForExistingResources();
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签自动分类完成</b>\\n━━━━━━━━━━━━━━\\n\\n📁 新建标签文件夹：<b>"+result.created+"</b>\\n📦 自动归类资源：<b>"+result.assigned+"</b>\\n\\n规则：只处理当前没有文件夹的资源。\\n第一个 #标签会作为文件夹名称。",parse_mode:"HTML",reply_markup:adminResourceInline()});
   }
