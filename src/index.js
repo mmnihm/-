@@ -375,7 +375,6 @@ async function ensureBaserowRecoveryFields() {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return [];
   const required=[
     {name:"文件夹",type:"text"},
-    {name:"聊天ID",type:"text"},
     {name:"消息ID",type:"text"}
   ];
   let fields=await getBaserowFields(true);
@@ -2389,59 +2388,58 @@ function autoAssignResourceTagFolder(item) {
   }
   return folder;
 }
+function isBaserowFolderMarkerRow(row, fields) {
+  if(!row || !Array.isArray(fields)) return false;
+  const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+  const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+  const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+  const title=titleField ? String(row?.[titleField.name]??"").trim() : "";
+  if(title.startsWith("__FOLDER__:")) return true;
+  const messageValue=messageField ? String(row?.[messageField.name]??"").trim() : "";
+  const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+  return messageValue==="0" && Boolean(folderName);
+}
+
 async function cleanupNumericTagFolders() {
   const bad=(db.directories||[]).filter(d=>/^\d+$/.test(String(d?.name||"").trim()));
-  let resources=0;
-  let rows=0;
+  let resources=0, rows=0;
 
-  // 直接读取 Baserow 全表，避免旧的数字文件夹记录不在缓存中。
   if(BASEROW_TOKEN && BASEROW_TABLE_ID) {
     try {
-      const fields=await getBaserowFields();
+      const fields=await getBaserowFields(true);
       const allRows=await listAllBaserowRows();
-      const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
       const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
-      const badIds=new Set(bad.map(d=>String(d.id)));
-
+      const badNames=new Set(bad.map(d=>String(d.name||"").trim()));
       for(const row of allRows) {
-        if(!row?.id || !titleField) continue;
-        let title=titleField ? String(row?.[titleField.name]??"").trim() : "";
-        // 兼容旧表：如果“名称”字段不是实际存放标记的字段，从所有字段中寻找文件夹标记。
-        if(!title.startsWith("__FOLDER__:")) {
-          for(const key of Object.keys(row||{})) {
-            const value=String(row?.[key]??"").trim();
-            if(value.startsWith("__FOLDER__:")) { title=value; break; }
+        if(!row?.id) continue;
+        const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+        if(isBaserowFolderMarkerRow(row,fields)) {
+          const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+          let markerFolder=folderName;
+          const title=titleField ? String(row?.[titleField.name]??"").trim() : "";
+          if(!markerFolder && title.startsWith("__FOLDER__:")) {
+            const encoded=title.split(":")[2]||"";
+            try { markerFolder=Buffer.from(encoded,"base64url").toString("utf8").trim(); } catch {}
           }
-        }
-        const folderNameRaw=folderField ? sharedFolderName(row?.[folderField.name]) : "";
-        if(!title.startsWith("__FOLDER__:")) {
-          // 普通资源行绝不删除；如果仍挂着纯数字文件夹，只清空文件夹字段。
-          if(folderField && /^\d+$/.test(folderNameRaw)) {
+          if(/^\d+$/.test(markerFolder) || title.startsWith("__FOLDER__:")) {
             try {
-              await baserowRequest(
-                "PATCH",
-                "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",
-                {[folderField.name]: null}
-              );
+              await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/");
               baserowRowsCache.delete(String(row.id));
-              resources++;
+              rows++;
             } catch(e) {
-              console.warn("⚠️ 清理资源数字文件夹失败:",String(e?.message||e));
+              console.warn("⚠️ 删除数字文件夹标记失败:",String(e?.message||e));
             }
           }
           continue;
         }
-
-        const markerId=title.split(":")[1]||"";
-        let folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
-        if(!folderName) {
-          const encoded=title.split(":")[2]||"";
-          try { folderName=Buffer.from(encoded,"base64url").toString("utf8").trim(); } catch {}
-        }
-
-        if(badIds.has(String(markerId)) || /^\d+$/.test(folderName)) {
-          await baserowDeleteRow(row.id);
-          rows++;
+        if(folderField && /^\d+$/.test(folderName)) {
+          try {
+            await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",{[folderField.name]:null});
+            baserowRowsCache.delete(String(row.id));
+            resources++;
+          } catch(e) {
+            console.warn("⚠️ 清理资源数字文件夹失败:",String(e?.message||e));
+          }
         }
       }
     } catch(e) {
@@ -2459,48 +2457,46 @@ async function cleanupNumericTagFolders() {
       }
     }
   }
-
   db.directories=db.directories.filter(d=>!bad.includes(d));
   touchSharedData("system");
   saveDb();
   return {folders:bad.length,resources,rows};
 }
 
-
 async function deleteAllFoldersKeepResources() {
-  let folders=0, resources=0;
-  const folderIds=new Set((db.directories||[]).map(d=>String(d.id)));
+  let folders=0, resources=0, errors=0;
   if(BASEROW_TOKEN && BASEROW_TABLE_ID) {
-    const fields=await getBaserowFields();
-    const rows=await listAllBaserowRows();
-    const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
-    const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
-    for(const row of rows) {
-      if(!row?.id) continue;
-      let title=titleField ? String(row?.[titleField.name]??"").trim() : "";
-      if(!title.startsWith("__FOLDER__:")) {
-        for(const key of Object.keys(row||{})) {
-          const value=String(row?.[key]??"").trim();
-          if(value.startsWith("__FOLDER__:")) { title=value; break; }
+    try {
+      const fields=await getBaserowFields(true);
+      const rows=await listAllBaserowRows();
+      const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+      for(const row of rows) {
+        if(!row?.id) continue;
+        if(isBaserowFolderMarkerRow(row,fields)) {
+          try {
+            await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/");
+            baserowRowsCache.delete(String(row.id));
+            folders++;
+          } catch(e) {
+            errors++;
+            console.warn("⚠️ 删除 Baserow 文件夹标记失败:",String(e?.message||e));
+          }
+          continue;
+        }
+        if(folderField && sharedFolderName(row?.[folderField.name])) {
+          try {
+            await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",{[folderField.name]:null});
+            baserowRowsCache.delete(String(row.id));
+            resources++;
+          } catch(e) {
+            errors++;
+            console.warn("⚠️ 清空资源文件夹失败:",String(e?.message||e));
+          }
         }
       }
-      if(title.startsWith("__FOLDER__:")) {
-        await baserowDeleteRow(row.id);
-        folders++;
-        continue;
-      }
-      if(folderField) {
-        const folderName=sharedFolderName(row?.[folderField.name]);
-        if(folderName) {
-          await baserowRequest(
-            "PATCH",
-            "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",
-            {[folderField.name]: null}
-          );
-          baserowRowsCache.delete(String(row.id));
-          resources++;
-        }
-      }
+    } catch(e) {
+      errors++;
+      console.error("❌ 删除所有 Baserow 文件夹失败:",String(e?.message||e));
     }
   }
   for(const item of (db.resources||[])) {
@@ -2514,7 +2510,7 @@ async function deleteAllFoldersKeepResources() {
   db.directories=[];
   touchSharedData("system");
   saveDb();
-  return {folders,resources};
+  return {folders,resources,errors};
 }
 
 function autoCreateTagFoldersForExistingResources() {
@@ -4506,8 +4502,17 @@ async function handleDirectoryCallback(token, q, child=false) {
     ]}});
   }
   if(route==="folders_all_do"){
-    const result=await deleteAllFoldersKeepResources();
-    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 所有文件夹已删除</b>\n━━━━━━━━━━━━━━\n\n🗑️ 删除文件夹：<b>"+result.folders+"</b>\n📦 保留资源：<b>"+db.resources.length+"</b>\n🔗 解除文件夹归属：<b>"+result.resources+"</b>\n\n所有资源仍然保留。",parse_mode:"HTML",reply_markup:adminResourceInline()});
+    await answer("已开始删除文件夹，请稍候…");
+    await safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 正在删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n⏳ 正在清理 Baserow 文件夹记录…\n📦 所有资源都会保留，请不要重复点击。",parse_mode:"HTML"});
+    try {
+      const result=await deleteAllFoldersKeepResources();
+      await safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 所有文件夹清理完成</b>\n━━━━━━━━━━━━━━\n\n🗑️ 删除文件夹：<b>"+result.folders+"</b>\n📦 保留资源：<b>"+db.resources.length+"</b>\n🔗 解除文件夹归属：<b>"+result.resources+"</b>\n"+(result.errors?"⚠️ 失败记录：<b>"+result.errors+"</b>\n":"")+"\n所有资源/Telegram 文件均未删除。",parse_mode:"HTML",reply_markup:adminResourceInline()});
+      await refreshSharedData(true);
+    } catch(e) {
+      console.error("❌ 删除所有文件夹任务失败:",String(e?.message||e));
+      await safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 删除文件夹失败</b>\n━━━━━━━━━━━━━━\n\n"+escapeHtml(String(e?.message||e)),parse_mode:"HTML",reply_markup:adminResourceInline()});
+    }
+    return;
   }
   if(route==="tagfolders"){
     const result=autoCreateTagFoldersForExistingResources();
@@ -5293,9 +5298,6 @@ async function boot(){
             console.log("✅ Baserow 共享初始化完成", "pid=" + PROCESS_ID);
             console.log("🔎 Baserow 共享配置:", "enabled="+baserow.enabled, "table="+BASEROW_TABLE_ID);
             // 初始化完成后立即强制刷新一次，确保刚启动的机器人立刻拿到其他机器人已经写入的目录。
-            await refreshSharedData(true);
-            const cleaned=await cleanupNumericTagFolders();
-            console.log("🧹 数字文件夹清理结果:", "folders="+cleaned.folders, "resourcesUncategorized="+cleaned.resources, "baserowFolderRowsDeleted="+cleaned.rows);
             await refreshSharedData(true);
             console.log("✅ Baserow 启动后首次强制刷新完成", "pid=" + PROCESS_ID);
           })
