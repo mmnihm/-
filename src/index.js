@@ -587,6 +587,44 @@ function queueBaserowDeleteResource(item) {
   baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(rowId)).catch(e=>console.error("❌ Baserow 删除队列:",e.message));
 }
 
+async function backfillBaserowFolderAssignments(rows, fields, folderField, titleField) {
+  if(!folderField || !titleField || !Array.isArray(rows)) return 0;
+  const localByTitle=new Map();
+  for(const item of (db.resources||[])) {
+    const title=String(item?.title||"").trim().toLowerCase();
+    if(title && item?.directoryId && !localByTitle.has(title)) localByTitle.set(title,item);
+  }
+  const updates=[];
+  for(const row of rows) {
+    if(!row?.id) continue;
+    const title=String(row?.[titleField.name]??"").trim();
+    if(!title || title.startsWith("__FOLDER__:")) continue;
+    const item=localByTitle.get(title.toLowerCase());
+    if(!item?.directoryId) continue;
+    const d=(db.directories||[]).find(x=>String(x.id)===String(item.directoryId));
+    if(!d?.name) continue;
+    const current=sharedFolderName(row?.[folderField.name]);
+    if(current===d.name) continue;
+    const value=baserowValueForField(folderField,d.name);
+    if(value===undefined) continue;
+    updates.push({id:row.id,payload:{[folderField.name]:value}});
+  }
+  let done=0;
+  for(let i=0;i<updates.length;i+=20) {
+    const batch=updates.slice(i,i+20);
+    await Promise.all(batch.map(async u=>{
+      try {
+        await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",u.payload);
+        done++;
+      } catch(e) {
+        console.warn("⚠️ Baserow 文件夹回填失败 row="+u.id+":",String(e?.message||e));
+      }
+    }));
+  }
+  if(done) console.log("📁 Baserow 文件夹关联回填完成："+done+" 条");
+  return done;
+}
+
 async function pullBaserowSharedData() {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || sharedSyncLock) return false;
   sharedSyncLock=true;
@@ -661,6 +699,7 @@ async function pullBaserowSharedData() {
       db.resources=merged.slice(0,MAX_RESOURCES);
     } else {
       console.warn("⚠️ Baserow 缺少聊天ID/消息ID字段，保留本地资源："+String((db.resources||[]).length));
+      await backfillBaserowFolderAssignments(rows,fields,folderField,titleField);
     }
     db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
     saveDb();
