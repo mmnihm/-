@@ -2362,12 +2362,13 @@ function autoAssignResourceTagFolder(item) {
   if(!item) return null;
   const tags=extractResourceTags(item);
   if(!tags.length) return null;
+  item.tags=tags;
+  if(item.directoryId) return db.directories.find(d=>String(d.id)===String(item.directoryId)) || null;
   const tag=tags[0];
   const folder=ensureDirectory(tag);
   if(folder) {
     item.directoryId=String(folder.id);
     item.autoTagFolder=tag;
-    item.tags=tags;
   }
   return folder;
 }
@@ -2375,9 +2376,12 @@ function autoCreateTagFoldersForExistingResources() {
   let created=0, assigned=0;
   for(const item of (db.resources||[])) {
     const before=String(item.directoryId||"");
+    const tags=extractResourceTags(item);
+    if(!tags.length || before) continue;
+    const existed=Boolean(getDirectoryByName(tags[0]));
     const folder=autoAssignResourceTagFolder(item);
     if(folder) {
-      if(!db.directories.some(d=>String(d.id)===String(folder.id))) created++;
+      if(!existed) created++;
       if(before!==String(folder.id)) assigned++;
       queueBaserowResourceSync(item);
     }
@@ -4352,7 +4356,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(route==="auto_resume") { const a=repositoryAutoSyncState(); if(!a.sourceId||!a.targetId) return showRepositoryAutoSyncStatus(uid); a.enabled=true; a.status="running"; a.updatedAt=Date.now(); saveDb(); processRepositoryAutoSyncQueue().catch(()=>{}); return showRepositoryAutoSyncStatus(uid); }
     if(route==="tagfolders"){
     const result=autoCreateTagFoldersForExistingResources();
-    return mainMessage(uid,"🏷️ <b>标签自动分类完成</b>\\n\\n📁 新建/识别标签文件夹：<b>"+result.created+"</b>\\n📦 自动归类资源：<b>"+result.assigned+"</b>\\n\\n规则：资源中的第一个 #标签 会作为文件夹名称。",{reply_markup:adminMenu()});
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签自动分类完成</b>\\n━━━━━━━━━━━━━━\\n\\n📁 新建标签文件夹：<b>"+result.created+"</b>\\n📦 自动归类资源：<b>"+result.assigned+"</b>\\n\\n规则：只处理当前没有文件夹的资源。\\n第一个 #标签会作为文件夹名称。",parse_mode:"HTML",reply_markup:adminResourceInline()});
   }
   const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步",auto_status:"⚡ 自动同步",auto_stop:"⏸️ 停止自动同步",auto_resume:"▶️ 继续自动同步"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
