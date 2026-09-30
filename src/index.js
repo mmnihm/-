@@ -280,7 +280,7 @@ async function baserowRequest(method, pathName, body) {
     e.baserowCode="CONFIG_MISSING";
     throw e;
   }
-  if (!BASEROW_TABLE_ID && /\\/table\\//.test(pathName)) {
+  if (!BASEROW_TABLE_ID && /\/table\//.test(pathName)) {
     const e=new Error("Baserow 未配置 BASEROW_TABLE_ID");
     e.baserowCode="TABLE_ID_MISSING";
     throw e;
