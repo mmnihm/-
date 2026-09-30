@@ -3932,7 +3932,16 @@ function startChild(child){
   childRunners.set(runnerId,runner);
 }
 
+let bootActive = false;
+let backgroundTimersStarted = false;
+let sharedBaserowInitStarted = false;
+
 async function boot(){
+  if (bootActive) {
+    console.warn("⚠️ BOOT 已经运行，忽略重复启动", "pid=" + PROCESS_ID);
+    return;
+  }
+  bootActive = true;
   fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true});
   saveDb();
 
@@ -3942,16 +3951,23 @@ async function boot(){
   }
 
   console.log("🛡️ 内容保护：", contentProtectionEnabled() ? "开启" : "关闭", "自动删除：", autoDeleteText());
-  setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
-  // 跨机器人目录同步：每 5 秒检查一次远端共享数据，refreshSharedData 自带节流与同步队列保护。
-  setInterval(() => { refreshSharedData(false).catch(e=>console.warn("⚠️ 跨机器人目录同步异常:",String(e?.message||e))); }, 5000);
+  if (!backgroundTimersStarted) {
+    backgroundTimersStarted = true;
+    setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
+    // 跨机器人目录同步：每 5 秒检查一次远端共享数据，refreshSharedData 自带节流与同步队列保护。
+    setInterval(() => { refreshSharedData(false).catch(e=>console.warn("⚠️ 跨机器人目录同步异常:",String(e?.message||e))); }, 5000);
+    setInterval(() => {
+      const s = runtimeStatus();
+      console.log("🫀 HEARTBEAT:", "connected="+s.mainConnected, "uptime="+s.uptimeSeconds+"s", "lastPoll="+(s.lastPollAt||"-"), "lastUpdate="+(s.lastUpdateAt||"-"), "error="+(s.lastError||"-"));
+    }, 30000);
+  }
   processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除初始化失败：",e.message));
 
   console.log("🫀 BOT HEARTBEAT ENABLED");
-  setInterval(() => {
+  if (backgroundTimersStarted) {
     const s = runtimeStatus();
     console.log("🫀 HEARTBEAT:", "connected="+s.mainConnected, "uptime="+s.uptimeSeconds+"s", "lastPoll="+(s.lastPollAt||"-"), "lastUpdate="+(s.lastUpdateAt||"-"), "error="+(s.lastError||"-"));
-  }, 30000);
+  }
 
   while (true) {
     try {
@@ -3974,10 +3990,13 @@ async function boot(){
           .catch(e=>console.error("❌ 迁移断点恢复失败:",String(e?.message||e)));
       }
       // Telegram 轮询必须优先启动，Baserow 同步不得阻塞机器人按钮和消息。
-      console.log("🔄 Baserow 共享模式：后台初始化，不阻塞 Telegram", "pid=" + PROCESS_ID);
-      initializeSharedBaserow()
-        .then(()=>console.log("✅ Baserow 共享初始化完成", "pid=" + PROCESS_ID))
-        .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
+      if (!sharedBaserowInitStarted) {
+        sharedBaserowInitStarted = true;
+        console.log("🔄 Baserow 共享模式：后台初始化，不阻塞 Telegram", "pid=" + PROCESS_ID);
+        initializeSharedBaserow()
+          .then(()=>console.log("✅ Baserow 共享初始化完成", "pid=" + PROCESS_ID))
+          .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
+      }
       console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name), "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
       console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
       console.log("⚙️ "+configText().replaceAll("\n"," | "));
