@@ -679,49 +679,124 @@ async function repairLostFolderAssignments(uid) {
     const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
     const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
     const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+    const urlField=baserowPickField(fields,["网址","链接","链接地址","URL","Url","Link"]);
     const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
-    if(!folderField||!chatField||!messageField) {
-      const missing=[!folderField?"文件夹":"",!chatField?"聊天ID":"",!messageField?"消息ID":""].filter(Boolean).join("、");
-      throw new Error("Baserow 恢复需要字段："+missing+"。请在表中保留这些字段，或让机器人使用已有的“网址/链接”字段进行兼容恢复。");
+
+    // 新表优先使用“聊天ID + 消息ID”；旧表没有这两个字段时，
+    // 直接从“网址/链接”里的 Telegram 消息链接恢复，避免强制改表结构。
+    if(!folderField) {
+      throw new Error("Baserow 恢复需要字段：文件夹。请在表中保留“文件夹”字段。");
     }
+    if((!chatField || !messageField) && !urlField) {
+      const missing=[!chatField?"聊天ID":"",!messageField?"消息ID":""].filter(Boolean).join("、");
+      throw new Error("Baserow 恢复需要字段："+missing+"。当前表也没有“网址/链接”字段可用于兼容恢复。");
+    }
+
     const rows=await listAllBaserowRows();
     const backup=readJsonFile(BACKUP_FILE);
     const dirs=[...(db.directories||[]),...((backup&&Array.isArray(backup.directories))?backup.directories:[])];
     const dirNameById=new Map();
     for(const d of dirs) if(d?.id&&d?.name&&!dirNameById.has(String(d.id))) dirNameById.set(String(d.id),String(d.name).trim());
-    const key=(chat,msg)=>{const c=String(chat??"").trim(),m=Number(msg||0);return c&&m>0?c+":"+m:"";};
-    const normalizeChat=v=>{const s=String(v??"").trim();return /^\d{10,}$/.test(s)&&!s.startsWith("-")?"-"+s:s;};
-    const current=new Map((db.resources||[]).map(x=>[key(normalizeChat(x.chatId),x.messageId),x]).filter(x=>x[0]));
-    const backupMap=new Map(((backup&&Array.isArray(backup.resources))?backup.resources:[]).map(x=>[key(normalizeChat(x.chatId),x.messageId),x]).filter(x=>x[0]));
-    let found=0,written=0,localFixed=0;
+
+    const key=(chat,msg)=>{
+      const c=String(chat??"").trim(),m=Number(msg||0);
+      return c&&m>0?c+":"+m:"";
+    };
+    const normalizeChat=v=>{
+      const s=String(v??"").trim();
+      return /^\d{10,}$/.test(s)&&!s.startsWith("-")?"-"+s:s;
+    };
+    const parseTelegramUrl=url=>{
+      const s=String(url||"").trim();
+      let m=s.match(/t\.me\/c\/(\d+)\/(\d+)/i);
+      if(m) return {chat:"-100"+m[1],message:Number(m[2])};
+      m=s.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\d+)/i);
+      if(m) return {chat:"@"+m[1],message:Number(m[2])};
+      return null;
+    };
+
+    const current=new Map((db.resources||[])
+      .map(x=>[key(normalizeChat(x.chatId),x.messageId),x])
+      .filter(x=>x[0]));
+    const backupMap=new Map(((backup&&Array.isArray(backup.resources))?backup.resources:[])
+      .map(x=>[key(normalizeChat(x.chatId),x.messageId),x])
+      .filter(x=>x[0]));
+
+    let found=0,written=0,localFixed=0,urlRecovered=0;
     const updates=[];
+
     for(const row of rows){
       if(!row?.id) continue;
       const title=titleField?String(row?.[titleField.name]??"").trim():"";
       if(title.startsWith("__FOLDER__:")) continue;
-      const k=key(normalizeChat(row?.[chatField.name]),row?.[messageField.name]);
+
+      let chat=chatField?normalizeChat(row?.[chatField.name]):"";
+      let message=messageField?Number(row?.[messageField.name]??0):0;
+
+      if((!chat || !Number.isFinite(message) || message<=0) && urlField){
+        const parsed=parseTelegramUrl(row?.[urlField.name]);
+        if(parsed){
+          chat=parsed.chat;
+          message=parsed.message;
+          urlRecovered++;
+        }
+      }
+
+      const k=key(chat,message);
       if(!k) continue;
+
       const item=current.get(k),old=backupMap.get(k);
       let folder=sharedFolderName(row?.[folderField.name]);
       if(!folder&&item?.directoryId) folder=dirNameById.get(String(item.directoryId))||"";
       if(!folder&&old?.directoryId) folder=dirNameById.get(String(old.directoryId))||"";
       if(!folder) continue;
+
       if(item&&!item.directoryId){
         let d=(db.directories||[]).find(x=>String(x.name||"").trim()===folder);
         if(!d) d=ensureDirectory(folder);
         item.directoryId=d.id;
         localFixed++;
       }
+
       if(!sharedFolderName(row?.[folderField.name])){
         const value=baserowValueForField(folderField,folder);
         if(value!==undefined) updates.push({id:row.id,payload:{[folderField.name]:value}});
         found++;
       }
     }
-    for(let i=0;i<updates.length;i+=20) await Promise.all(updates.slice(i,i+20).map(async u=>{try{await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",u.payload);written++;}catch(e){console.warn("⚠️ 文件夹关联写回失败:",String(e?.message||e));}}));
+
+    for(let i=0;i<updates.length;i+=20){
+      await Promise.all(updates.slice(i,i+20).map(async u=>{
+        try{
+          await baserowRequest(
+            "PATCH",
+            "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",
+            u.payload
+          );
+          written++;
+        }catch(e){
+          console.warn("⚠️ 文件夹关联写回失败:",String(e?.message||e));
+        }
+      }));
+    }
+
     saveDb();
     try{await refreshSharedData(true);}catch(e){console.warn("⚠️ 恢复后刷新失败:",String(e?.message||e));}
-    return sendHtml(TOKEN,uid,"<b>🛠️ 文件夹资源恢复完成</b>\n━━━━━━━━━━━━━━\n📦 Baserow 资源行：<b>"+rows.length+"</b>\n📁 当前文件夹：<b>"+db.directories.length+"</b>\n♻️ 找回文件夹关联：<b>"+found+"</b>\n💾 已写回 Baserow：<b>"+written+"</b>\n🧩 本地索引修复：<b>"+localFixed+"</b>\n🗃️ 备份："+(backup?"<b>已读取</b>":"<b>未找到</b>")+"\n⏱️ 用时："+Math.round((Date.now()-started)/1000)+" 秒",adminMenu());
+
+    return sendHtml(
+      TOKEN,
+      uid,
+      "<b>🛠️ 文件夹资源恢复完成</b>\n━━━━━━━━━━━━━━\n"+
+      "📦 Baserow 资源行：<b>"+rows.length+"</b>\n"+
+      "📁 当前文件夹：<b>"+db.directories.length+"</b>\n"+
+      "♻️ 找回文件夹关联：<b>"+found+"</b>\n"+
+      "🔗 网址兼容恢复：<b>"+urlRecovered+"</b>\n"+
+      "💾 已写回 Baserow：<b>"+written+"</b>\n"+
+      "🧩 本地索引修复：<b>"+localFixed+"</b>\n"+
+      "🗃️ 备份："+(backup?"<b>已读取</b>":"<b>未找到</b>")+"\n"+
+      "⏱️ 用时："+Math.round((Date.now()-started)/1000)+" 秒",
+      adminMenu()
+    );
   }catch(e){
     console.error("❌ 文件夹资源恢复失败:",e);
     return sendHtml(TOKEN,uid,"<b>❌ 恢复失败</b>\n\n<code>"+escapeHtml(String(e?.message||e))+"</code>",adminMenu());
