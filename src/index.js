@@ -2389,7 +2389,14 @@ async function cleanupNumericTagFolders() {
 
       for(const row of allRows) {
         if(!row?.id || !titleField) continue;
-        const title=String(row?.[titleField.name]??"").trim();
+        let title=titleField ? String(row?.[titleField.name]??"").trim() : "";
+        // 兼容旧表：如果“名称”字段不是实际存放标记的字段，从所有字段中寻找文件夹标记。
+        if(!title.startsWith("__FOLDER__:")) {
+          for(const key of Object.keys(row||{})) {
+            const value=String(row?.[key]??"").trim();
+            if(value.startsWith("__FOLDER__:")) { title=value; break; }
+          }
+        }
         const folderNameRaw=folderField ? sharedFolderName(row?.[folderField.name]) : "";
         if(!title.startsWith("__FOLDER__:")) {
           // 普通资源行绝不删除；如果仍挂着纯数字文件夹，只清空文件夹字段。
@@ -2401,6 +2408,7 @@ async function cleanupNumericTagFolders() {
                 {[folderField.name]: null}
               );
               baserowRowsCache.delete(String(row.id));
+              resources++;
             } catch(e) {
               console.warn("⚠️ 清理资源数字文件夹失败:",String(e?.message||e));
             }
@@ -5210,7 +5218,8 @@ async function boot(){
             // 初始化完成后立即强制刷新一次，确保刚启动的机器人立刻拿到其他机器人已经写入的目录。
             await refreshSharedData(true);
             const cleaned=await cleanupNumericTagFolders();
-            if(cleaned.folders) console.log("🧹 已清理纯数字标签文件夹:", "folders="+cleaned.folders, "resourcesUncategorized="+cleaned.resources);
+            console.log("🧹 数字文件夹清理结果:", "folders="+cleaned.folders, "resourcesUncategorized="+cleaned.resources, "baserowFolderRowsDeleted="+cleaned.rows);
+            await refreshSharedData(true);
             console.log("✅ Baserow 启动后首次强制刷新完成", "pid=" + PROCESS_ID);
           })
           .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
