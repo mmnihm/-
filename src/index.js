@@ -596,6 +596,59 @@ function queueBaserowDeleteResource(item) {
   baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(rowId)).catch(e=>console.error("❌ Baserow 删除队列:",e.message));
 }
 
+async function repairLostFolderAssignments(uid) {
+  const started=Date.now();
+  try {
+    const fields=await getBaserowFields(true);
+    const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+    const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+    const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+    const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+    if(!folderField||!chatField||!messageField) throw new Error("Baserow 缺少 文件夹/聊天ID/消息ID 字段");
+    const rows=await listAllBaserowRows();
+    const backup=readJsonFile(BACKUP_FILE);
+    const dirs=[...(db.directories||[]),...((backup&&Array.isArray(backup.directories))?backup.directories:[])];
+    const dirNameById=new Map();
+    for(const d of dirs) if(d?.id&&d?.name&&!dirNameById.has(String(d.id))) dirNameById.set(String(d.id),String(d.name).trim());
+    const key=(chat,msg)=>{const c=String(chat??"").trim(),m=Number(msg||0);return c&&m>0?c+":"+m:"";};
+    const normalizeChat=v=>{const s=String(v??"").trim();return /^\d{10,}$/.test(s)&&!s.startsWith("-")?"-"+s:s;};
+    const current=new Map((db.resources||[]).map(x=>[key(normalizeChat(x.chatId),x.messageId),x]).filter(x=>x[0]));
+    const backupMap=new Map(((backup&&Array.isArray(backup.resources))?backup.resources:[]).map(x=>[key(normalizeChat(x.chatId),x.messageId),x]).filter(x=>x[0]));
+    let found=0,written=0,localFixed=0;
+    const updates=[];
+    for(const row of rows){
+      if(!row?.id) continue;
+      const title=titleField?String(row?.[titleField.name]??"").trim():"";
+      if(title.startsWith("__FOLDER__:")) continue;
+      const k=key(normalizeChat(row?.[chatField.name]),row?.[messageField.name]);
+      if(!k) continue;
+      const item=current.get(k),old=backupMap.get(k);
+      let folder=sharedFolderName(row?.[folderField.name]);
+      if(!folder&&item?.directoryId) folder=dirNameById.get(String(item.directoryId))||"";
+      if(!folder&&old?.directoryId) folder=dirNameById.get(String(old.directoryId))||"";
+      if(!folder) continue;
+      if(item&&!item.directoryId){
+        let d=(db.directories||[]).find(x=>String(x.name||"").trim()===folder);
+        if(!d) d=ensureDirectory(folder);
+        item.directoryId=d.id;
+        localFixed++;
+      }
+      if(!sharedFolderName(row?.[folderField.name])){
+        const value=baserowValueForField(folderField,folder);
+        if(value!==undefined) updates.push({id:row.id,payload:{[folderField.name]:value}});
+        found++;
+      }
+    }
+    for(let i=0;i<updates.length;i+=20) await Promise.all(updates.slice(i,i+20).map(async u=>{try{await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",u.payload);written++;}catch(e){console.warn("⚠️ 文件夹关联写回失败:",String(e?.message||e));}}));
+    saveDb();
+    try{await refreshSharedData(true);}catch(e){console.warn("⚠️ 恢复后刷新失败:",String(e?.message||e));}
+    return sendHtml(TOKEN,uid,"<b>🛠️ 文件夹资源恢复完成</b>\n━━━━━━━━━━━━━━\n📦 Baserow 资源行：<b>"+rows.length+"</b>\n📁 当前文件夹：<b>"+db.directories.length+"</b>\n♻️ 找回文件夹关联：<b>"+found+"</b>\n💾 已写回 Baserow：<b>"+written+"</b>\n🧩 本地索引修复：<b>"+localFixed+"</b>\n🗃️ 备份："+(backup?"<b>已读取</b>":"<b>未找到</b>")+"\n⏱️ 用时："+Math.round((Date.now()-started)/1000)+" 秒",adminMenu());
+  }catch(e){
+    console.error("❌ 文件夹资源恢复失败:",e);
+    return sendHtml(TOKEN,uid,"<b>❌ 恢复失败</b>\n\n<code>"+escapeHtml(String(e?.message||e))+"</code>",adminMenu());
+  }
+}
+
 async function backfillBaserowFolderAssignments(rows, fields, folderField, titleField) {
   if(!folderField || !titleField || !Array.isArray(rows)) return 0;
   const localByTitle=new Map();
@@ -2006,6 +2059,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
  [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],
+ [{text:"🛠️ 恢复文件夹资源",callback_data:"adm:folder_repair"}],
  [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步",callback_data:"adm:auto"}],
  [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
@@ -3874,6 +3928,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="adm:nonmember")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"✏️ 非会员提示"});
     if(data==="adm:post")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📣 获取后推广"});
     if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Baserow 历史恢复已启动</b>\\n\\n📚 读取现有 Baserow 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverBaserowHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }
+    if(route==="folder_repair") return repairLostFolderAssignments(uid);
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
     if(route==="auto_stop") { await stopRepositoryAutoSync(); return showRepositoryAutoSyncStatus(uid); }
     if(route==="auto_resume") { const a=repositoryAutoSyncState(); if(!a.sourceId||!a.targetId) return showRepositoryAutoSyncStatus(uid); a.enabled=true; a.status="running"; a.updatedAt=Date.now(); saveDb(); processRepositoryAutoSyncQueue().catch(()=>{}); return showRepositoryAutoSyncStatus(uid); }
