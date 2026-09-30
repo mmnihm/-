@@ -2391,9 +2391,23 @@ async function cleanupNumericTagFolders() {
         if(!row?.id || !titleField) continue;
         const title=String(row?.[titleField.name]??"").trim();
         const folderNameRaw=folderField ? sharedFolderName(row?.[folderField.name]) : "";
-        if(!title.startsWith("__FOLDER__:")) continue;
+        if(!title.startsWith("__FOLDER__:")) {
+          // 普通资源行绝不删除；如果仍挂着纯数字文件夹，只清空文件夹字段。
+          if(folderField && /^\d+$/.test(folderNameRaw)) {
+            try {
+              await baserowRequest(
+                "PATCH",
+                "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",
+                {[folderField.name]: null}
+              );
+              baserowRowsCache.delete(String(row.id));
+            } catch(e) {
+              console.warn("⚠️ 清理资源数字文件夹失败:",String(e?.message||e));
+            }
+          }
+          continue;
+        }
 
-        const markerId=title.split(":")[1]||"";
         const markerId=title.split(":")[1]||"";
         let folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
         if(!folderName) {
