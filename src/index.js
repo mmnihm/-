@@ -3114,9 +3114,9 @@ async function backupRecoveryPreview(uid) {
     const k=String(x.chatId||"")+":"+String(x.messageId||"");
     return k !== ":" && !currentKeys.has(k);
   });
-  const currentDirNames = new Set(currentDirs.map(x=>String(x.name||"").trim().replace(/\\s+/g," ").toLowerCase()).filter(Boolean));
+  const currentDirNames = new Set(currentDirs.map(x=>String(x.name||"").trim().replace(/\s+/g," ").toLowerCase()).filter(Boolean));
   const missingDirs = backupDirs.filter(x=>{
-    const n=String(x.name||"").trim().replace(/\\s+/g," ").toLowerCase();
+    const n=String(x.name||"").trim().replace(/\s+/g," ").toLowerCase();
     return n && !currentDirNames.has(n);
   });
   const backupSavedAt = Number(backup?.settings?.lastSavedAt || backup?.savedAt || 0);
@@ -3143,13 +3143,13 @@ async function backupRecoveryMerge(uid) {
   if (!backup || typeof backup !== "object") return backupRecoveryPreview(uid);
   const backupDirs = Array.isArray(backup.directories) ? backup.directories : [];
   const backupResources = Array.isArray(backup.resources) ? backup.resources : [];
-  const currentDirByName = new Map((db.directories||[]).map(d=>[String(d.name||"").trim().replace(/\\s+/g," ").toLowerCase(),d]));
+  const currentDirByName = new Map((db.directories||[]).map(d=>[String(d.name||"").trim().replace(/\s+/g," ").toLowerCase(),d]));
   const dirMap = new Map();
   let restoredDirs=0, restoredResources=0;
   for (const bd of backupDirs) {
     const name=String(bd?.name||"").trim();
     if(!name) continue;
-    const norm=name.replace(/\\s+/g," ").toLowerCase();
+    const norm=name.replace(/\s+/g," ").toLowerCase();
     let d=currentDirByName.get(norm);
     if(!d) {
       d={...bd,id:bd.id||sharedDirectoryId(name),name,createdAt:bd.createdAt||Date.now(),restoredFromBackup:true};
