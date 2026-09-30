@@ -67,7 +67,16 @@ function runtimeStatus() {
   };
 }
 
+function tokenFingerprint(token) {
+  const s = String(token || "").trim();
+  return s ? crypto.createHash("sha1").update(s).digest("hex").slice(0, 10) : "未配置";
+}
+
+const PROCESS_ID = process.pid;
+const TOKEN_FINGERPRINT = tokenFingerprint(TOKEN);
+
 console.log("🚀 Telegram Clone Platform v2 starting...");
+console.log("🧩 PROCESS:", "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
 console.log("📦 Node:", process.version);
 console.log("🔐 BOT_TOKEN:", TOKEN ? "已配置" : "❌ 未配置");
 console.log("👑 ADMIN_IDS:", ADMIN_IDS.size ? "已配置" : "❌ 未配置");
@@ -172,6 +181,11 @@ async function tg(token, method, body = {}) {
       const r = await telegramHttpsRequest(token, method, body, timeoutMs);
       const j = r.json;
       if (j.ok) return j.result;
+
+      if (method === "getUpdates" && /409|Conflict|terminated by other getUpdates request/i.test(String(j.description || ""))) {
+        console.error("🚨 Telegram 轮询冲突：同一个 BOT_TOKEN 可能正在另一个进程/部署中运行",
+          "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
+      }
 
       const retryAfter = Number(j.parameters?.retry_after || 0);
       if (r.status === 429 && retryAfter > 0 && attempt < maxAttempts - 1) {
@@ -3802,6 +3816,7 @@ async function pollMain() {
   }
   console.log("🌐 Telegram API: https://api.telegram.org");
   console.log("🌐 DNS order:", (() => { try { return dns.getDefaultResultOrder(); } catch { return "unknown"; } })());
+  console.log("🧩 MAIN POLLING:", "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
   console.log("✅ MAIN POLLING READY");
   while(true){
     try{
@@ -3850,6 +3865,10 @@ async function pollMain() {
       // 长轮询/网络异常时不要继续显示“真实连接”，否则心跳会产生假在线状态。
       runtime.mainConnected = false;
       runtime.lastError = String(e.message || e);
+      if (/409|Conflict|terminated by other getUpdates request/i.test(String(e?.message || e))) {
+        console.error("🚨 检测到同一 BOT_TOKEN 的 getUpdates 冲突：请确认这个 token 没有在另一个部署/进程中同时运行",
+          "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
+      }
       console.error("MAIN POLLING:", e.message);
       console.error("MAIN POLLING DETAIL:", e?.cause || e);
       await sleep(3000);
@@ -3955,11 +3974,11 @@ async function boot(){
           .catch(e=>console.error("❌ 迁移断点恢复失败:",String(e?.message||e)));
       }
       // Telegram 轮询必须优先启动，Baserow 同步不得阻塞机器人按钮和消息。
-      console.log("🔄 Baserow 共享模式：后台初始化，不阻塞 Telegram");
+      console.log("🔄 Baserow 共享模式：后台初始化，不阻塞 Telegram", "pid=" + PROCESS_ID);
       initializeSharedBaserow()
-        .then(()=>console.log("✅ Baserow 共享初始化完成"))
+        .then(()=>console.log("✅ Baserow 共享初始化完成", "pid=" + PROCESS_ID))
         .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
-      console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name));
+      console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name), "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
       console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
       console.log("⚙️ "+configText().replaceAll("\n"," | "));
 
