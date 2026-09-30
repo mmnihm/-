@@ -1203,11 +1203,12 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
   try { fields=await getBaserowFields(true); rows=await listAllBaserowRows(); }
   catch(e) { return sendHtml(TOKEN,uid,"❌ <b>读取 Baserow 失败</b>\\n\\n"+escapeHtml(e?.message||e),adminMenu()); }
 
-  const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+  const titleField=baserowPickField(fields,["名称","资源名称","资源名","标题","资源标题","文件名","文件名称","资源","Name","Title","Resource","Resource Name","File Name"]);
   const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
   const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
-  if(!titleField) return sendHtml(TOKEN,uid,"❌ <b>Baserow 缺少资源名称字段</b>\\n\\n请保留“资源名称/名称/标题”其中一个字段。",adminMenu());
 
+  // 兼容旧 Baserow 表：历史数据可能没有“资源名称”字段。
+  // 恢复时优先使用 Telegram 定位信息（聊天ID+消息ID/网址），只有没有定位信息时才使用名称匹配。
   const normalizeMatchTitle = value => String(value||"").replace(/\u200b/g,"").replace(/[^\p{L}\p{N}]+/gu,"").trim().toLowerCase();
   const parseRowDate = row => {
     if(!dateField) return 0;
@@ -1218,18 +1219,44 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
   };
 
   const candidatesByTitle=new Map();
+  const candidatesByIdentity=new Map();
   let folderRowCount=0, resourceRowCount=0;
+  const recoveryChatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+  const recoveryMessageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+  const recoveryUrlField=baserowPickField(fields,["网址","链接","链接地址","URL","Url","Link"]);
+
+  const parseTelegramUrlIdentity = value => {
+    const url=String(value||"").trim();
+    let m=url.match(/t\.me\/c\/(\d+)\/(\d+)/i);
+    if(m) return {chat:"-100"+m[1],message:Number(m[2])};
+    m=url.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\d+)/i);
+    if(m) return {chat:"@"+m[1],message:Number(m[2])};
+    return null;
+  };
+
   for(const row of rows) {
-    const rawTitle=String(row?.[titleField.name]??"").trim();
-    if(!rawTitle) continue;
+    const rawTitle=titleField ? String(row?.[titleField.name]??"").trim() : "";
     if(rawTitle.startsWith("__FOLDER__:")) { folderRowCount++; continue; }
-    const key=normalizeMatchTitle(rawTitle);
-    if(!key) continue;
+
     const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
     const candidate={id:String(row.id),title:rawTitle,folderName,date:parseRowDate(row),row};
-    if(!candidatesByTitle.has(key)) candidatesByTitle.set(key,[]);
-    candidatesByTitle.get(key).push(candidate);
-    resourceRowCount++;
+    let chat=recoveryChatField ? String(row?.[recoveryChatField.name]??"").trim() : "";
+    let message=recoveryMessageField ? Number(row?.[recoveryMessageField.name]??0) : 0;
+    if((!chat || !Number.isFinite(message) || message<=0) && recoveryUrlField) {
+      const identity=parseTelegramUrlIdentity(row?.[recoveryUrlField.name]);
+      if(identity) { chat=identity.chat; message=identity.message; }
+    }
+    if(chat && Number.isFinite(message) && message>0) {
+      candidatesByIdentity.set(chat+":"+message,candidate);
+      resourceRowCount++;
+    } else if(rawTitle) {
+      const key=normalizeMatchTitle(rawTitle);
+      if(key) {
+        if(!candidatesByTitle.has(key)) candidatesByTitle.set(key,[]);
+        candidatesByTitle.get(key).push(candidate);
+        resourceRowCount++;
+      }
+    }
   }
 
   const previousLast=Number(current.lastMessageId||0);
@@ -1283,8 +1310,16 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
       const text=String(message?.message||message?.text||"").trim();
       const fileName=message?.file?.name || message?.document?.attributes?.find?.(x=>x.fileName)?.fileName || "";
       const msgTitle=String(fileName||text||("历史资源 #"+messageId)).slice(0,200);
-      const matchKey=normalizeMatchTitle(msgTitle);
-      let candidates=(candidatesByTitle.get(matchKey)||[]).filter(x=>!usedRowIds.has(String(x.id)));
+      const identityKey=String(r.chatId)+":"+messageId;
+      let candidates=[];
+      const exactCandidate=candidatesByIdentity.get(identityKey);
+      if(exactCandidate && !usedRowIds.has(String(exactCandidate.id))) candidates=[exactCandidate];
+
+      if(!candidates.length) {
+        const matchKey=normalizeMatchTitle(msgTitle);
+        candidates=(candidatesByTitle.get(matchKey)||[]).filter(x=>!usedRowIds.has(String(x.id)));
+      }
+
       if(candidates.length) {
         if(candidates.length>1) {
           state.duplicateTitle++;
