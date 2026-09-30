@@ -1203,7 +1203,18 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
   const r=targetRepo || repo();
   if(!r) return sendHtml(TOKEN,uid,"❌ <b>没有可恢复的资源仓库</b>\\n\\n请先绑定原来的 Telegram 资源仓库。",adminMenu());
   const current=db.settings.baserowRecovery||{};
-  if(String(current.status||"")==="running") return sendHtml(TOKEN,uid,"🔄 <b>Baserow 历史恢复已经在运行</b>\\n\\n请等待当前任务完成。",adminMenu());
+  if(String(current.status||"")==="running") {
+    const started=Number(current.startedAt||0);
+    const last=Number(current.lastMessageId||0);
+    const stale=started>0 && (Date.now()-started)>2*60*1000;
+    if(!stale) return sendHtml(TOKEN,uid,"🔄 <b>Baserow 历史恢复已经在运行</b>\\n\\n📨 已扫描："+Number(current.scanned||0).toLocaleString()+" 条\\n🔗 已匹配："+Number(current.matched||0).toLocaleString()+" 条\\n🆔 当前进度："+last+"\\n\\n请等待任务继续。",adminMenu());
+    console.warn("⚠️ Baserow 历史恢复检测到旧任务卡住，自动从断点继续：", {scanned:Number(current.scanned||0),matched:Number(current.matched||0),lastMessageId:last});
+    current.status="error";
+    current.error="上一次恢复进程疑似中断，自动从断点继续。";
+    current.finishedAt=Date.now();
+    db.settings.baserowRecovery=current;
+    saveDb();
+  }
 
   let fields, rows;
   try { fields=await getBaserowFields(true); rows=await listAllBaserowRows(); }
@@ -1308,8 +1319,15 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
     const entity=await findHistoryEntity(client,r);
     let lastProgressAt=Date.now();
 
-    for await(const message of client.iterMessages(entity,{limit:undefined})) {
-      const messageId=Number(message?.id||0);
+    // 不再一次性要求 MTProto 无限历史迭代到底；每个批次最多处理 500 条，
+    // 批次之间主动保存断点，避免卡在 Telegram 历史接口的下一页请求时整项任务看起来“死掉”。
+    let resumeMessageId=previousLast;
+    let reachedEnd=false;
+    while(!reachedEnd) {
+      let batchCount=0;
+      for await(const message of client.iterMessages(entity,{limit:500,offsetId:0})) {
+        const messageId=Number(message?.id||0);
+        if(previousLast>0 && messageId>0 && messageId<=resumeMessageId) { reachedEnd=true; break; }
       if(previousLast>0 && messageId>0 && messageId<=previousLast) break;
       if(!messageId) continue;
       state.scanned++; state.lastMessageId=messageId;
@@ -1339,6 +1357,19 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
       if(state.scanned%100===0 || Date.now()-lastProgressAt>=15000) {
         lastProgressAt=Date.now(); await updateProgress(false);
         console.log("🔄 BASEROW HISTORY RECOVERY:",state.scanned,"matched=",state.matched,"unmatched=",state.unmatched,"checkpoint=",state.lastMessageId);
+        batchCount++;
+        resumeMessageId=messageId;
+        if(batchCount%100===0) saveDb();
+        if(state.scanned%100===0 || Date.now()-lastProgressAt>=15000) {
+          lastProgressAt=Date.now(); await updateProgress(false);
+          console.log("🔄 BASEROW HISTORY RECOVERY:",state.scanned,"matched=",state.matched,"unmatched=",state.unmatched,"checkpoint=",state.lastMessageId);
+        }
+      }
+      if(batchCount===0) reachedEnd=true;
+      else {
+        state.lastMessageId=resumeMessageId;
+        saveDb();
+        await updateProgress(false);
       }
     }
 
