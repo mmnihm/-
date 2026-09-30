@@ -1328,45 +1328,51 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
       for await(const message of client.iterMessages(entity,{limit:500,offsetId:resumeMessageId||0})) {
         const messageId=Number(message?.id||0);
         if(!messageId) continue;
-      if(previousLast>0 && messageId>0 && messageId<=previousLast) break;
-      if(!messageId) continue;
-      state.scanned++; state.lastMessageId=messageId;
-      const text=String(message?.message||message?.text||"").trim();
-      const fileName=message?.file?.name || message?.document?.attributes?.find?.(x=>x.fileName)?.fileName || "";
-      const msgTitle=String(fileName||text||("历史资源 #"+messageId)).slice(0,200);
-      const identityKey=String(r.chatId)+":"+messageId;
-      let candidates=[];
-      const exactCandidate=candidatesByIdentity.get(identityKey);
-      if(exactCandidate && !usedRowIds.has(String(exactCandidate.id))) candidates=[exactCandidate];
 
-      if(!candidates.length) {
-        const matchKey=normalizeMatchTitle(msgTitle);
-        candidates=(candidatesByTitle.get(matchKey)||[]).filter(x=>!usedRowIds.has(String(x.id)));
-      }
-
-      if(candidates.length) {
-        if(candidates.length>1) {
-          state.duplicateTitle++;
-          const msgDate=message?.date ? Math.floor(new Date(message.date).getTime()/1000) : 0;
-          if(msgDate) candidates.sort((a,b)=>Math.abs((a.date||msgDate)-msgDate)-Math.abs((b.date||msgDate)-msgDate));
-        }
-        const picked=candidates[0];
-        usedRowIds.add(String(picked.id)); state.usedRowIds=[...usedRowIds].slice(-30000);
-        if(addRecoveredItem(message,picked)) state.matched++;
-      } else state.unmatched++;
-      if(state.scanned%100===0 || Date.now()-lastProgressAt>=15000) {
-        lastProgressAt=Date.now(); await updateProgress(false);
-        console.log("🔄 BASEROW HISTORY RECOVERY:",state.scanned,"matched=",state.matched,"unmatched=",state.unmatched,"checkpoint=",state.lastMessageId);
+        // offsetId 已经负责从上一次断点继续，这里不要再用 previousLast 比较，
+        // 否则 Telegram 的降序历史消息会在第一条就被错误 break。
+        state.scanned++;
+        state.lastMessageId=messageId;
         batchCount++;
-        resumeMessageId=messageId;
-        if(batchCount%100===0) saveDb();
+
+        const text=String(message?.message||message?.text||"").trim();
+        const fileName=message?.file?.name || message?.document?.attributes?.find?.(x=>x.fileName)?.fileName || "";
+        const msgTitle=String(fileName||text||("历史资源 #"+messageId)).slice(0,200);
+        const identityKey=String(r.chatId)+":"+messageId;
+        let candidates=[];
+        const exactCandidate=candidatesByIdentity.get(identityKey);
+        if(exactCandidate && !usedRowIds.has(String(exactCandidate.id))) candidates=[exactCandidate];
+
+        if(!candidates.length) {
+          const matchKey=normalizeMatchTitle(msgTitle);
+          candidates=(candidatesByTitle.get(matchKey)||[]).filter(x=>!usedRowIds.has(String(x.id)));
+        }
+
+        if(candidates.length) {
+          if(candidates.length>1) {
+            state.duplicateTitle++;
+            const msgDate=message?.date ? Math.floor(new Date(message.date).getTime()/1000) : 0;
+            if(msgDate) candidates.sort((a,b)=>Math.abs((a.date||msgDate)-msgDate)-Math.abs((b.date||msgDate)-msgDate));
+          }
+          const picked=candidates[0];
+          usedRowIds.add(String(picked.id));
+          state.usedRowIds=[...usedRowIds].slice(-30000);
+          if(addRecoveredItem(message,picked)) state.matched++;
+        } else {
+          state.unmatched++;
+        }
+
         if(state.scanned%100===0 || Date.now()-lastProgressAt>=15000) {
-          lastProgressAt=Date.now(); await updateProgress(false);
+          lastProgressAt=Date.now();
+          await updateProgress(false);
           console.log("🔄 BASEROW HISTORY RECOVERY:",state.scanned,"matched=",state.matched,"unmatched=",state.unmatched,"checkpoint=",state.lastMessageId);
         }
       }
-      if(batchCount===0) reachedEnd=true;
-      else {
+
+      if(batchCount===0) {
+        reachedEnd=true;
+      } else {
+        resumeMessageId=Number(state.lastMessageId||0);
         state.lastMessageId=resumeMessageId;
         saveDb();
         await updateProgress(false);
