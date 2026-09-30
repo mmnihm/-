@@ -238,6 +238,8 @@ const BASEROW_API_URL = String(process.env.BASEROW_API_URL || "https://api.baser
 const BASEROW_TOKEN = String(process.env.BASEROW_TOKEN || "").trim();
 const BASEROW_TABLE_ID = String(process.env.BASEROW_TABLE_ID || "1229166").trim();
 
+console.log("🧪 BASEROW ENV:", "token=" + (BASEROW_TOKEN ? "已读取" : "❌未读取"), "tokenLength=" + BASEROW_TOKEN.length, "table=" + (BASEROW_TABLE_ID || "❌空"), "api=" + BASEROW_API_URL);
+
 const baserow = {
   enabled: Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID),
   connected: false,
