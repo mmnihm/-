@@ -5152,7 +5152,7 @@ async function pollMain() {
         if(u.callback_query) {
           console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||""));
           // 回调后台执行，不阻塞 getUpdates；Telegram 按钮可连续点击，长任务不会卡住整个机器人。
-          void handleDirectoryCallback(TOKEN,u.callback_query,false);
+          void handleDirectoryCallback(TOKEN,u.callback_query,false).catch(e=>console.error("MAIN CALLBACK ERROR:",String(e?.message||e)));
         }
         if(u.message) {
           console.log("📨 MAIN MESSAGE RECEIVED:", String(u.message.text||u.message.caption||"").slice(0,80));
