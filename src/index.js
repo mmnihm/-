@@ -301,6 +301,8 @@ async function checkBaserowConnection() {
 // 兼容不同模板字段名称；不会覆盖用户已有的其他字段。
 let baserowFieldsCache = null;
 let baserowSyncQueue = Promise.resolve();
+// 文件夹同步使用独立队列，不能被数千条资源同步长期堵塞。
+let baserowDirectorySyncQueue = Promise.resolve();
 
 function baserowNormName(v) {
   return String(v || "").trim().toLowerCase().replace(/[\\s_\-\/（）()：:]+/g, "");
@@ -501,6 +503,7 @@ function baserowRowKey(row, fields) {
 async function baserowSyncDirectory(directory) {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || !directory) return;
   try {
+    console.log("📁 Baserow 文件夹同步:", String(directory.name||""), "id="+String(directory.id||""));
     const fields=await getBaserowFields();
     const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
     const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
@@ -535,7 +538,14 @@ async function baserowSyncDirectory(directory) {
 
 function queueBaserowDirectorySync(directory) {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || !directory) return;
-  baserowSyncQueue=baserowSyncQueue.then(()=>baserowSyncDirectory(directory)).catch(e=>console.error("❌ Baserow 文件夹队列:",e.message));
+  // 文件夹必须优先于资源批量写入，否则历史扫描/迁移后的大量资源会把目录同步堵住。
+  baserowDirectorySyncQueue=baserowDirectorySyncQueue
+    .then(()=>baserowSyncDirectory(directory))
+    .catch(e=>console.error("❌ Baserow 文件夹队列:",e.message));
+}
+
+async function waitBaserowDirectorySyncQueue() {
+  await baserowDirectorySyncQueue;
 }
 
 async function baserowDeleteRow(rowId) {
@@ -672,6 +682,7 @@ async function initializeSharedBaserow() {
     db.resources=db.resources.slice(0,MAX_RESOURCES);
     saveDb();
     await waitBaserowSyncQueue();
+    await waitBaserowDirectorySyncQueue();
     await pullBaserowSharedData();
   } catch(e) {
     console.error("❌ 共享数据初始化失败:",String(e?.message||e));
