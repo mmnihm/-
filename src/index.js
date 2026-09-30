@@ -977,6 +977,15 @@ async function initializeSharedBaserow() {
       return;
     }
     console.log("🔗 Baserow 共享连接确认：enabled="+String(baserow.enabled)+" connected="+String(baserow.connected)+" table="+BASEROW_TABLE_ID);
+
+    // Baserow 连接成功后立即清理旧的纯数字文件夹，不等待后续资源/目录同步。
+    try {
+      const cleanedNow=await cleanupNumericTagFolders();
+      console.log("🧹 Baserow 立即数字文件夹清理:", "folders="+cleanedNow.folders, "resourcesUncategorized="+cleanedNow.resources, "baserowFolderRowsDeleted="+cleanedNow.rows);
+    } catch(e) {
+      console.error("❌ Baserow 立即数字文件夹清理失败:",String(e?.message||e));
+    }
+
     await ensureBaserowRecoveryFields();
     normalizeSharedDirectories();
     // 首次切换共享模式时，先保留本地快照，再与 Baserow 做并集合并，绝不因为远端为空而丢失本地资源。
