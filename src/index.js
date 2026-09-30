@@ -1197,8 +1197,7 @@ function touchSharedData(uid="system") {
   if(!db.settings.sharedData || typeof db.settings.sharedData!=="object") db.settings.sharedData={version:1,lastChangedAt:Date.now(),lastChangedBy:String(uid)};
   db.settings.sharedData.version=Number(db.settings.sharedData.version||0)+1;
   db.settings.sharedData.lastChangedAt=Date.now();
-  db.settings.sharedData.lastChangedBy=String(uid||"system");
-}
+  db.settings.sharedData.lastChangedBy=String(uid||"system");}
 
 let historyClient = null;
 let historyConnecting = null;
@@ -2397,8 +2396,7 @@ function resourceMoveMenu(items,page=0,selected=[]) {
 }
 function shareResourceKeyboard(token) {
   return {inline_keyboard:[
-    [{text:"🔗 打开分享链接",url:token}],
-    [{text:"🏠 返回首页",callback_data:"batch:home"}]
+    [{text:"🔗 打开分享链接",url:token}],    [{text:"🏠 返回首页",callback_data:"batch:home"}]
   ]};
 }
 async function finalizeUploadUnlocked(uid, state) {
@@ -3597,8 +3595,7 @@ async function mainMessage(msg) {
     if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
       states.delete(key);
       if(t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
-      return send(TOKEN,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",admin?adminMenu():userMenu());
-    }
+      return send(TOKEN,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",admin?adminMenu():userMenu());    }
     const query=t.trim();
     recordStat(uid,"search",1);
     saveDb();
@@ -4205,7 +4202,9 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:ops")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📊 数据与运营</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminOpsInline()});
     if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
     if(data==="admin:bot")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🤖 机器人管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminBotInline()});
-    if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});\n     if(data==="admin:backup") return backupRecoveryPreview(uid);\n     if(data==="admin:backup_restore") return backupRecoveryMerge(uid);
+    if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
+    if(data==="admin:backup") return backupRecoveryPreview(uid);
+    if(data==="admin:backup_restore") return backupRecoveryMerge(uid);
     if(data==="admin:upload"){
       if(!repo()){
         await answer("尚未绑定资源仓库",true);
