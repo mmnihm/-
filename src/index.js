@@ -3798,8 +3798,9 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
   };
   await answer();
-  // 两个独立机器人实例使用同一个 Baserow 时，点击目录/管理按钮前先拉取共享目录。
-  await refreshSharedData(false).catch(e=>console.warn("⚠️ 回调共享目录刷新失败:",String(e?.message||e)));
+  // 按钮回调绝不能等待 Baserow。先立即响应 Telegram，目录共享数据在后台刷新。
+  // 否则 Baserow 网络延迟会让每一次按钮点击都出现明显卡顿。
+  refreshSharedData(false).catch(e=>console.warn("⚠️ 回调后台共享目录刷新失败:",String(e?.message||e)));
 
   if(data==="user:dirs") {
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});
@@ -4394,7 +4395,11 @@ async function pollMain() {
           indexResource(u.edited_channel_post);
           queueRepositoryAutoSyncMessage(u.edited_channel_post);
         }
-        if(u.callback_query) { console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||"")); await handleDirectoryCallback(TOKEN,u.callback_query,false); }
+        if(u.callback_query) {
+          console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||""));
+          // 回调后台执行，不阻塞 getUpdates；Telegram 按钮可连续点击，长任务不会卡住整个机器人。
+          handleDirectoryCallback(TOKEN,u.callback_query,false).catch(e=>console.error("MAIN CALLBACK:",String(e?.message||e)));
+        }
         if(u.message) {
           console.log("📨 MAIN MESSAGE RECEIVED:", String(u.message.text||u.message.caption||"").slice(0,80));
           try {
@@ -4451,7 +4456,10 @@ async function childLoop(child) {
       if (updates.length) console.log("📩 CHILD UPDATE:", "@" + (child.username || child.botId), "count=" + updates.length);
       for(const u of updates){
         child.offset=u.update_id+1;
-        if(u.callback_query) await handleDirectoryCallback(token,u.callback_query,true);
+        if(u.callback_query) {
+          // 子机器人回调同样后台执行，避免一个慢操作堵住后续按钮。
+          handleDirectoryCallback(token,u.callback_query,true).catch(e=>console.error("CHILD CALLBACK:",String(e?.message||e)));
+        }
         if(u.message) await childMessage(child,u.message,token);
       }
       saveDb();
