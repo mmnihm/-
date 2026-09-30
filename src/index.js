@@ -1008,6 +1008,12 @@ async function initializeSharedBaserow() {
     saveDb();
     await waitBaserowSyncQueue();
     await waitBaserowDirectorySyncQueue();
+
+    // 初始化完成后再执行一次数字文件夹清理，避免前面的目录同步队列把旧数字文件夹重新写回 Baserow。
+    const cleaned=await cleanupNumericTagFolders();
+    console.log("🧹 Baserow 初始化阶段数字文件夹清理:", "folders="+cleaned.folders, "resourcesUncategorized="+cleaned.resources, "baserowFolderRowsDeleted="+cleaned.rows);
+
+    // 清理后重新拉取，确保内存中的目录也同步为最终状态。
     await pullBaserowSharedData();
   } catch(e) {
     console.error("❌ 共享数据初始化失败:",String(e?.message||e));  }
