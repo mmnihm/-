@@ -1852,7 +1852,8 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"✏️ 修改文件夹",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
- [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],\n [{text:"🔄 迁移仓库",callback_data:"adm:migrate"}],
+ [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],
+ [{text:"🔄 迁移仓库",callback_data:"adm:migrate"}],
  [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
