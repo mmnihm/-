@@ -1198,6 +1198,27 @@ function indexHistoryMessage(message, chatId) {
   return true;
 }
 
+async function repairBaserowFolderAssignments(rows, fields) {
+  if(!Array.isArray(rows) || !rows.length || !db.resources?.length) return {matched:0,folders:0,changed:0};
+  const titleField=baserowPickField(fields,["名称","资源名称","资源名","标题","资源标题","文件名","文件名称","资源","Name","Title","Resource","Resource Name","File Name"]);
+  const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+  const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
+  const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+  const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+  const urlField=baserowPickField(fields,["网址","链接","链接地址","URL","Url","Link"]);
+  if(!folderField) return {matched:0,folders:0,changed:0};
+  const norm=v=>String(v||"").replace(/\u200b/g,"").replace(/[^\p{L}\p{N}]+/gu,"").trim().toLowerCase();
+  const rowDate=row=>{if(!dateField)return 0;const raw=row?.[dateField.name],n=Number(raw);if(Number.isFinite(n)&&n>0)return n>10000000000?Math.floor(n/1000):Math.floor(n);const t=new Date(raw||0).getTime();return Number.isFinite(t)&&t>0?Math.floor(t/1000):0;};
+  const parseUrl=v=>{const u=String(v||"").trim();let m=u.match(/t\.me\/c\/(\d+)\/(\d+)/i);if(m)return {chat:"-100"+m[1],message:Number(m[2])};m=u.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\d+)/i);if(m)return {chat:"@"+m[1],message:Number(m[2])};return null;};
+  const byIdentity=new Map(),byTitle=new Map(),folders=new Set();
+  for(const row of rows){const title=titleField?String(row?.[titleField.name]??"").trim():"";if(title.startsWith("__FOLDER__:"))continue;const folder=sharedFolderName(row?.[folderField.name]);if(!folder)continue;let chat=chatField?String(row?.[chatField.name]??"").trim():"",message=messageField?Number(row?.[messageField.name]??0):0;if((!chat||!Number.isFinite(message)||message<=0)&&urlField){const p=parseUrl(row?.[urlField.name]);if(p){chat=p.chat;message=p.message;}}const c={id:String(row.id),title,date:rowDate(row),folder};if(chat&&Number.isFinite(message)&&message>0)byIdentity.set(chat+":"+message,c);if(title){const k=norm(title);if(k){if(!byTitle.has(k))byTitle.set(k,[]);byTitle.get(k).push(c);}}}
+  let matched=0,changed=0;
+  for(const item of db.resources){const identity=String(item?.chatId||"")+":"+String(item?.messageId||0);let c=byIdentity.get(identity);if(!c){const list=(byTitle.get(norm(item?.title||""))||[]).slice();if(list.length===1)c=list[0];else if(list.length>1){const d=Number(item?.date||0);list.sort((a,b)=>Math.abs((a.date||d)-d)-Math.abs((b.date||d)-d));c=list[0];}}if(!c?.folder)continue;matched++;const d=ensureDirectory(c.folder);if(!d)continue;folders.add(String(d.id));if(String(item.directoryId||"")!==String(d.id)){item.directoryId=String(d.id);changed++;}}
+  if(changed){touchSharedData(0);saveDb();for(const item of db.resources)if(item?.directoryId)queueBaserowResourceSync(item);}
+  for(const id of folders){const d=db.directories.find(x=>String(x.id)===id);if(d)queueBaserowDirectorySync(d);} await waitBaserowDirectorySyncQueue();
+  return {matched,folders:folders.size,changed};
+}
+
 async function recoverBaserowHistory(uid, targetRepo=null) {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return sendHtml(TOKEN,uid,"❌ <b>Baserow 共享未配置</b>\\n\\n请先配置 BASEROW_TOKEN 和 BASEROW_TABLE_ID。",adminMenu());
   const r=targetRepo || repo();
@@ -1219,7 +1240,7 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
   let fields, rows;
   try { fields=await getBaserowFields(true); rows=await listAllBaserowRows(); }
   catch(e) { return sendHtml(TOKEN,uid,"❌ <b>读取 Baserow 失败</b>\\n\\n"+escapeHtml(e?.message||e),adminMenu()); }
-
+  try { const repair=await repairBaserowFolderAssignments(rows,fields); console.log("📁 BASEROW FOLDER REPAIR:",repair); } catch(e) { console.warn("⚠️ Baserow 文件夹归属补全失败:",String(e?.message||e)); }\n
   const titleField=baserowPickField(fields,["名称","资源名称","资源名","标题","资源标题","文件名","文件名称","资源","Name","Title","Resource","Resource Name","File Name"]);
   const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
   const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
