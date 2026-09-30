@@ -61,6 +61,8 @@ function runtimeStatus() {
       enabled: baserow.enabled,
       connected: baserow.connected,
       tableId: BASEROW_TABLE_ID || null,
+      tokenConfigured: Boolean(BASEROW_TOKEN),
+      permissionHint: baserow.lastError && /TABLE_PERMISSION_DENIED|没有表 .*权限/.test(baserow.lastError) ? "请检查 Baserow 数据库令牌的表权限" : null,
       lastOkAt: baserow.lastOkAt ? new Date(baserow.lastOkAt).toISOString() : null,
       lastError: baserow.lastError || null
     }
@@ -249,16 +251,21 @@ function normalizeBaserowApiUrl(value) {
   }
 }
 function normalizeBaserowTableId(value) {
-  const raw=String(value||"1229166").trim();
+  const raw=String(value||"").trim();
   const m=raw.match(/(?:BASEROW_TABLE_ID\s*=\s*)?(\d+)/i);
-  return m ? m[1] : "1229166";
+  return m ? m[1] : "";
 }
 
 const BASEROW_API_URL = normalizeBaserowApiUrl(process.env.BASEROW_API_URL);
-const BASEROW_TOKEN = String(process.env.BASEROW_TOKEN || "").trim();
+const BASEROW_TOKEN = String(process.env.BASEROW_TOKEN || process.env.BASEROW_API_TOKEN || "").trim();
 const BASEROW_TABLE_ID = normalizeBaserowTableId(process.env.BASEROW_TABLE_ID);
 
-console.log("🧪 BASEROW ENV:", "token=" + (BASEROW_TOKEN ? "已读取" : "❌未读取"), "tokenLength=" + BASEROW_TOKEN.length, "table=" + (BASEROW_TABLE_ID || "❌空"), "api=" + BASEROW_API_URL);
+console.log("🧪 BASEROW ENV:",
+  "token=" + (BASEROW_TOKEN ? "已读取" : "❌未读取"),
+  "tokenLength=" + BASEROW_TOKEN.length,
+  "table=" + (BASEROW_TABLE_ID || "❌未配置"),
+  "api=" + BASEROW_API_URL
+);
 
 const baserow = {
   enabled: Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID),
@@ -268,9 +275,17 @@ const baserow = {
 };
 
 async function baserowRequest(method, pathName, body) {
-  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID) {
-    throw new Error("Baserow 环境变量未配置");
+  if (!BASEROW_TOKEN) {
+    const e=new Error("Baserow 未配置 BASEROW_TOKEN");
+    e.baserowCode="CONFIG_MISSING";
+    throw e;
   }
+  if (!BASEROW_TABLE_ID && /\\/table\\//.test(pathName)) {
+    const e=new Error("Baserow 未配置 BASEROW_TABLE_ID");
+    e.baserowCode="TABLE_ID_MISSING";
+    throw e;
+  }
+
   const options = {
     method,
     headers: {
@@ -282,12 +297,24 @@ async function baserowRequest(method, pathName, body) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
   }
-  const r = await fetch(BASEROW_API_URL + pathName, options);
+
+  const url=BASEROW_API_URL + pathName;
+  const r = await fetch(url, options);
   const text = await r.text();
   let data = {};
   try { data = JSON.parse(text || "{}"); } catch {}
+
   if (!r.ok) {
-    throw new Error("Baserow " + r.status + ": " + String(data?.detail || data?.error || text || "请求失败").slice(0, 300));
+    const detail=String(data?.description || data?.detail || data?.error || text || "请求失败").slice(0, 500);
+    const err=new Error("Baserow " + r.status + ": " + detail);
+    err.baserowStatus=r.status;
+    err.baserowCode=String(data?.error || "");
+    err.baserowTableId=BASEROW_TABLE_ID;
+    if(r.status===401 && /NO_PERMISSION_TO_TABLE|does not have permissions to the table|permission/i.test(detail+" "+String(data?.error||""))) {
+      err.baserowCode="TABLE_PERMISSION_DENIED";
+      err.message="Baserow 401：当前 Token 没有表 "+BASEROW_TABLE_ID+" 的权限。请在 Baserow「数据库令牌」中给该表开启至少 Read；恢复/同步写入还需要 Create、Update，删除资源需要 Delete。";
+    }
+    throw err;
   }
   return data;
 }
@@ -314,6 +341,9 @@ async function checkBaserowConnection() {
     baserow.enabled = true;
     baserow.connected = false;
     baserow.lastError = String(e?.message || e);
+    if(e?.baserowCode==="TABLE_PERMISSION_DENIED") {
+      baserow.lastError += " | 请检查 BASEROW_TABLE_ID 是否属于当前 Token 所在 workspace，以及 Token 是否勾选该表的 Read 权限";
+    }
     console.error("❌ Baserow 连接失败:", baserow.lastError);
     return false;
   }
@@ -350,8 +380,12 @@ async function ensureBaserowRecoveryFields() {
   ];
   let fields=await getBaserowFields(true);
   const created=[];
+
   for(const spec of required){
     if(baserowPickField(fields,[spec.name])) continue;
+
+    // 数据库 Token 主要用于行数据 CRUD；字段结构修改可能需要更高权限。
+    // 不让“自动创建字段”把整个恢复流程打断：已有字段照常使用，缺失字段由恢复逻辑自行降级。
     try{
       const field=await baserowRequest(
         "POST",
@@ -360,15 +394,21 @@ async function ensureBaserowRecoveryFields() {
       );
       created.push(field);
       console.log("🛠️ Baserow 自动创建字段:",spec.name);
+      fields=await getBaserowFields(true);
     }catch(e){
-      // 已被其他机器人/进程同时创建时，再刷新一次字段列表即可继续。
-      const refreshed=await getBaserowFields(true);
-      if(!baserowPickField(refreshed,[spec.name])) throw e;
-      fields=refreshed;
-      continue;
+      console.warn("⚠️ Baserow 无法自动创建字段「"+spec.name+"」：",String(e?.message||e));
+      try {
+        fields=await getBaserowFields(true);
+      } catch(refreshError) {
+        // 如果连字段读取都无权限，交给上层统一处理 401。
+        throw refreshError;
+      }
+      if(!baserowPickField(fields,[spec.name])) {
+        console.warn("ℹ️ 缺少字段「"+spec.name+"」，继续使用现有字段，不中断恢复。");
+      }
     }
-    fields=await getBaserowFields(true);
   }
+
   if(created.length){
     baserowFieldsCache=await getBaserowFields(true);
     console.log("✅ Baserow 恢复字段检查完成：",created.map(x=>x?.name).filter(Boolean).join("、"));
@@ -640,7 +680,10 @@ async function repairLostFolderAssignments(uid) {
     const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
     const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
     const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
-    if(!folderField||!chatField||!messageField) throw new Error("Baserow 缺少 文件夹/聊天ID/消息ID 字段");
+    if(!folderField||!chatField||!messageField) {
+      const missing=[!folderField?"文件夹":"",!chatField?"聊天ID":"",!messageField?"消息ID":""].filter(Boolean).join("、");
+      throw new Error("Baserow 恢复需要字段："+missing+"。请在表中保留这些字段，或让机器人使用已有的“网址/链接”字段进行兼容恢复。");
+    }
     const rows=await listAllBaserowRows();
     const backup=readJsonFile(BACKUP_FILE);
     const dirs=[...(db.directories||[]),...((backup&&Array.isArray(backup.directories))?backup.directories:[])];
