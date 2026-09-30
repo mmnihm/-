@@ -653,6 +653,15 @@ async function pullBaserowSharedData() {
 async function initializeSharedBaserow() {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
   try {
+    // 先完成一次真实连接检查，再进入共享初始化。
+    // 避免启动初期 checkBaserowConnection() 仍在异步执行时，
+    // 日志暂时显示 enabled=false，导致误判为没有启用共享。
+    const connected = await checkBaserowConnection();
+    if(!connected) {
+      console.error("❌ Baserow 共享初始化终止：连接检查未通过", baserow.lastError || "");
+      return;
+    }
+    console.log("🔗 Baserow 共享连接确认：enabled="+String(baserow.enabled)+" connected="+String(baserow.connected)+" table="+BASEROW_TABLE_ID);
     normalizeSharedDirectories();
     // 首次切换共享模式时，先保留本地快照，再与 Baserow 做并集合并，绝不因为远端为空而丢失本地资源。
     const localResources=(db.resources||[]).map(x=>({...x}));
