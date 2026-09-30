@@ -657,7 +657,11 @@ async function pullBaserowSharedData() {
       if(!dirsById.has(id)) dirsById.set(id,{id,name,createdAt:Date.now()});
     }
     db.directories=Array.from(dirsById.values());
-    db.resources=merged.slice(0,MAX_RESOURCES);
+    if(chatField && messageField) {
+      db.resources=merged.slice(0,MAX_RESOURCES);
+    } else {
+      console.warn("⚠️ Baserow 缺少聊天ID/消息ID字段，保留本地资源："+String((db.resources||[]).length));
+    }
     db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
     saveDb();
     console.log("🔄 Baserow 共享数据已刷新：资源="+db.resources.length+"，文件夹="+db.directories.length);
