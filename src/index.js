@@ -666,7 +666,7 @@ async function pullBaserowSharedData() {
         let m=url.match(/t\.me\/c\/(\\d+)\/(\\d+)/i);
         if(m) { chat="-100"+m[1]; message=Number(m[2]); }
         else {
-          m=url.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\\d+)/i);
+          m=url.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\d+)/i);
           if(m) { chat="@"+m[1]; message=Number(m[2]); }
         }
       }
