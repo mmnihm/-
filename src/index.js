@@ -866,7 +866,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[],resourceSources:[],repositoryMigration:{status:"idle",taskKey:"",ownerId:"",source:null,target:null,sourceId:null,targetId:null,sourceTitle:"",targetTitle:"",scanned:0,queued:0,migrated:0,skipped:0,failed:0,current:0,total:0,startedAt:null,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[],progressMessageId:null}}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[],resourceSources:[],repositoryMigration:{status:"idle",taskKey:"",ownerId:"",source:null,target:null,sourceId:null,targetId:null,sourceTitle:"",targetTitle:"",scanned:0,queued:0,migrated:0,skipped:0,failed:0,current:0,total:0,startedAt:null,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[],progressMessageId:null,autoSync:false},repositoryAutoSync:{enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:0}}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -1475,6 +1475,80 @@ async function scanHistory(uid, targetRepo=null) {
 }
 let repositoryMigrationRunning=false;
 
+
+let repositoryAutoSyncRunning = false;
+let repositoryAutoSyncQueue = Promise.resolve();
+function repositoryAutoSyncState() {
+  const base={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:0};
+  const current=db.settings.repositoryAutoSync;
+  const state=current&&typeof current==="object"?current:{};
+  db.settings.repositoryAutoSync={...base,...state};
+  if(!Array.isArray(db.settings.repositoryAutoSync.queue)) db.settings.repositoryAutoSync.queue=[];
+  return db.settings.repositoryAutoSync;
+}
+function repositoryAutoSyncKey(chatId,messageId){return String(chatId)+":"+String(messageId);}
+function repositoryAutoSyncFolderId(sourceItem,targetId){
+  const sourceDir=db.directories.find(d=>String(d.id)===String(sourceItem?.directoryId||""));
+  const folderName=String(sourceDir?.name||"").trim();
+  if(!folderName)return null;
+  const normalized=folderName.replace(/\s+/g," ").trim().toLowerCase();
+  let targetDir=db.directories.find(d=>String(d.name||"").replace(/\s+/g," ").trim().toLowerCase()===normalized);
+  if(!targetDir){targetDir={id:sharedDirectoryId(folderName),name:folderName,createdAt:Date.now(),sourceMigration:"auto:"+String(targetId)};db.directories.push(targetDir);queueBaserowDirectorySync(targetDir);}
+  return String(targetDir.id);
+}
+async function repositoryAutoSyncOne(job){
+  const state=repositoryAutoSyncState(),sourceId=String(state.sourceId||""),targetId=String(state.targetId||""),messageId=Number(job?.messageId||0);
+  if(!state.enabled||!sourceId||!targetId||!messageId)return false;
+  const already=db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
+  if(already)return true;
+  const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId);
+  if(!sourceItem){state.lastError="找不到源消息索引："+repositoryAutoSyncKey(sourceId,messageId);state.failed=Number(state.failed||0)+1;saveDb();return false;}
+  let copied=null,lastError=null;
+  for(let attempt=1;attempt<=3;attempt++){
+    try{copied=await main("copyMessage",{chat_id:targetId,from_chat_id:sourceId,message_id:messageId,...(contentProtectionEnabled()?{protect_content:true}:{})});if(!copied?.message_id)throw new Error("Telegram 未返回目标消息ID");break;}
+    catch(e){lastError=e;if(attempt<3)await sleep(1500*attempt);}
+  }
+  if(!copied?.message_id){state.lastError=String(lastError?.message||lastError||"复制失败");state.failed=Number(state.failed||0)+1;state.status="waiting_retry";saveDb();return false;}
+  const directoryId=repositoryAutoSyncFolderId(sourceItem,targetId);
+  const targetItem={...sourceItem,chatId:targetId,messageId:Number(copied.message_id),directoryId:directoryId||null,fileId:null,baserowRowId:null,migratedFrom:{chatId:sourceId,messageId,at:Date.now()}};
+  if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.messageId)===Number(copied.message_id))){db.resources.unshift(targetItem);db.resources=db.resources.slice(0,MAX_RESOURCES);queueBaserowResourceSync(targetItem);}
+  state.copied=Number(state.copied||0)+1;state.lastError="";state.updatedAt=Date.now();state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);saveDb();
+  console.log("⚡ AUTO MIGRATION:",sourceId+"#"+messageId,"->",targetId+"#"+Number(copied.message_id));
+  return true;
+}
+async function processRepositoryAutoSyncQueue(){
+  if(repositoryAutoSyncRunning)return repositoryAutoSyncQueue;
+  repositoryAutoSyncRunning=true;
+  repositoryAutoSyncQueue=repositoryAutoSyncQueue.then(async()=>{
+    const state=repositoryAutoSyncState();
+    if(!state.enabled)return;
+    while(state.queue.length){
+      const ok=await repositoryAutoSyncOne(state.queue[0]);
+      if(!ok)break;
+      state.queue.shift();state.updatedAt=Date.now();saveDb();
+    }
+    state.status=state.queue.length?"waiting_retry":"running";state.updatedAt=Date.now();saveDb();
+  }).catch(e=>{const state=repositoryAutoSyncState();state.lastError=String(e?.message||e);state.status="error";state.updatedAt=Date.now();saveDb();}).finally(()=>{repositoryAutoSyncRunning=false;});
+  return repositoryAutoSyncQueue;
+}
+function queueRepositoryAutoSyncMessage(msg){
+  if(!msg?.chat?.id||!msg?.message_id)return;
+  const state=repositoryAutoSyncState();
+  if(!state.enabled||String(msg.chat.id)!==String(state.sourceId))return;
+  const messageId=Number(msg.message_id);if(!messageId)return;
+  const exists=state.queue.some(x=>Number(x.messageId)===messageId);
+  const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
+  if(!exists&&!already)state.queue.push({messageId,queuedAt:Date.now()});
+  state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);state.status="queued";state.updatedAt=Date.now();saveDb();processRepositoryAutoSyncQueue().catch(()=>{});
+}
+async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,targetTitle,lastMessageId=0){
+  const state=repositoryAutoSyncState();state.enabled=true;state.status="running";state.ownerId=String(uid);state.sourceId=String(sourceId);state.targetId=String(targetId);state.sourceTitle=String(sourceTitle||sourceId);state.targetTitle=String(targetTitle||targetId);state.lastMessageId=Math.max(Number(state.lastMessageId||0),Number(lastMessageId||0));state.updatedAt=Date.now();saveDb();return state;
+}
+async function stopRepositoryAutoSync(){const state=repositoryAutoSyncState();state.enabled=false;state.status="stopped";state.updatedAt=Date.now();saveDb();return state;}
+async function showRepositoryAutoSyncStatus(uid){
+  const state=repositoryAutoSyncState();
+  return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n"+(state.enabled?"🟢 状态：运行中":"⏸️ 状态："+(state.status==="stopped"?"已停止":"未启用"))+"\n📤 旧仓库："+escapeHtml(state.sourceTitle||"-")+"\n📥 新仓库："+escapeHtml(state.targetTitle||"-")+"\n📌 最后消息："+Number(state.lastMessageId||0)+"\n📦 已自动同步："+Number(state.copied||0)+"\n⏳ 待处理："+state.queue.length+"\n⚠️ 失败次数："+Number(state.failed||0)+(state.lastError?"\n\n❌ "+escapeHtml(state.lastError):""),{reply_markup:{inline_keyboard:[[{text:"⏸️ 停止同步",callback_data:"adm:auto_stop"}],[{text:"▶️ 继续同步",callback_data:"adm:auto_resume"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
+}
 async function repositoryMigration(uid, sourceValue, targetValue) {
   const sourceRaw=String(sourceValue||"").trim(), targetRaw=String(targetValue||"").trim();
   if(!sourceRaw || !targetRaw) throw new Error("旧仓库和新仓库都不能为空");
@@ -1728,6 +1802,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
 
     state.failed=failedKeys.size;
     state.status=state.failed?"completed_with_errors":"completed";
+    if(state.autoSync) await enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,targetTitle,ordered.length?Math.max(...ordered.map(x=>Number(x.messageId)||0)):0);
     state.finishedAt=Date.now();
     state.error=state.failed?"部分资源无法复制，请再次执行同一组旧/新仓库迁移以继续失败项。":"";
     state.lastError=state.error;
@@ -1853,7 +1928,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
  [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],
- [{text:"🔄 迁移仓库",callback_data:"adm:migrate"}],
+ [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步",callback_data:"adm:auto"}],
  [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
@@ -2732,7 +2807,7 @@ async function mainMessage(msg) {
   refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
   // Telegram 消息处理不能等待 Baserow；共享数据在后台同步。
   if(await binding(msg)) return;
-  if(msg.chat?.type!=="private") { indexResource(msg); return; }
+  if(msg.chat?.type!=="private") { indexResource(msg); queueRepositoryAutoSyncMessage(msg); return; }
 
   const uid=msg.from.id;
   if(!db.users.includes(uid)) { db.users.push(uid); saveDb(); }
@@ -2767,6 +2842,32 @@ async function mainMessage(msg) {
       return await scanHistory(uid,{chatId:String(chat.id),title:String(chat.title||chat.username||chat.id),username:String(chat.username||""),type:String(chat.type||"")});
     } catch(e) {
       return sendHtml(TOKEN,uid,"<b>❌ 历史扫描失败</b>\n\n⚠️ "+escapeHtml(e?.telegramDescription||e?.message||e)+"\n\n请确认机器人/扫描账号可以访问这个仓库。",adminMenu());
+    }
+  }
+
+  if (admin && s?.step === "auto_migration_source") {
+    if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消自动同步设置。",adminMenu()); }
+    const source=String(t||"").trim();
+    if(!source) return send(TOKEN,uid,"⚠️ 请输入旧仓库 Chat ID 或 @用户名。");
+    states.set(key,{step:"auto_migration_target",source});
+    return sendHtml(TOKEN,uid,"<b>📥 现在发送新仓库</b>\n\n请输入新仓库 Chat ID 或 @用户名。\n\n机器人必须同时在两个仓库里。发送 /cancel 可取消。");
+  }
+  if (admin && s?.step === "auto_migration_target") {
+    if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消自动同步设置。",adminMenu()); }
+    const target=String(t||"").trim(), source=String(s?.source||"").trim();
+    if(!target) return send(TOKEN,uid,"⚠️ 请输入新仓库 ID 或 @用户名。");
+    states.delete(key);
+    try {
+      const sc=await main("getChat",{chat_id:source}),tc=await main("getChat",{chat_id:target});
+      const previous=db.settings.repositoryMigration||{};
+      db.settings.repositoryMigration={...previous,autoSync:true};
+      saveDb();
+      return await repositoryMigration(uid,String(sc.id),String(tc.id));
+    } catch(e) {
+      const m=db.settings.repositoryMigration||{};
+      db.settings.repositoryMigration={...m,autoSync:false,status:"error",finishedAt:Date.now(),error:String(e?.message||e)};
+      saveDb();
+      return sendHtml(TOKEN,uid,"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(e?.message||e)+"\n\n请确认机器人同时在旧仓库和新仓库里。",adminMenu());
     }
   }
 
@@ -2958,6 +3059,13 @@ async function mainMessage(msg) {
       "<b>✅ 获取后推广消息已更新</b>\\n\\n"+
       db.settings.postResourceMessage,
       adminSettingsMenu());
+  }
+
+  if(t==="⚡ 自动同步" && admin) {
+    const a=repositoryAutoSyncState();
+    if(a.enabled||a.sourceId) return showRepositoryAutoSyncStatus(uid);
+    states.set(key,{step:"auto_migration_source"});
+    return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\n📥 首次会先迁移历史资源，完成后以后出现的新资源会自动复制到新仓库。\n\n⚠️ 机器人必须同时在两个仓库里。\n📌 旧仓库不会删除。\n\n发送 /cancel 可取消。");
   }
 
   if(t==="🔄 迁移仓库" && admin) {
@@ -3687,7 +3795,10 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="adm:nonmember")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"✏️ 非会员提示"});
     if(data==="adm:post")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📣 获取后推广"});
     if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Baserow 历史恢复已启动</b>\\n\\n📚 读取现有 Baserow 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverBaserowHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }
-    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库"};
+    if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
+    if(route==="auto_stop") { await stopRepositoryAutoSync(); return showRepositoryAutoSyncStatus(uid); }
+    if(route==="auto_resume") { const a=repositoryAutoSyncState(); if(!a.sourceId||!a.targetId) return showRepositoryAutoSyncStatus(uid); a.enabled=true; a.status="running"; a.updatedAt=Date.now(); saveDb(); processRepositoryAutoSyncQueue().catch(()=>{}); return showRepositoryAutoSyncStatus(uid); }
+    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步",auto_status:"⚡ 自动同步",auto_stop:"⏸️ 停止自动同步",auto_resume:"▶️ 继续自动同步"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
@@ -4204,10 +4315,12 @@ async function pollMain() {
         if(u.channel_post) {
           console.log("📦 CHANNEL POST:", String(u.channel_post.chat?.id), u.channel_post.chat?.title || u.channel_post.chat?.username || "");
           indexResource(u.channel_post);
+          queueRepositoryAutoSyncMessage(u.channel_post);
         }
         if(u.edited_channel_post) {
           console.log("✏️ EDITED CHANNEL POST:", String(u.edited_channel_post.chat?.id));
           indexResource(u.edited_channel_post);
+          queueRepositoryAutoSyncMessage(u.edited_channel_post);
         }
         if(u.callback_query) { console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||"")); await handleDirectoryCallback(TOKEN,u.callback_query,false); }
         if(u.message) {
@@ -4351,6 +4464,8 @@ async function boot(){
       runtime.lastTelegramOkAt = Date.now();
       runtime.lastError = "";
       await ensureStartCommand(TOKEN);
+      const autoSyncState=repositoryAutoSyncState();
+      if(autoSyncState.enabled && autoSyncState.sourceId && autoSyncState.targetId) processRepositoryAutoSyncQueue().catch(e=>console.error("❌ 自动同步恢复失败:",String(e?.message||e)));
       const migrationState=db.settings.repositoryMigration||{};
       if(String(migrationState.status||"")==="running" && migrationState.sourceId && migrationState.targetId && migrationState.ownerId) {
         console.log("🔄 检测到未完成迁移，启动断点恢复：",migrationState.sourceId+"->"+migrationState.targetId);
