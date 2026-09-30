@@ -3121,6 +3121,37 @@ async function mainMessage(msg) {
   const key="m:"+uid;
   const s=states.get(key);
 
+  if(admin && s?.step==="bind_repository") {
+    if(t==="/cancel") {
+      states.delete(key);
+      return sendHtml(TOKEN,uid,"↩️ <b>已取消绑定资源仓库</b>\n\n当前仓库："+(repo()?.title ? "✅ "+escapeHtml(repo().title) : "❌ 未绑定"),adminMenu());
+    }
+    const target=String(t||"").trim();
+    if(!target) return send(TOKEN,uid,"⚠️ 请发送 Chat ID、@用户名，或转发仓库消息。");
+    try {
+      const chat=await main("getChat",{chat_id:target});
+      const me=await main("getMe");
+      let membership=null;
+      try { membership=await main("getChatMember",{chat_id:chat.id,user_id:me.id}); } catch {}
+      if(membership && ["left","kicked"].includes(String(membership.status||""))) {
+        return sendHtml(TOKEN,uid,"<b>❌ 绑定失败</b>\n\n机器人不在这个仓库中。\n请先把主机器人加入仓库，再重新发送。");
+      }
+      db.settings.repository={chatId:String(chat.id),title:String(chat.title||chat.username||chat.id),username:String(chat.username||""),type:String(chat.type||"")};
+      saveDb(); states.delete(key);
+      try { await refreshSharedData(true); } catch {}
+      return sendHtml(TOKEN,uid,
+        "<b>✅ 资源仓库绑定成功</b>\n\n"+
+        "📦 仓库：<b>"+escapeHtml(chat.title||chat.username||String(chat.id))+"</b>\n"+
+        "🆔 Chat ID：<code>"+escapeHtml(String(chat.id))+"</code>\n"+
+        "🔗 类型："+escapeHtml(String(chat.type||""))+"\n\n"+
+        "📌 现在可以使用「仓库扫描 / 历史恢复」。",
+        adminMenu());
+    } catch(e) {
+      return sendHtml(TOKEN,uid,
+        "<b>❌ 仓库绑定失败</b>\n\n⚠️ "+escapeHtml(e?.telegramDescription||e?.message||e)+"\n\n请检查 Chat ID/@用户名是否正确，以及机器人是否已经加入仓库。");
+    }
+  }
+
   if(admin && (t==="🏠 返回首页" || t==="⬅️ 返回首页")) {
     if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
     const bk=key+":broadcast";
@@ -3233,8 +3264,19 @@ async function mainMessage(msg) {
   if(t==="🔐 绑定指定群" && admin)
     return send(TOKEN,uid,"🔐 绑定指定群\n\n1. 把主机器人加入你要限制访问的群。\n2. 确保机器人能查看群成员。\n3. 在该群发送：\n\n/绑定指定群\n\n发送成功后会自动绑定。");
 
-  if(t==="📦 绑定资源仓库" && admin)
-    return send(TOKEN,uid,"📦 绑定资源仓库\n\n最简单的绑定方法：\n\n1. 先把主机器人加入资源仓库群/频道。\n2. 从资源仓库里转发任意一条消息给主机器人。\n3. 主机器人会自动识别并绑定这个群/频道。\n\n也可以直接在资源群里发送：/绑定仓库");
+  if(t==="📦 绑定资源仓库" && admin) {
+    states.set(key,{step:"bind_repository"});
+    return sendHtml(TOKEN,uid,
+      "<b>📦 绑定资源仓库</b>\n\n"+
+      "请选择下面任意一种方式：\n\n"+
+      "① <b>直接发送仓库 Chat ID / @用户名</b>\n"+
+      "例如：<code>-1001234567890</code> 或 <code>@my_channel</code>\n\n"+
+      "② <b>转发仓库中的任意一条消息</b>给我\n"+
+      "机器人会自动识别仓库并验证访问权限。\n\n"+
+      "⚠️ 绑定前请先把主机器人加入仓库；频道建议设为管理员。\n\n"+
+      "发送 <code>/cancel</code> 可取消。",
+      {reply_markup:{inline_keyboard:[[{text:"❌ 取消绑定",callback_data:"bind_repo_cancel"}]]}});
+  }
 
   if(t==="🤖 克隆机器人") {
     states.set(key,{step:"token"});
