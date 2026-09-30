@@ -1183,6 +1183,130 @@ function indexHistoryMessage(message, chatId) {
   return true;
 }
 
+async function recoverBaserowHistory(uid, targetRepo=null) {
+  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return sendHtml(TOKEN,uid,"❌ <b>Baserow 共享未配置</b>\\n\\n请先配置 BASEROW_TOKEN 和 BASEROW_TABLE_ID。",adminMenu());
+  const r=targetRepo || repo();
+  if(!r) return sendHtml(TOKEN,uid,"❌ <b>没有可恢复的资源仓库</b>\\n\\n请先绑定原来的 Telegram 资源仓库。",adminMenu());
+  const current=db.settings.baserowRecovery||{};
+  if(String(current.status||"")==="running") return sendHtml(TOKEN,uid,"🔄 <b>Baserow 历史恢复已经在运行</b>\\n\\n请等待当前任务完成。",adminMenu());
+
+  let fields, rows;
+  try { fields=await getBaserowFields(true); rows=await listAllBaserowRows(); }
+  catch(e) { return sendHtml(TOKEN,uid,"❌ <b>读取 Baserow 失败</b>\\n\\n"+escapeHtml(e?.message||e),adminMenu()); }
+
+  const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
+  const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
+  const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
+  if(!titleField) return sendHtml(TOKEN,uid,"❌ <b>Baserow 缺少资源名称字段</b>\\n\\n请保留“资源名称/名称/标题”其中一个字段。",adminMenu());
+
+  const normalizeMatchTitle = value => String(value||"").replace(/\\u200b/g,"").replace(/\\s+/g,"").replace(/[~!@#$%^&*()_+={}\\[\\]|\\\\:;'",.<>/?！？。，、；：‘’“”「」『』【】（）《》—…·-]/g,"").trim().toLowerCase();
+  const parseRowDate = row => {
+    if(!dateField) return 0;
+    const raw=row?.[dateField.name], n=Number(raw);
+    if(Number.isFinite(n) && n>0) return n>10000000000 ? Math.floor(n/1000) : Math.floor(n);
+    const t=new Date(raw||0).getTime();
+    return Number.isFinite(t) && t>0 ? Math.floor(t/1000) : 0;
+  };
+
+  const candidatesByTitle=new Map();
+  let folderRowCount=0, resourceRowCount=0;
+  for(const row of rows) {
+    const rawTitle=String(row?.[titleField.name]??"").trim();
+    if(!rawTitle) continue;
+    if(rawTitle.startsWith("__FOLDER__:")) { folderRowCount++; continue; }
+    const key=normalizeMatchTitle(rawTitle);
+    if(!key) continue;
+    const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+    const candidate={id:String(row.id),title:rawTitle,folderName,date:parseRowDate(row),row};
+    if(!candidatesByTitle.has(key)) candidatesByTitle.set(key,[]);
+    candidatesByTitle.get(key).push(candidate);
+    resourceRowCount++;
+  }
+
+  const previousLast=Number(current.lastMessageId||0);
+  const usedRowIds=new Set(Array.isArray(current.usedRowIds)?current.usedRowIds.map(String):[]);
+  const startedAt=Number(current.startedAt)>0 ? Number(current.startedAt) : Date.now();
+  const state={status:"running",repositoryId:String(r.chatId||""),repositoryTitle:String(r.title||r.username||r.chatId||""),startedAt,finishedAt:null,lastMessageId:previousLast,scanned:Number(current.scanned||0),matched:Number(current.matched||0),unmatched:Number(current.unmatched||0),folderMatched:Number(current.folderMatched||0),duplicateTitle:Number(current.duplicateTitle||0),usedRowIds:[...usedRowIds].slice(-30000),error:""};
+  db.settings.baserowRecovery=state; saveDb();
+
+  let progressMessage=null;
+  const elapsedText=()=>{const sec=Math.max(0,Math.floor((Date.now()-startedAt)/1000));return String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0");};
+  const render=done=>"<b>"+(done?"✅ ":"🔄 ")+"Baserow 历史资源恢复</b>\\n━━━━━━━━━━━━━━\\n📦 仓库：<b>"+escapeHtml(state.repositoryTitle)+"</b>\\n🗃️ Baserow 资源行：<b>"+resourceRowCount.toLocaleString()+"</b>\\n📨 已扫描：<b>"+Number(state.scanned).toLocaleString()+"</b>\\n🔗 已匹配：<b>"+Number(state.matched).toLocaleString()+"</b>\\n📁 已恢复文件夹：<b>"+Number(state.folderMatched).toLocaleString()+"</b>\\n⚠️ 未匹配：<b>"+Number(state.unmatched).toLocaleString()+"</b>\\n♻️ 同名候选：<b>"+Number(state.duplicateTitle).toLocaleString()+"</b>\\n🆔 当前进度：<code>"+Number(state.lastMessageId||0)+"</code>\\n⏱️ 用时：<b>"+elapsedText()+"</b>\\n━━━━━━━━━━━━━━\\n"+(done?"📌 Baserow 原有记录未删除，仅补回 Telegram 定位信息。":"⏳ 正在从 Telegram 历史消息匹配 Baserow 记录…");
+
+  const updateProgress=async force=>{
+    saveDb();
+    if(!progressMessage || force) {
+      if(!progressMessage) { try { progressMessage=await sendHtml(TOKEN,uid,render(false),{reply_markup:{inline_keyboard:[]}}); } catch {} }
+      return;
+    }
+    await safeEdit(TOKEN,{chat_id:uid,message_id:progressMessage.message_id,text:render(false),parse_mode:"HTML",reply_markup:{inline_keyboard:[]}}).catch(()=>{});
+  };
+
+  const addRecoveredItem=(message,rowCandidate)=>{
+    const messageId=Number(message?.id||0); if(!messageId) return false;
+    const text=String(message?.message||message?.text||"").trim();
+    const fileName=message?.file?.name || message?.document?.attributes?.find?.(x=>x.fileName)?.fileName || "";
+    const hasMedia=Boolean(message?.media||message?.file);
+    if(!text && !hasMedia) return false;
+    let directoryId=null;
+    const folderName=String(rowCandidate?.folderName||"").trim();
+    if(folderName) { const d=ensureDirectory(folderName); if(d) {directoryId=String(d.id); state.folderMatched++;} }
+    const item={chatId:String(r.chatId),messageId,title:String(fileName||text||("历史资源 #"+messageId)).slice(0,200),caption:text.slice(0,500),date:message?.date ? Math.floor(new Date(message.date).getTime()/1000) : Math.floor(Date.now()/1000),directoryId,fileType:null,fileId:null,textOnly:!hasMedia,downloads:0,baserowRowId:rowCandidate?.id||null};
+    const i=db.resources.findIndex(x=>String(x.chatId)===item.chatId&&Number(x.messageId)===item.messageId);
+    if(i>=0) db.resources[i]={...db.resources[i],...item}; else db.resources.unshift(item);
+    const saved=db.resources.find(x=>String(x.chatId)===item.chatId&&Number(x.messageId)===item.messageId)||item;
+    queueBaserowResourceSync(saved);
+    return true;
+  };
+
+  try {
+    console.log("🔄 BASEROW HISTORY RECOVERY START:",{repoId:String(r.chatId||""),rows:resourceRowCount,folders:folderRowCount,checkpoint:previousLast});
+    await updateProgress(true);
+    const client=await ensureHistoryClient(uid);
+    const entity=await findHistoryEntity(client,r);
+    let lastProgressAt=Date.now();
+
+    for await(const message of client.iterMessages(entity,{limit:undefined})) {
+      const messageId=Number(message?.id||0);
+      if(previousLast>0 && messageId>0 && messageId<=previousLast) break;
+      if(!messageId) continue;
+      state.scanned++; state.lastMessageId=messageId;
+      const text=String(message?.message||message?.text||"").trim();
+      const fileName=message?.file?.name || message?.document?.attributes?.find?.(x=>x.fileName)?.fileName || "";
+      const msgTitle=String(fileName||text||("历史资源 #"+messageId)).slice(0,200);
+      const matchKey=normalizeMatchTitle(msgTitle);
+      let candidates=(candidatesByTitle.get(matchKey)||[]).filter(x=>!usedRowIds.has(String(x.id)));
+      if(candidates.length) {
+        if(candidates.length>1) {
+          state.duplicateTitle++;
+          const msgDate=message?.date ? Math.floor(new Date(message.date).getTime()/1000) : 0;
+          if(msgDate) candidates.sort((a,b)=>Math.abs((a.date||msgDate)-msgDate)-Math.abs((b.date||msgDate)-msgDate));
+        }
+        const picked=candidates[0];
+        usedRowIds.add(String(picked.id)); state.usedRowIds=[...usedRowIds].slice(-30000);
+        if(addRecoveredItem(message,picked)) state.matched++;
+      } else state.unmatched++;
+      if(state.scanned%100===0 || Date.now()-lastProgressAt>=15000) {
+        lastProgressAt=Date.now(); await updateProgress(false);
+        console.log("🔄 BASEROW HISTORY RECOVERY:",state.scanned,"matched=",state.matched,"unmatched=",state.unmatched,"checkpoint=",state.lastMessageId);
+      }
+    }
+
+    db.resources=db.resources.slice(0,MAX_RESOURCES);
+    await waitBaserowSyncQueue(); await waitBaserowDirectorySyncQueue();
+    state.status="completed"; state.finishedAt=Date.now(); state.usedRowIds=[...usedRowIds].slice(-30000); saveDb();
+    const doneText=render(true)+"\\n\\n📚 当前资源索引：<b>"+db.resources.length.toLocaleString()+"</b> 条";
+    if(progressMessage) return safeEdit(TOKEN,{chat_id:uid,message_id:progressMessage.message_id,text:doneText,parse_mode:"HTML",reply_markup:adminMenu().reply_markup});
+    return sendHtml(TOKEN,uid,doneText,adminMenu());
+  } catch(e) {
+    state.status="error"; state.error=String(e?.message||e); state.finishedAt=Date.now(); state.usedRowIds=[...usedRowIds].slice(-30000); saveDb();
+    console.error("❌ BASEROW HISTORY RECOVERY:",e);
+    const errorText="<b>❌ Baserow 历史恢复中断</b>\\n\\n"+render(false)+"\\n\\n⚠️ "+escapeHtml(e?.message||e)+"\\n\\n再次点击“恢复历史资源”会从当前断点继续。";
+    if(progressMessage) return safeEdit(TOKEN,{chat_id:uid,message_id:progressMessage.message_id,text:errorText,parse_mode:"HTML",reply_markup:adminMenu().reply_markup});
+    return sendHtml(TOKEN,uid,errorText,adminMenu());
+  }
+}
+
 async function scanHistory(uid, targetRepo=null) {
   const historyState = db.settings.historyScan || {};
   if (historyState.status === "running") {
@@ -1712,7 +1836,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"✏️ 修改文件夹",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
- [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🔄 迁移仓库",callback_data:"adm:migrate"}],
+ [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],\n [{text:"🔄 迁移仓库",callback_data:"adm:migrate"}],
  [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
@@ -3545,7 +3669,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     ]}});
     if(data==="adm:nonmember")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"✏️ 非会员提示"});
     if(data==="adm:post")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📣 获取后推广"});
-    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库"};
+    if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Baserow 历史恢复已启动</b>\\n\\n📚 读取现有 Baserow 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverBaserowHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }\n    const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
