@@ -3048,6 +3048,13 @@ async function binding(msg) {
   const t=(rawText.split(/\s+/)[0]||"").replace(/@[^\s]+$/,"");
   if(!admin) return false;
 
+  // 上传会话优先于“转发消息绑定仓库”。
+  // 上传期间管理员转发/发送的文件属于待上传资源，绝不能被当成绑定仓库消息。
+  if(msg.chat?.type==="private") {
+    const uploadState=states.get("m:"+String(msg.from?.id||""));
+    if(uploadState?.step==="upload_folder" || uploadState?.step==="upload_file") return false;
+  }
+
   const bindCommands=["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"];
   const isBindCommand=bindCommands.includes(t);
   const inGroup=["group","supergroup"].includes(msg.chat?.type);
@@ -3847,15 +3854,8 @@ async function mainMessage(msg) {
     const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
     states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:firstPending});
     if(media) {
-      return send(TOKEN,uid,
-        "📥 <b>已收到第 1 个资源</b>\\n\\n"+
-        "📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n"+
-        "📦 当前已收到：<b>1</b> 个资源\\n\\n"+
-        "请选择下一步：",
-        {parse_mode:"HTML",reply_markup:{inline_keyboard:[
-  [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
-]}}
-      );
+      // 第一个文件也不单独回复，后续文件直接进入同一个上传会话。
+      return;
     }
     return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n\\n现在请发送要上传的文件、图片、视频、音频或其他资源。\\n\\n📥 每收到一个资源都会告诉你当前数量。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
@@ -3875,7 +3875,7 @@ async function mainMessage(msg) {
           send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
-      return send(TOKEN,uid,"▶️ <b>可以继续上传</b>\\n\\n请继续发送资源。");
+      return;
     }
     if(t==="✅ 结束上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
@@ -3897,26 +3897,15 @@ async function mainMessage(msg) {
         uploadTimers.delete(key);
         const current=states.get(key);
         if(current?.step==="upload_file") {
-          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
+          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
       // 同一次转发可能会连续收到多条 Telegram 消息。
       // 延迟短暂时间，等这一批消息收齐后只询问一次，避免每个文件都弹一次。
-      if(uploadAckTimers.has(key)) clearTimeout(uploadAckTimers.get(key));
-      uploadAckTimers.set(key,setTimeout(()=>{
-        uploadAckTimers.delete(key);
-        const current=states.get(key);
-        if(current?.step==="upload_file") {
-          send(TOKEN,uid,
-            "📥 <b>已收到 "+(current.pendingUploads?.length||0)+" 个文件</b>\\n\\n"+
-            "📁 文件夹："+escapeHtml(current.directoryName)+"\\n\\n"+
-            "还要继续上传，还是现在结束上传？",
-            {parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}
-          ).catch(()=>{});
-        }
-      },1500));
+      // 收到文件后不逐条回复，避免连续上传时产生大量提示消息。
+      // 当前批次只在空闲超时后统一显示“继续/结束”按钮，管理员也可以随时点击“结束上传”。
       return;
     } catch(e) {
       return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
