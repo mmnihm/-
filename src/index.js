@@ -4183,25 +4183,38 @@ async function mainMessage(msg) {
     if(!folder) return send(TOKEN,uid,"⚠️ 请选择已有文件夹、发送新的文件夹名称，或者直接发送第一个文件。");
 
     const cleanFolder=folder;
-    const existing=getDirectoryByName(cleanFolder);
+    // 文件夹名称一旦确认就立即创建并保存，后续文件直接绑定到这个目录。
+    let existing=getDirectoryByName(cleanFolder);
+    if(!existing) {
+      existing=ensureDirectory(cleanFolder);
+      if(existing) {
+        touchSharedData(uid);
+        saveDb();
+        console.log("📁 UPLOAD FOLDER CREATED:", "uid="+uid, "folder="+existing.name, "id="+existing.id);
+      }
+    }
+    if(!existing) {
+      states.delete(key);
+      return send(TOKEN,uid,"❌ <b>文件夹创建失败</b>\n\n请重新点击「📤 上传资源」再试。",adminMenu());
+    }
+
     const uploadKey=key;
     if(uploadTimers.has(uploadKey)) clearTimeout(uploadTimers.get(uploadKey));
     uploadTimers.set(uploadKey,setTimeout(()=>{
       uploadTimers.delete(uploadKey);
       const current=states.get(uploadKey);
       if(current?.step==="upload_file") {
-        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
+        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\n\n📁 文件夹："+escapeHtml(current.directoryName)+"\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\n\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
       }
     },UPLOAD_TIMEOUT_MS));
 
     const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
-    states.set(key,{step:"upload_file",directoryId:existing?.id||null,directoryName:cleanFolder,pendingUploads:firstPending});
-    console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+cleanFolder, "first="+(media?"yes":"no"), "pending="+firstPending.length);
+    states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
+    console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+existing.name, "id="+existing.id, "first="+(media?"yes":"no"), "pending="+firstPending.length);
     if(media) {
-      // 第一个文件也不单独回复，后续文件直接进入同一个上传会话。
       return;
     }
-    return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(cleanFolder)+"</b>\\n\\n现在请发送要上传的文件、图片、视频、音频或其他资源。\\n\\n📥 每收到一个资源都会告诉你当前数量。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
+    return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\n\n现在请发送要上传的文件、图片、视频、音频或其他资源。\n\n📥 可以连续发送多个文件，完成后点击「✅ 结束上传」。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
   if(s?.step==="upload_file"&&admin) {
     if(t==="/cancel") {
