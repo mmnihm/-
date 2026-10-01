@@ -4259,11 +4259,8 @@ async function mainMessage(msg) {
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
-      // 同一次转发可能会连续收到多条 Telegram 消息。
-      // 延迟短暂时间，等这一批消息收齐后只询问一次，避免每个文件都弹一次。
-      // 收到文件后不逐条回复，避免连续上传时产生大量提示消息。
-      // 当前批次只在空闲超时后统一显示“继续/结束”按钮，管理员也可以随时点击“结束上传”。
-      return;
+      // 收到文件后立即给管理员一个极简确认，不触发 Baserow 同步，也不等待耗时任务。
+      return send(TOKEN,uid,"📥 已收到，继续发送文件即可。");
     } catch(e) {
       return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
