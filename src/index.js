@@ -4424,9 +4424,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       console.warn("⚠️ callback确认失败（继续处理按钮）:", String(e?.telegramDescription || e?.message || e));
     }
   };
-  await answer();
-  // 按钮回调绝不能等待 Baserow。先立即响应 Telegram，目录共享数据在后台刷新。
-  // 否则 Baserow 网络延迟会让每一次按钮点击都出现明显卡顿。
+  void answer();
+  // 按钮回调绝不能等待 Baserow：确认请求后台发送，业务逻辑立即继续。
   void refreshSharedData(false);
 
   if(data==="user:dirs") {
@@ -4465,20 +4464,20 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(mode==="hot"){const items=[...db.resources].sort((a,b)=>Number(b.downloads||0)-Number(a.downloads||0)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🔥 热门资源",items,"按获取次数排序"),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gethot:")});}
     if(mode==="tags"){const map=allResourceTags();const tags=Object.keys(map).sort((a,b)=>map[b].length-map[a].length).slice(0,30);const rows=[];for(let i=0;i<tags.length;i+=2)rows.push(tags.slice(i,i+2).map(t=>({text:"🏷️ "+t.slice(0,18)+" · "+map[t].length,callback_data:"tag:"+t.slice(0,40)})));if(!rows.length)rows.push([{text:"📭 暂无标签",callback_data:"noop"}]);rows.push([{text:"⬅️ 返回",callback_data:"hub"}]);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签分类</b>\n━━━━━━━━━━━━━━\n\n📚 标签数：<b>"+tags.length+"</b>\n\n👇 请选择标签",parse_mode:"HTML",reply_markup:{inline_keyboard:rows}});}
   }
-  if(data.startsWith("tag:")){await answer();const tag=data.slice(4),items=db.resources.filter(x=>resourceTags(x).includes(tag)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🏷️ "+escapeHtml(tag),items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gettag:","hub:tags")});}
-  if(data.startsWith("favtoggle:")){const item=resourceByKey(data.slice(10));if(!item){await answer("资源不存在",true);return;}const on=toggleFavorite(uid,item);await answer(on?"⭐ 已收藏":"☆ 已取消收藏");return;}
+  if(data.startsWith("tag:")){void answer();const tag=data.slice(4),items=db.resources.filter(x=>resourceTags(x).includes(tag)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🏷️ "+escapeHtml(tag),items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gettag:","hub:tags")});}
+  if(data.startsWith("favtoggle:")){const item=resourceByKey(data.slice(10));if(!item){void answer("资源不存在",true);return;}const on=toggleFavorite(uid,item);void answer(on?"⭐ 已收藏":"☆ 已取消收藏");return;}
   for(const prefix of ["getfav:","getrecent:","gethot:","gettag:"]){
     if(data.startsWith(prefix)){
-      const item=resourceByKey(data.slice(prefix.length));if(!item){await answer("资源不存在或已删除",true);return;}
-      const member=await allowed(TOKEN,uid);if(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0){await answer("今日免费额度已用完",true);return sendQuotaNotice(token,chatId,uid,userMenu());}
-      try{await answer("正在获取资源…");await sendIndexedResource(token,chatId,item);recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);if(!member&&!isAdmin(uid))consumeNonMemberQuota(uid,1);else saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\n\n📦 "+escapeHtml(item.title||"未命名资源")+"\n\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+      const item=resourceByKey(data.slice(prefix.length));if(!item){void answer("资源不存在或已删除",true);return;}
+      const member=await allowed(TOKEN,uid);if(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0){void answer("今日免费额度已用完",true);return sendQuotaNotice(token,chatId,uid,userMenu());}
+      try{void answer("正在获取资源…");await sendIndexedResource(token,chatId,item);recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);if(!member&&!isAdmin(uid))consumeNonMemberQuota(uid,1);else saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\n\n📦 "+escapeHtml(item.title||"未命名资源")+"\n\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
         [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
-      ]}});}catch(e){await answer("获取失败："+String(e.message||e),true);return;}
+      ]}});}catch(e){void answer("获取失败："+String(e.message||e),true);return;}
     }
   }
-  if(data.startsWith("admin:")||data.startsWith("adm:")){await answer();
-    if(child||!isAdmin(uid)){await answer("无权限",true);return;}
+  if(data.startsWith("admin:")||data.startsWith("adm:")){void answer();
+    if(child||!isAdmin(uid)){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
@@ -4491,14 +4490,14 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:backup_restore") return backupRecoveryMerge(uid);
     if(data==="admin:upload"){
       if(!repo()){
-        await answer("尚未绑定资源仓库",true);
+        void answer("尚未绑定资源仓库",true);
         return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 尚未绑定资源仓库</b>\n\n请先绑定资源仓库。",parse_mode:"HTML",reply_markup:adminResourceInline()});
       }
       const key="m:"+uid;
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
       states.set(key,{step:"upload_folder",pendingUploads:[]});
-      await answer("已进入上传模式");
+      void answer("已进入上传模式");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -4526,7 +4525,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
   if(route==="folders_all_do"){
     console.log("🗑️ DELETE ALL FOLDERS CLICK:", "uid="+uid, "chat="+chatId, "message="+messageId);
-    await answer("正在删除所有文件夹，请稍候…");
+    void answer("正在删除所有文件夹，请稍候…");
     const progress=await tg(token,"sendMessage",{chat_id:chatId,text:"<b>🧹 正在删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n⏳ 正在清理 Baserow 文件夹记录…\n📦 所有资源都会保留。",parse_mode:"HTML"});
     try {
       const result=await deleteAllFoldersKeepResources();
@@ -4579,14 +4578,14 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
   }
   if(data.startsWith("protect:")){
-    if(!isAdmin(uid) || child){await answer("无权限",true);return;}
+    if(!isAdmin(uid) || child){void answer("无权限",true);return;}
     const op=data.slice("protect:".length);
     if(op==="toggle"){
       db.settings.contentProtection=!contentProtectionEnabled();
       if(!contentProtectionEnabled()) db.settings.autoDeleteMinutes=0;
       else if(!autoDeleteMinutes()) db.settings.autoDeleteMinutes=1440;
       saveDb(); logAdmin(uid,"内容保护",contentProtectionEnabled()?"开启":"关闭");
-      await answer(contentProtectionEnabled()?"已开启":"已关闭");
+      void answer(contentProtectionEnabled()?"已开启":"已关闭");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     }
     if(op==="duration"){
@@ -4597,67 +4596,67 @@ async function handleDirectoryCallback(token, q, child=false) {
       db.settings.autoDeleteMinutes=n;
       if(n>0) db.settings.contentProtection=true;
       saveDb(); logAdmin(uid,"自动删除",n?autoDeleteText():"关闭");
-      await answer(n?("自动删除："+autoDeleteText()):"已关闭自动删除");
+      void answer(n?("自动删除："+autoDeleteText()):"已关闭自动删除");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     }
   }
 
   if(data.startsWith("quota:")){
-    if(child||!isAdmin(uid)){await answer("无权限",true);return;}
+    if(child||!isAdmin(uid)){void answer("无权限",true);return;}
     const op=data.slice(6);
     if(op==="+1"||op==="-1"){db.settings.nonMemberDailyLimit=Math.max(0,nonMemberDailyLimit()+(op==="+1"?1:-1));saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
       [{text:"➕ +1",callback_data:"quota:+1"},{text:"➖ -1",callback_data:"quota:-1"}],
       [{text:"✏️ 自定义",callback_data:"quota:set"}],
       [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
     ]}});}
-    if(op==="set"){states.set("m:"+uid,{step:"nonmember_quota_edit"});await answer("请输入新的每日额度");return sendHtml(token,uid,"<b>🎁 修改非会员每日额度</b>\n\n请发送 0～100 的整数。",adminMenu());}
+    if(op==="set"){states.set("m:"+uid,{step:"nonmember_quota_edit"});void answer("请输入新的每日额度");return sendHtml(token,uid,"<b>🎁 修改非会员每日额度</b>\n\n请发送 0～100 的整数。",adminMenu());}
   }
 
   if(data==="move_cancel" || data.startsWith("move_to:")) {
-    if(!isAdmin(uid) || child) { await answer("无权限",true); return; }
+    if(!isAdmin(uid) || child) { void answer("无权限",true); return; }
     const key="m:"+uid;
     const st=states.get(key);
-    if(!st || (st.step!=="move_target" && st.step!=="bulk_target")) { await answer("操作已过期",true); return; }
-    if(data==="move_cancel") { states.delete(key); await answer("已取消"); return send(TOKEN,uid,"❌ 已取消移动。",adminResourceMenu()); }
+    if(!st || (st.step!=="move_target" && st.step!=="bulk_target")) { void answer("操作已过期",true); return; }
+    if(data==="move_cancel") { states.delete(key); void answer("已取消"); return send(TOKEN,uid,"❌ 已取消移动。",adminResourceMenu()); }
     const targetId=data.slice("move_to:".length);
     const target=db.directories.find(d=>String(d.id)===String(targetId));
     const item=db.resources.find(r=>Number(r.messageId)===Number(st.itemId)&&String(r.directoryId)===String(st.sourceId));
-    if(!target||!item) { await answer("资源或目标文件夹不存在",true); return; }
+    if(!target||!item) { void answer("资源或目标文件夹不存在",true); return; }
     item.directoryId=target.id;
     queueBaserowResourceSync(item);
     saveDb();
     logAdmin(uid,"移动资源",(item.title||"未命名")+" → "+target.name);
     states.delete(key);
-    await answer("移动完成");
+    void answer("移动完成");
     return sendHtml(TOKEN,uid,"<b>✅ 资源移动完成</b>\n━━━━━━━━━━━━━━\n\n📦 "+escapeHtml(item.title||"未命名")+"\n📁 目标文件夹：<b>"+escapeHtml(target.name)+"</b>",adminResourceMenu());
   }
 
   if(data.startsWith("bulk_toggle:") || data.startsWith("bulk_page:") || data==="bulk_move" || data==="bulk_delete" || data==="bulk_delete_confirm" || data==="bulk_delete_cancel" || data==="bulk_cancel") {
-    if(!isAdmin(uid) || child) { await answer("无权限",true); return; }
+    if(!isAdmin(uid) || child) { void answer("无权限",true); return; }
     const key="m:"+uid;
     const st=states.get(key);
-    if(!st || st.step!=="bulk_select") { await answer("操作已过期",true); return; }
-    if(data==="bulk_cancel") { states.delete(key); await answer("已取消"); return send(TOKEN,uid,"❌ 已取消批量管理。",adminResourceMenu()); }
+    if(!st || st.step!=="bulk_select") { void answer("操作已过期",true); return; }
+    if(data==="bulk_cancel") { states.delete(key); void answer("已取消"); return send(TOKEN,uid,"❌ 已取消批量管理。",adminResourceMenu()); }
     if(data.startsWith("bulk_page:")) {
       const page=Math.max(0,Number(data.slice(10))||0);
       st.page=page; states.set(key,st);
-      await answer("已切换");
+      void answer("已切换");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📦 <b>批量管理</b>\n\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\n\n👇 点击资源进行多选。",parse_mode:"HTML",reply_markup:resourceMoveMenu(st.items,page,st.selected)});
     }
     if(data.startsWith("bulk_toggle:")) {
       const p=Number(data.split(":")[1])||0, idx=Number(data.split(":")[2])||0;
       const item=st.items[p*10+idx];
-      if(!item) { await answer("资源不存在",true); return; }
+      if(!item) { void answer("资源不存在",true); return; }
       const id=String(item.messageId), at=st.selected.indexOf(id);
       if(at>=0) st.selected.splice(at,1); else st.selected.push(id);
       st.page=p; states.set(key,st);
-      await answer(at>=0?"已取消选择":"已选择");
+      void answer(at>=0?"已取消选择":"已选择");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📦 <b>批量管理</b>\n\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\n\n👇 点击资源进行多选。",parse_mode:"HTML",reply_markup:resourceMoveMenu(st.items,p,st.selected)});
     }
     if(data==="bulk_delete") {
-      if(!st.selected.length) { await answer("请先选择资源",true); return; }
+      if(!st.selected.length) { void answer("请先选择资源",true); return; }
       st.step="bulk_delete_confirm"; states.set(key,st);
-      await answer("请确认删除");
+      void answer("请确认删除");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,
         text:"⚠️ <b>确认批量删除？</b>\\n\\n"+
           "📁 文件夹："+escapeHtml(db.directories.find(d=>String(d.id)===String(st.sourceId))?.name||"未命名")+"\\n"+
@@ -4670,13 +4669,13 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(data==="bulk_delete_cancel") {
       st.step="bulk_select"; states.set(key,st);
-      await answer("已取消");
+      void answer("已取消");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,
         text:"📦 <b>批量管理</b>\\n\\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\\n\\n👇 点击资源进行多选。",
         parse_mode:"HTML",reply_markup:resourceMoveMenu(st.items,st.page,st.selected)});
     }
     if(data==="bulk_delete_confirm") {
-      if(st.step!=="bulk_delete_confirm") { await answer("操作已过期",true); return; }
+      if(st.step!=="bulk_delete_confirm") { void answer("操作已过期",true); return; }
       const selected=new Set(st.selected.map(String));
       const targets=st.items.filter(x=>selected.has(String(x.messageId)));
       let deleted=0;
@@ -4691,7 +4690,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       saveDb();
       logAdmin(uid,"批量删除资源","删除 "+targets.length+" 个，索引移除 "+deleted+" 个");
       states.delete(key);
-      await answer("删除完成");
+      void answer("删除完成");
       return sendHtml(TOKEN,uid,
         "<b>🗑️ 批量删除完成</b>\\n━━━━━━━━━━━━━━\\n\\n"+
         "📦 选择资源："+targets.length+" 个\\n"+
@@ -4701,33 +4700,33 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
 
     if(data==="bulk_move") {
-      if(!st.selected.length) { await answer("请先选择资源",true); return; }
+      if(!st.selected.length) { void answer("请先选择资源",true); return; }
       st.step="bulk_target"; states.set(key,st);
-      await answer("请选择目标文件夹");
+      void answer("请选择目标文件夹");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📦 <b>批量移动</b>\n\n☑️ 已选择：<b>"+st.selected.length+"</b> 个\n\n👇 请选择目标文件夹。",parse_mode:"HTML",reply_markup:moveFolderMenu(st.sourceId)});
     }
   }
 
   if(data==="batch:random" || data.startsWith("batch:latest:") || data==="batch:home"){
     if(data==="batch:home"){
-      await answer("返回首页");
+      void answer("返回首页");
       return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
     }
     if(child){
       if(data==="batch:random"){
-        await answer("正在随机获取…");
+        void answer("正在随机获取…");
         return deliverFromHistory(token,uid,uid,random10(uid),{mode:"random",offset:0,total:db.resources.length});
       }
       const offset=Math.max(0,Number(data.split(":")[2])||0);
-      await answer("正在获取最新资源…");
+      void answer("正在获取最新资源…");
       return deliverFromHistory(token,uid,uid,db.resources.slice(offset,offset+10),{mode:"latest",offset,total:db.resources.length});
     }
     if(data==="batch:random"){
-      await answer("正在随机获取…");
+      void answer("正在随机获取…");
       return deliver(token,uid,uid,random10(uid),TOKEN,{mode:"random",offset:0,total:db.resources.length});
     }
     const offset=Math.max(0,Number(data.split(":")[2])||0);
-    await answer("正在获取最新资源…");
+    void answer("正在获取最新资源…");
     return deliver(token,uid,uid,db.resources.slice(offset,offset+10),TOKEN,{mode:"latest",offset,total:db.resources.length});
   }
 
@@ -4736,12 +4735,12 @@ async function handleDirectoryCallback(token, q, child=false) {
     const key=(child ? "c:" : "m:")+uid;
     const s=states.get(key);
     if(!s || s.step!=="search_results") {
-      await answer("搜索结果已过期，请重新搜索",true);
+      void answer("搜索结果已过期，请重新搜索",true);
       return;
     }
     if(data==="src") {
       states.delete(key);
-      await answer("已关闭搜索");
+      void answer("已关闭搜索");
       return sendHtml(token,uid,"<b>↩️ 已退出搜索</b>\n\n👇 请选择其他功能。",child ? childMenu() : userMenu());
     }
     if(data.startsWith("srp:")) {
@@ -4749,7 +4748,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const maxPage=Math.max(0,Math.ceil(s.results.length/10)-1);
       const next=Math.min(page,maxPage);
       states.set(key,{step:"search_results",query:s.query,results:s.results,page:next});
-      await answer("已切换到第 "+(next+1)+" 页");
+      void answer("已切换到第 "+(next+1)+" 页");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -4764,15 +4763,15 @@ async function handleDirectoryCallback(token, q, child=false) {
     const pageItems=s.results.slice(page*10,page*10+10);
     const item=pageItems[idx];
     if(!item) {
-      await answer("这个搜索结果不存在或已更新",true);
+      void answer("这个搜索结果不存在或已更新",true);
       return;
     }
     const member=await allowed(TOKEN,uid);
     if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0) {
-      await answer("今日免费额度已用完",true);
+      void answer("今日免费额度已用完",true);
       return sendQuotaNotice(token,chatId,uid,child ? childMenu() : userMenu());
     }
-    await answer("正在获取资源…");
+    void answer("正在获取资源…");
     try {
       await sendIndexedResource(token,chatId,item);
       recordStat(uid,"download",1);
@@ -4802,7 +4801,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const key="m:"+uid;
     const s=states.get(key);
     if(!s || s.step!=="upload_file") {
-      await answer("当前没有进行中的上传",true);
+      void answer("当前没有进行中的上传",true);
       return;
     }
     if(data==="upload_continue") {
@@ -4823,7 +4822,7 @@ async function handleDirectoryCallback(token, q, child=false) {
           ).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
-      await answer("可以继续上传");
+      void answer("可以继续上传");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -4837,7 +4836,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
     if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-    await answer("正在结束上传");
+    void answer("正在结束上传");
     await finalizeUpload(uid,s);
     return safeEdit(token,{
       chat_id:chatId,
@@ -4851,7 +4850,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   // 上传资源的文件夹选择最多显示 10 个，超过后使用分页。
   if(!child && isAdmin(uid) && data.startsWith("uploadsp:")) {
     const page=Math.max(0,Number(data.slice("uploadsp:".length))||0);
-    await answer();
+    void answer();
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
@@ -4868,32 +4867,32 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(!child && isAdmin(uid) && data.startsWith("folder_manage_upload:")) {
     const directoryId=data.slice("folder_manage_upload:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
-    if(!d){await answer("文件夹不存在",true);return;}
+    if(!d){void answer("文件夹不存在",true);return;}
     states.set("m:"+uid,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
-    await answer("已进入上传");
+    void answer("已进入上传");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n📤 <b>继续发送文件</b>\\n收到的文件会自动归入此文件夹。\\n\\n完成后点击「✅ 结束上传」。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}});
   }
   if(!child && isAdmin(uid) && data.startsWith("folder_manage_view:")) {
     const directoryId=data.slice("folder_manage_view:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
-    if(!d){await answer("文件夹不存在",true);return;}
+    if(!d){void answer("文件夹不存在",true);return;}
     const all=directoryItems(d.id);
-    await answer();
+    void answer();
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n📦 共 <b>"+all.length+"</b> 个资源\\n📤 每次获取 <b>10 个</b>\\n\\n👇 点击下方开始获取",parse_mode:"HTML",reply_markup:folderSummaryKeyboard(d.id,all.length,0)});
   }
   if(!child && isAdmin(uid) && data.startsWith("folder_manage_rename:")) {
     const directoryId=data.slice("folder_manage_rename:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
-    if(!d){await answer("文件夹不存在",true);return;}
+    if(!d){void answer("文件夹不存在",true);return;}
     states.set("m:"+uid,{step:"folder_rename",directoryId:d.id,oldName:d.name});
-    await answer("请输入新的文件夹名称");
+    void answer("请输入新的文件夹名称");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✏️ <b>修改文件夹名称</b>\\n\\n当前名称：<b>"+escapeHtml(d.name)+"</b>\\n\\n请直接发送新的名称。\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消",callback_data:"folder_manage_back:"+d.id}]]}});
   }
   if(!child && isAdmin(uid) && data.startsWith("folder_manage_move:")) {
     const directoryId=data.slice("folder_manage_move:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
-    if(!d){await answer("文件夹不存在",true);return;}
-    await answer();
+    if(!d){void answer("文件夹不存在",true);return;}
+    void answer();
     states.set("m:"+uid,{step:"folder_move",sourceId:d.id});
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"🔄 <b>移动文件夹内资源</b>\\n\\n📁 来源：<b>"+escapeHtml(d.name)+"</b>\\n📦 资源：<b>"+db.resources.filter(r=>String(r.directoryId)===String(d.id)).length+"</b>\\n\\n👇 请选择目标文件夹",parse_mode:"HTML",reply_markup:folderMoveTargetMenu(d.id)});
   }
@@ -4901,22 +4900,22 @@ async function handleDirectoryCallback(token, q, child=false) {
     const targetId=data.slice("folder_move_to:".length);
     const sourceId=String(data.match(/^folder_move_to:(.+)$/)?.[1]||"");
     const st=states.get("m:"+uid);
-    if(!st || st.step!=="folder_move" || !st.sourceId){await answer("操作已过期，请重新选择",true);return;}
+    if(!st || st.step!=="folder_move" || !st.sourceId){void answer("操作已过期，请重新选择",true);return;}
     const target=db.directories.find(x=>String(x.id)===String(targetId));
     const source=db.directories.find(x=>String(x.id)===String(st.sourceId));
-    if(!target||!source){await answer("文件夹不存在",true);return;}
+    if(!target||!source){void answer("文件夹不存在",true);return;}
     const items=db.resources.filter(r=>String(r.directoryId)===String(source.id));
     for(const item of items){item.directoryId=target.id;queueBaserowResourceSync(item);}
     touchSharedData(uid);saveDb();states.delete("m:"+uid);
-    await answer("已移动 "+items.length+" 个资源");
+    void answer("已移动 "+items.length+" 个资源");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✅ <b>移动完成</b>\\n\\n📁 原文件夹："+escapeHtml(source.name)+"\\n📁 目标文件夹："+escapeHtml(target.name)+"\\n📦 已移动："+items.length+" 个资源",parse_mode:"HTML",reply_markup:folderManageMenu(target.id)});
   }
   if(!child && isAdmin(uid) && data.startsWith("folder_manage_delete:")) {
     const directoryId=data.slice("folder_manage_delete:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
-    if(!d){await answer("文件夹不存在",true);return;}
+    if(!d){void answer("文件夹不存在",true);return;}
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
-    await answer();
+    void answer();
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"🗑️ <b>删除文件夹</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n📦 当前资源：<b>"+count+"</b>\\n\\n请选择删除方式：",parse_mode:"HTML",reply_markup:{inline_keyboard:[
       [{text:"🗑️ 只删文件夹，保留资源",callback_data:"folder_delete_keep:"+d.id}],
       [{text:"⚠️ 文件夹 + 资源一起删除",callback_data:"folder_delete_all:"+d.id}],
@@ -4927,19 +4926,19 @@ async function handleDirectoryCallback(token, q, child=false) {
     const allDelete=data.startsWith("folder_delete_all:");
     const directoryId=data.slice((allDelete?"folder_delete_all:":"folder_delete_keep:").length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
-    if(!d){await answer("文件夹不存在",true);return;}
+    if(!d){void answer("文件夹不存在",true);return;}
     const items=db.resources.filter(r=>String(r.directoryId)===String(d.id));
     if(allDelete){for(const item of items)queueBaserowDeleteResource(item);db.resources=db.resources.filter(r=>String(r.directoryId)!==String(d.id));}
     else {for(const item of items){item.directoryId=null;queueBaserowResourceSync(item);}}
     db.directories=db.directories.filter(x=>String(x.id)!==String(d.id));
     touchSharedData(uid);saveDb();
-    await answer("删除完成");
+    void answer("删除完成");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✅ <b>文件夹已删除</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n📦 "+(allDelete?"同时删除资源："+items.length:"资源已保留："+items.length),parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
   }
   if(!child && isAdmin(uid) && data.startsWith("folder_manage_back:")) {
     const directoryId=data.slice("folder_manage_back:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
-    if(d){await answer();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:folderManageText(d.id),parse_mode:"HTML",reply_markup:folderManageMenu(d.id)});}
+    if(d){void answer();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:folderManageText(d.id),parse_mode:"HTML",reply_markup:folderManageMenu(d.id)});}
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\\n\\n👇 请选择文件夹",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
   }
 
@@ -4947,7 +4946,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(!child && isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
     if(data==="upload_cancel") {
       states.delete("m:"+uid);
-      await answer("已取消上传");
+      void answer("已取消上传");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -4958,7 +4957,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(data==="upload_new") {
       states.set("m:"+uid,{step:"upload_folder"});
-      await answer("请输入新文件夹名称");
+      void answer("请输入新文件夹名称");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -4970,7 +4969,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const directoryId=data.slice("upload_dir:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
     if(!d) {
-      await answer("文件夹不存在，请重新选择",true);
+      void answer("文件夹不存在，请重新选择",true);
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -4979,7 +4978,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         reply_markup:uploadFolderInlineMenu()
       });
     }
-    await answer("已打开文件夹");
+    void answer("已打开文件夹");
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
@@ -4989,7 +4988,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     });
   }
 
-  await answer();
+  void answer();
 
   console.log("🔘 DIRECTORY CALLBACK:", {
     bot: child ? "child" : "main",
@@ -5078,7 +5077,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(!member && !isAdmin(uid)) {
     const remaining=nonMemberDailyRemaining(uid);
     if(remaining<=0) {
-      await answer("今日免费额度已用完",true);
+      void answer("今日免费额度已用完",true);
       return sendQuotaNotice(token,chatId,uid);
     }
     batch=batch.slice(0,remaining);
