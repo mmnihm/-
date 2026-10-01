@@ -4414,7 +4414,10 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   // 回调必须独立于 Baserow：先确认点击，再执行按钮逻辑。
   console.log("🔘 CALLBACK:", data, "uid="+uid, "chat="+chatId);
+  let callbackAnswered=false;
   const answer=async(text="",showAlert=false)=>{
+    if(callbackAnswered) return;
+    callbackAnswered=true;
     try {
       const body={callback_query_id:callbackId};
       if(text) { body.text=text; body.show_alert=showAlert; }
