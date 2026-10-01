@@ -4377,7 +4377,9 @@ async function childMessage(child,msg,token) {
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id;
   await ensureUserInlineMode(token, uid);
-  const t=msg.text||"",key="c:"+child.botId+":"+uid,s=states.get(key);
+  // 子机器人上传状态与回调统一使用 token-aware key，多个子机器人互不串任务。
+  const key=uploadStateKey(uid,true,token);
+  const t=msg.text||"",s=states.get(key);
   const startCommand=t.split(" ")[0].split("@")[0];
 
   // 主机器人和所有子机器人共用同一个 db.resources / db.directories。
@@ -4916,7 +4918,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         uploadTimers.delete(key);
         const current=states.get(key);
         if(current?.step==="upload_file") {
-          send(TOKEN,uid,
+          send(token,uid,
             "⏸️ <b>暂时没有收到新文件</b>\n\n"+
             "📁 文件夹："+escapeHtml(current.directoryName)+"\n"+
             "📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\n\n"+
