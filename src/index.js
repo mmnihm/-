@@ -2282,6 +2282,15 @@ function userMenu() {
 function childMenu() {
   return userHomeInlineKeyboard();
 }
+function childAdminMenu() {
+  return {reply_markup:{inline_keyboard:[
+    [{text:"📤 上传资源",callback_data:"admin:upload"}],
+    [{text:"🏠 返回首页",callback_data:"admin:home"}]
+  ]}};
+}
+function uploadStateKey(uid, child=false, token="") {
+  return child ? "c:"+tokenFingerprint(token)+":"+String(uid) : "m:"+String(uid);
+}
 
 const replyKeyboardClearedChats = new Set();
 async function ensureUserInlineMode(token, chatId) {
@@ -2591,6 +2600,16 @@ function moveFolderMenu(excludeId=null) {
   rows.push([{text:"❌ 取消",callback_data:"move_cancel"}]);
   return {inline_keyboard:rows};
 }
+function childFolderManageMenu(directoryId) {
+  const d=db.directories.find(x=>String(x.id)===String(directoryId));
+  if(!d) return {inline_keyboard:[[{text:"⬅️ 返回文件夹",callback_data:"admin:upload"}]]};
+  const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+  return {inline_keyboard:[
+    [{text:"📤 继续上传",callback_data:"folder_manage_upload:"+d.id}],
+    [{text:"📂 查看资源",callback_data:"folder_manage_view:"+d.id}],
+    [{text:"⬅️ 返回文件夹列表",callback_data:"admin:upload"}]
+  ]};
+}
 function folderManageMenu(directoryId) {
   const d=db.directories.find(x=>String(x.id)===String(directoryId));
   if(!d) return {inline_keyboard:[[{text:"⬅️ 返回文件夹",callback_data:"upload_folder_back"}]]};
@@ -2648,16 +2667,16 @@ function shareResourceKeyboard(token) {
     [{text:"🔗 打开分享链接",url:token}],    [{text:"🏠 返回首页",callback_data:"batch:home"}]
   ]};
 }
-async function finalizeUploadUnlocked(uid, state) {
+async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadStateKey(uid,false,TOKEN), menu=adminMenu()) {
   const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
   if (!items.length) {
-    states.delete("m:"+uid);
-    return send(TOKEN,uid,"📭 <b>本次没有收到资源</b>\\n\\n当前批次没有可入库的资源。",adminMenu());
+    states.delete(stateKey);
+    return send(token,uid,"📭 <b>本次没有收到资源</b>\\n\\n当前批次没有可入库的资源。",menu);
   }
   const r = repo();
   if (!r) {
-    states.delete("m:"+uid);
-    return send(TOKEN,uid,"❌ <b>资源仓库未绑定</b>\\n\\n请先绑定资源仓库，再进行上传。",adminMenu());
+    states.delete(stateKey);
+    return send(token,uid,"❌ <b>资源仓库未绑定</b>\\n\\n请先绑定资源仓库，再进行上传。",menu);
   }
 
   let directoryName = String(state.directoryName || "").trim();
@@ -2666,8 +2685,8 @@ async function finalizeUploadUnlocked(uid, state) {
   }
   const d = ensureDirectory(directoryName);
   if (!d) {
-    states.delete("m:"+uid);
-    return send(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请稍后重试。",adminMenu());
+    states.delete(stateKey);
+    return send(token,uid,"❌ <b>文件夹创建失败</b>\\n\\n请稍后重试。",menu);
   }
 
   let stored = 0;
@@ -2683,7 +2702,7 @@ async function finalizeUploadUnlocked(uid, state) {
 
     try {
       // 优先批量转存，速度最快。
-      copiedIds=await tg(TOKEN,"copyMessages",{
+      copiedIds=await tg(token,"copyMessages",{
         chat_id:r.chatId,
         from_chat_id:uid,
         message_ids:ids
@@ -2740,7 +2759,7 @@ async function finalizeUploadUnlocked(uid, state) {
       // 逐条兜底：copyMessage 不依赖 copyMessages 的批量返回结构。
       for(const entry of batch) {
         try {
-          const copied=await tg(TOKEN,"copyMessage",{
+          const copied=await tg(token,"copyMessage",{
             chat_id:r.chatId,
             from_chat_id:uid,
             message_id:Number(entry.messageId),
@@ -2790,9 +2809,9 @@ async function finalizeUploadUnlocked(uid, state) {
   saveDb();
   logAdmin(uid,"结束上传",d.name+" / 收到"+items.length+" / 入库"+stored);
 
-  states.delete("m:"+uid);
+  states.delete(stateKey);
 
-  return sendHtml(TOKEN,uid,
+  return sendHtml(token,uid,
     "<b>📦 本批上传完成</b>\\n\\n"+
     "📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n"+
     "📥 收到资源：<b>"+items.length+"</b> 个\\n"+
@@ -2802,12 +2821,12 @@ async function finalizeUploadUnlocked(uid, state) {
     adminMenu()
   );
 }
-async function finalizeUpload(uid, state) {
-  const lockKey=String(uid);
-  if(finalizingUploads.has(lockKey)) return send(TOKEN,uid,"⏳ 正在整理本批资源，请不要重复点击结束上传。");
+async function finalizeUpload(uid, state, token=TOKEN, stateKey=uploadStateKey(uid,false,TOKEN), menu=adminMenu()) {
+  const lockKey=tokenFingerprint(token)+":"+String(uid);
+  if(finalizingUploads.has(lockKey)) return send(token,uid,"⏳ 正在整理本批资源，请不要重复点击结束上传。");
   finalizingUploads.add(lockKey);
   try {
-    return await finalizeUploadUnlocked(uid,state);
+    return await finalizeUploadUnlocked(uid,state,token,stateKey,menu);
   } finally {
     finalizingUploads.delete(lockKey);
   }
@@ -4380,8 +4399,80 @@ async function childMessage(child,msg,token) {
 
   if(t==="⭐ 我的资源") return sendHtml(token,uid,userFeatureText(),{reply_markup:userFeatureKeyboard()});
 
+  if(isAdmin(uid) && (startCommand==="/start" || t==="⚙️ 管理中心")) {
+    return sendHtml(token,uid,
+      "<b>⚙️ 管理中心</b>\\n━━━━━━━━━━━━━━\\n\\n📤 <b>上传资源</b>\\n\\n👇 点击上传资源开始操作",
+      childAdminMenu());
+  }
+
   if(startCommand==="/start" || t==="🏠 开始") return sendHtml(token,uid,
     "<b>👋 欢迎使用资源机器人</b>\n\n📚 <b>共享资源功能</b>：目录 · 搜索 · 随机 · 最新\n\n👇 <i>请选择下方功能</i>",childMenu());
+
+  // 子机器人管理员上传：必须在 allowed() 之前处理，否则管理员若未加入指定群会被拦截。
+  if(isAdmin(uid) && s?.step==="upload_folder") {
+    if(t==="/cancel") { states.delete(key); return sendHtml(token,uid,"<b>❌ 已取消上传</b>\\n\\n本次上传没有入库。",childAdminMenu()); }
+    const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
+    let folder=t.trim().slice(0,80);
+    if(folder.startsWith("📁 ")) folder=folder.slice(2).replace(/（\\d+）$/,"").trim();
+    if(t==="➕ 新建文件夹") folder="";
+    if(!folder && media) folder="未命名-"+Math.random().toString(36).slice(2,8);
+    if(!folder && t==="➕ 新建文件夹") return sendHtml(token,uid,"<b>📁 新建文件夹</b>\\n\\n请发送新的文件夹名称。\\n\\n发送 /cancel 可取消。");
+    if(!folder) return sendHtml(token,uid,"⚠️ 请选择已有文件夹、发送新的文件夹名称，或者直接发送第一个文件。");
+    let existing=getDirectoryByName(folder);
+    if(!existing) {
+      existing=ensureDirectory(folder);
+      if(existing) { touchSharedData(uid); saveDb(); console.log("📁 CHILD UPLOAD FOLDER CREATED:", "bot="+tokenFingerprint(token), "uid="+uid, "folder="+existing.name); }
+    }
+    if(!existing) { states.delete(key); return sendHtml(token,uid,"<b>❌ 文件夹创建失败</b>\\n\\n请重新点击上传资源再试。",childAdminMenu()); }
+    const firstPending=media?[{messageId:Number(msg.message_id),msg}]:[];
+    states.set(key,{step:"upload_file",stateKey:key,directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
+    console.log("📤 CHILD UPLOAD SESSION START:", "bot="+tokenFingerprint(token), "uid="+uid, "folder="+existing.name, "pending="+firstPending.length);
+    if(media) return;
+    return sendHtml(token,uid,"<b>📁 文件夹："+escapeHtml(existing.name)+"</b>\\n\\n现在请发送文件、图片、视频、音频或其他资源。\\n\\n发送 /cancel 可取消。");
+  }
+
+  if(isAdmin(uid) && s?.step==="upload_file") {
+    if(t==="/cancel") {
+      if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
+      states.delete(key);
+      return sendHtml(token,uid,"<b>❌ 已取消本次上传</b>\\n\\n未入库的资源不会保存。",childAdminMenu());
+    }
+    if(t==="▶️ 继续上传") {
+      if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
+      uploadTimers.set(key,setTimeout(()=>{
+        uploadTimers.delete(key);
+        const current=states.get(key);
+        if(current?.step==="upload_file") send(token,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
+      },UPLOAD_TIMEOUT_MS));
+      return;
+    }
+    if(t==="✅ 结束上传") {
+      if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+      if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
+      return finalizeUpload(uid,s,token,key,childAdminMenu());
+    }
+    if(!repo()) { states.delete(key); return sendHtml(token,uid,"<b>❌ 资源仓库未绑定</b>\\n\\n请先完成仓库绑定。",childAdminMenu()); }
+    const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
+    if(!media && !msg.text) return sendHtml(token,uid,"⚠️ 请发送文件、图片、视频、音频或带文字的资源。");
+    const pending=Array.isArray(s.pendingUploads)?s.pendingUploads:[];
+    pending.push({messageId:Number(msg.message_id),msg});
+    if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
+    uploadTimers.set(key,setTimeout(()=>{
+      uploadTimers.delete(key);
+      const current=states.get(key);
+      if(current?.step==="upload_file") send(token,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
+    },UPLOAD_TIMEOUT_MS));
+    states.set(key,{step:"upload_file",stateKey:key,directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
+    console.log("📥 CHILD RESOURCE RECEIVED:", "bot="+tokenFingerprint(token), "folder="+s.directoryName, "message="+msg.message_id, "pending="+pending.length);
+    if(uploadAckTimers.has(key)) clearTimeout(uploadAckTimers.get(key));
+    uploadAckTimers.set(key,setTimeout(()=>{
+      uploadAckTimers.delete(key);
+      const current=states.get(key);
+      if(current?.step==="upload_file") send(token,uid,"📥 <b>已收到 "+(current.pendingUploads?.length||0)+" 个资源</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
+    },600));
+    return;
+  }
 
   if(!(await allowed(TOKEN,uid))) return sendHtml(token,uid,"<b>🔐 请先加入指定群</b>\n\n加入后即可继续使用资源功能。",childMenu());
 
@@ -4492,7 +4583,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
   }
   if(data.startsWith("admin:")||data.startsWith("adm:")){void answer();
-    if(child||!isAdmin(uid)){void answer("无权限",true);return;}
+    if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
@@ -4508,10 +4599,10 @@ async function handleDirectoryCallback(token, q, child=false) {
         void answer("尚未绑定资源仓库",true);
         return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 尚未绑定资源仓库</b>\n\n请先绑定资源仓库。",parse_mode:"HTML",reply_markup:adminResourceInline()});
       }
-      const key="m:"+uid;
+      const key=uploadStateKey(uid,child,token);
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-      states.set(key,{step:"upload_folder",pendingUploads:[]});
+      states.set(key,{step:"upload_folder",stateKey:key,pendingUploads:[]});
       void answer("已进入上传模式");
       return safeEdit(token,{
         chat_id:chatId,
@@ -4812,8 +4903,8 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
-  if(!child && isAdmin(uid) && (data==="upload_continue" || data==="upload_finish")) {
-    const key="m:"+uid;
+  if(isAdmin(uid) && (data==="upload_continue" || data==="upload_finish")) {
+    const key=uploadStateKey(uid,child,token);
     const s=states.get(key);
     if(!s || s.step!=="upload_file") {
       void answer("当前没有进行中的上传",true);
@@ -4852,7 +4943,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
     if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
     void answer("正在结束上传");
-    await finalizeUpload(uid,s);
+    await finalizeUpload(uid,s,token,key,child ? childAdminMenu() : adminMenu());
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
@@ -4863,7 +4954,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   // 上传资源的文件夹选择最多显示 10 个，超过后使用分页。
-  if(!child && isAdmin(uid) && data.startsWith("uploadsp:")) {
+  if(isAdmin(uid) && data.startsWith("uploadsp:")) {
     const page=Math.max(0,Number(data.slice("uploadsp:".length))||0);
     void answer();
     return safeEdit(token,{
@@ -4879,11 +4970,12 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(!child && isAdmin(uid) && data.startsWith("folder_manage:")) {
     return;
   }
-  if(!child && isAdmin(uid) && data.startsWith("folder_manage_upload:")) {
+  if(isAdmin(uid) && data.startsWith("folder_manage_upload:")) {
     const directoryId=data.slice("folder_manage_upload:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
     if(!d){void answer("文件夹不存在",true);return;}
-    states.set("m:"+uid,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    const uploadKey=uploadStateKey(uid,child,token);
+    states.set(uploadKey,{step:"upload_file",stateKey:uploadKey,directoryId:d.id,directoryName:d.name,pendingUploads:[]});
     void answer("已进入上传");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n📤 <b>继续发送文件</b>\\n收到的文件会自动归入此文件夹。\\n\\n完成后点击「✅ 结束上传」。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}});
   }
@@ -4950,7 +5042,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     void answer("删除完成");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✅ <b>文件夹已删除</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n📦 "+(allDelete?"同时删除资源："+items.length:"资源已保留："+items.length),parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
   }
-  if(!child && isAdmin(uid) && data.startsWith("folder_manage_back:")) {
+  if(isAdmin(uid) && data.startsWith("folder_manage_back:")) {
     const directoryId=data.slice("folder_manage_back:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
     if(d){void answer();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:folderManageText(d.id),parse_mode:"HTML",reply_markup:folderManageMenu(d.id)});}
@@ -4958,9 +5050,9 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
-  if(!child && isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
+  if(isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
     if(data==="upload_cancel") {
-      states.delete("m:"+uid);
+      states.delete(uploadStateKey(uid,child,token));
       void answer("已取消上传");
       return safeEdit(token,{
         chat_id:chatId,
@@ -4971,7 +5063,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
     }
     if(data==="upload_new") {
-      states.set("m:"+uid,{step:"upload_folder"});
+      states.set(uploadStateKey(uid,child,token),{step:"upload_folder",stateKey:uploadStateKey(uid,child,token)});
       void answer("请输入新文件夹名称");
       return safeEdit(token,{
         chat_id:chatId,
@@ -4999,7 +5091,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       message_id:messageId,
       text:folderManageText(d.id),
       parse_mode:"HTML",
-      reply_markup:folderManageMenu(d.id)
+      reply_markup:child ? childFolderManageMenu(d.id) : folderManageMenu(d.id)
     });
   }
 
