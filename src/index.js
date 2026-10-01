@@ -4259,8 +4259,23 @@ async function mainMessage(msg) {
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
-      // 收到文件后立即给管理员一个极简确认，不触发 Baserow 同步，也不等待耗时任务。
-      return send(TOKEN,uid,"📥 已收到，继续发送文件即可。");
+      // 每批收到文件后只提示一次：继续上传则保持会话，结束上传则统一入库。
+      if(uploadAckTimers.has(key)) clearTimeout(uploadAckTimers.get(key));
+      uploadAckTimers.set(key,setTimeout(()=>{
+        uploadAckTimers.delete(key);
+        const current=states.get(key);
+        if(current?.step==="upload_file") {
+          send(TOKEN,uid,
+            "📥 <b>已收到 "+(current.pendingUploads?.length||0)+" 个资源</b>\n\n"+
+            "📁 文件夹："+escapeHtml(current.directoryName)+"\n\n"+
+            "还要继续上传吗？",
+            {parse_mode:"HTML",reply_markup:{inline_keyboard:[
+              [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
+            ]}}
+          ).catch(()=>{});
+        }
+      },600));
+      return;
     } catch(e) {
       return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
