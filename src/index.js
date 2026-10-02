@@ -1936,7 +1936,29 @@ async function startRepositoryAutoSyncNow(uid){
     const member=await main("getChatMember",{chat_id:chat.id,user_id:me.id});
     if(["left","kicked"].includes(String(member?.status||"")))throw new Error("机器人不在仓库「"+String(chat.title||chat.username||chat.id)+"」中");
   }
-  state.enabled=true;state.status="running";state.updatedAt=Date.now();state.lastError="";saveDb();
+
+  // 启动时先把旧仓库已有的资源加入队列，避免出现“显示正在同步但一直不转发”。
+  // 后续 channel_post 会继续通过 queueRepositoryAutoSyncMessage() 自动加入新消息。
+  const sourceId=String(state.sourceId),targetId=String(state.targetId);
+  const existing=db.resources
+    .filter(x=>String(x.chatId)===sourceId&&Number(x.messageId)>0)
+    .sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+  const pendingKeys=new Set(state.queue.map(x=>String(x.messageId)));
+  let added=0;
+  for(const item of existing){
+    const messageId=Number(item.messageId);
+    const already=db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
+    if(already||pendingKeys.has(String(messageId)))continue;
+    state.queue.push({messageId,queuedAt:Date.now()});
+    pendingKeys.add(String(messageId));
+    added++;
+  }
+  state.enabled=true;
+  state.status=state.queue.length?"queued":"running";
+  state.updatedAt=Date.now();
+  state.lastError="";
+  saveDb();
+  console.log("⚡ AUTO SYNC START:",sourceId,"->",targetId,"queued="+state.queue.length,"added="+added);
   processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC START:",String(e?.message||e)));
   return state;
 }
@@ -3882,7 +3904,7 @@ async function mainMessage(msg) {
       states.delete(key);
       await resetRepositoryAutoSyncBinding();
       const latestSourceMessageId=Math.max(0,...db.resources.filter(x=>String(x.chatId)===String(sc.id)&&Number(x.messageId)>0).map(x=>Number(x.messageId)));
-      await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),latestSourceMessageId);
+      await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),0);
       return await sendHtml(TOKEN,uid,"<b>✅ 自动同步任务已绑定</b>\n━━━━━━━━━━━━━━\n\n📤 旧仓库："+escapeHtml(String(sc.title||sc.username||sc.id))+"\n📥 新仓库："+escapeHtml(String(tc.title||tc.username||tc.id))+"\n\n⏸️ 当前尚未启动同步。\n👇 点击下面的「▶️ 开始同步」后，旧仓库收到的新消息才会自动复制到新仓库。",{reply_markup:{inline_keyboard:[[{text:"▶️ 开始同步",callback_data:"adm:auto_start"}],[{text:"🗑️ 删除任务并解绑",callback_data:"adm:auto_delete"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
     } catch(e) {
       const msg=String(e?.telegramDescription||e?.message||e||"自动同步启动失败");
