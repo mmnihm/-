@@ -1883,7 +1883,7 @@ async function processRepositoryAutoSyncQueue(){
       // 每条发送之间留出间隔，避免新频道短时间连续写入大量消息。
       if(state.queue.length) await sleep(perMessageDelay);
 
-      // 每 5 条再停一下，并保存断点。
+      // 每 10 条再停一下，并保存断点。
       if(processedInBatch>=batchSize){
         processedInBatch=0;
         state.status="running";
@@ -1939,6 +1939,18 @@ async function startRepositoryAutoSyncNow(uid){
 async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,targetTitle,lastMessageId=0){
   const state=repositoryAutoSyncState();state.enabled=true;state.status="running";state.ownerId=String(uid);state.sourceId=String(sourceId);state.targetId=String(targetId);state.sourceTitle=String(sourceTitle||sourceId);state.targetTitle=String(targetTitle||targetId);state.lastMessageId=Math.max(Number(state.lastMessageId||0),Number(lastMessageId||0));state.updatedAt=Date.now();saveDb();return state;
 }
+async function testRepositoryAutoSync(uid){
+  const state=repositoryAutoSyncState();
+  if(!state.enabled||!state.sourceId||!state.targetId) throw new Error("自动同步尚未完成绑定");
+  const candidates=db.resources
+    .filter(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)>0)
+    .sort((a,b)=>Number(b.messageId)-Number(a.messageId));
+  const sourceItem=candidates.find(x=>!db.resources.some(y=>String(y.chatId)===String(state.targetId)&&Number(y.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(y.migratedFrom?.messageId||0)===Number(x.messageId)));
+  if(!sourceItem) throw new Error("旧仓库目前没有可测试的新资源");
+  const ok=await repositoryAutoSyncOne({messageId:Number(sourceItem.messageId)});
+  if(!ok) throw new Error(state.lastError||"测试同步失败");
+  return sourceItem;
+}
 async function stopRepositoryAutoSync(){const state=repositoryAutoSyncState();state.enabled=false;state.status="stopped";state.updatedAt=Date.now();saveDb();return state;}
 async function checkRepositoryAutoSyncAccess(){
   const state=repositoryAutoSyncState();
@@ -1991,7 +2003,7 @@ async function showRepositoryAutoSyncStatus(uid){
   return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n"+statusText+"\n📤 旧仓库："+escapeHtml(state.sourceTitle||"-")+"\n📥 新仓库："+escapeHtml(state.targetTitle||"-")+"\n📌 最后消息："+Number(state.lastMessageId||0)+"\n📦 已自动同步："+Number(state.copied||0)+"\n⏳ 待处理："+state.queue.length+"\n⚠️ 失败次数："+Number(state.failed||0)+(state.lastError?"\n\n❌ "+escapeHtml(state.lastError):""),{reply_markup:{inline_keyboard:[
     running?[{text:"⏸️ 暂停同步（保留绑定）",callback_data:"adm:auto_pause"}]:[{text:"▶️ 继续同步",callback_data:"adm:auto_resume"}],
     [{text:"⚡ 启动自动同步",callback_data:"adm:auto_start"}],
-    [{text:"🧹 解绑并重新绑定",callback_data:"adm:auto_reset"}],
+    [{text:"🧪 测试同步",callback_data:"adm:auto_test"},{text:"🧹 解绑并重新绑定",callback_data:"adm:auto_reset"}],
     [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
   ]}});
 }
@@ -5118,6 +5130,24 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
     }
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
+    if(route==="auto_test") {
+      await answer("正在测试自动同步…");
+      try {
+        const item=await testRepositoryAutoSync(uid);
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 自动同步测试成功</b>\n━━━━━━━━━━━━━━\n\n📤 旧仓库："+escapeHtml(repositoryAutoSyncState().sourceTitle||"-")+"\n📥 新仓库："+escapeHtml(repositoryAutoSyncState().targetTitle||"-")+"\n📦 已测试消息："+Number(item.messageId)+"\n\n这表示机器人已经可以从旧仓库复制消息到新仓库。之后旧仓库收到新消息时，会自动进入同步队列。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"⏸️ 暂停同步",callback_data:"adm:auto_pause"}],
+          [{text:"🧹 解绑并重新绑定",callback_data:"adm:auto_reset"}],
+          [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+        ]}});
+      } catch(e) {
+        const msg=String(e?.telegramDescription||e?.message||e||"测试失败");
+        const a=repositoryAutoSyncState(); a.lastError=msg; a.updatedAt=Date.now(); saveDb();
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 自动同步测试失败</b>\n━━━━━━━━━━━━━━\n\n⚠️ "+escapeHtml(msg)+"\n\n请确认机器人同时在旧仓库和新仓库中，并且旧仓库可读取、新仓库可发送。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"🧹 解绑并重新绑定",callback_data:"adm:auto_reset"}],
+          [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+        ]}});
+      }
+    }
     if(route==="auto_pause") {
       const a=repositoryAutoSyncState(); a.enabled=false; a.status="paused"; a.updatedAt=Date.now(); saveDb();
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⏸️ 自动同步已暂停</b>\n\n📌 绑定仍保留，待处理资源不会删除。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
