@@ -4721,7 +4721,14 @@ async function mainMessage(msg) {
     states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
     console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+existing.name, "id="+existing.id, "first="+(media?"yes":"no"), "pending="+firstPending.length);
     if(media) {
-      return;
+      return send(TOKEN,uid,
+        "📥 <b>已收到第 1 个资源</b>\n\n"+
+        "📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\n\n"+
+        "继续发送文件即可批量上传。完成后点击「结束上传」。",
+        {parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
+        ]}}
+      );
     }
     return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\n\n现在请发送要上传的文件、图片、视频、音频或其他资源。\n\n📥 可以连续发送多个文件，完成后点击「✅ 结束上传」。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
