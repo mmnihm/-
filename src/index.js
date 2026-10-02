@@ -2649,7 +2649,7 @@ function shareResourceKeyboard(token) {
 async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadStateKey(uid,false,TOKEN), menu=adminMenu()) {
   const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
   if (!items.length) {
-    states.delete(stateKey);
+    states.delete(key);
     return send(token,uid,"📭 <b>本次没有收到资源</b>\\n\\n当前批次没有可入库的资源。",menu);
   }
   const r = repo();
