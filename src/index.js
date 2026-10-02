@@ -3095,7 +3095,7 @@ function random10(userId) {
 
 function isPermanentResourceError(error) {
   const msg=String(error?.message||error||"");
-  return /chat not found|message to copy not found|message not found|MESSAGE_ID_INVALID|message_id_invalid|file.?id.*(invalid|wrong|not found)|wrong file|bot was kicked|bot is not a member|kicked from the channel|Forbidden|Bad Request/i.test(msg);
+  return /message to copy not found|message not found|message_id_invalid|MESSAGE_ID_INVALID|file.?id.*(?:invalid|wrong|not found)|wrong file(?: identifier)?|message .*?(?:not found|does not exist)|(?:copy|forward).*message.*(?:failed|not found)|message can.?t be copied/i.test(msg);
 }
 
 function removeInvalidResource(item, reason="") {
@@ -3207,7 +3207,7 @@ function batchNavigation(mode,offset,total){
   const rows=[];
   const next=Number(offset||0)+10;
   if(mode==="random"){
-    rows.push([{text:"🎲 再来10个",callback_data:"batch:random"}]);
+    rows.push([{text:"🎲 再来一组",callback_data:"batch:random"}]);
   } else if(mode==="latest"){
     const nav=[];
     if(Number(offset||0)>0) nav.push({text:"⬅️ 上一批",callback_data:"batch:latest:"+Math.max(0,Number(offset||0)-10)});
@@ -3287,6 +3287,8 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
             const singleMsg=String(singleError?.message||singleError);
             console.error("COPY FALLBACK:",singleMsg,"chat=",group.chatId,"message=",item.messageId);
             if(isPermanentResourceError(singleError)) {
+              removeInvalidResource(item,singleMsg);
+            } else if (/^Bad Request(?::|$)/i.test(singleMsg) && /message|file/i.test(singleMsg)) {
               removeInvalidResource(item,singleMsg);
             }
           }
@@ -5675,4 +5677,4 @@ async function boot(){
 }
 boot().catch(e=>console.error("❌ FATAL BOOT:",e));
 process.on("SIGTERM",()=>{console.log("SIGTERM received");server.close(()=>process.exit(0));});
-// syntax-check trigger 2
+// validation trigger
