@@ -5675,3 +5675,4 @@ async function boot(){
 }
 boot().catch(e=>console.error("❌ FATAL BOOT:",e));
 process.on("SIGTERM",()=>{console.log("SIGTERM received");server.close(()=>process.exit(0));});
+// syntax-check trigger
