@@ -2868,7 +2868,6 @@ function sendDirectoryBatch(token, chatId, items) {
   })();
 }
 function directoryText() {
-  const dirs = Array.isArray(db.directories) ? db.directories : [];
   return ["📂 <b>资源目录</b>","━━━━━━━━━━━━━━","","📚 总资源：<b>"+db.resources.length+"</b> 条","📁 文件夹：<b>"+db.directories.length+"</b> 个","","👇 <i>请选择文件夹查看资源</i>"].join("\n");
 }
 function configText() {
