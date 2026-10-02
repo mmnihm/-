@@ -4775,22 +4775,17 @@ async function mainMessage(msg) {
       },UPLOAD_TIMEOUT_MS));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
-      // 每批收到文件后只提示一次：继续上传则保持会话，结束上传则统一入库。
-      if(uploadAckTimers.has(key)) clearTimeout(uploadAckTimers.get(key));
-      uploadAckTimers.set(key,setTimeout(()=>{
-        uploadAckTimers.delete(key);
-        const current=states.get(key);
-        if(current?.step==="upload_file") {
-          send(TOKEN,uid,
-            "📥 <b>已收到 "+(current.pendingUploads?.length||0)+" 个资源</b>\n\n"+
-            "📁 文件夹："+escapeHtml(current.directoryName)+"\n\n"+
-            "还要继续上传吗？",
-            {parse_mode:"HTML",reply_markup:{inline_keyboard:[
-              [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
-            ]}}
-          ).catch(()=>{});
-        }
-      },600));
+      // 每收到一个文件立即确认，但不立即转存；所有文件继续留在当前批次，点击结束后统一批量处理。
+      const receivedCount=pending.length;
+      void send(TOKEN,uid,
+        "📥 <b>已收到第 "+receivedCount+" 个资源</b>\n\n"+
+        "📁 文件夹："+escapeHtml(s.directoryName)+"\n"+
+        "📦 当前批次已收到：<b>"+receivedCount+"</b> 个\n\n"+
+        "文件已加入批量处理队列，继续发送即可。\n完成后点击「✅ 结束上传」。",
+        {parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
+        ]}}
+      ).catch(e=>console.warn("UPLOAD ACK:",e?.message||e));
       return;
     } catch(e) {
       return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
