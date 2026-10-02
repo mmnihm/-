@@ -1077,6 +1077,7 @@ async function tgUploadBuffer(token, method, chatId, buffer, fileName, caption="
 function normalizeText(text) {
   return String(text ?? "")
     .replace(/\\n/g, "\n")
+    .replace(/\/n/g, "\n")
     .replace(/\\r/g, "")
     .replace(/\n{2,}/g, "\n")
     .trim();
