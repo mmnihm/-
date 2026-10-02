@@ -3709,7 +3709,18 @@ async function mainMessage(msg) {
   }
 
   if(t==="⭐ 我的资源") return sendHtml(TOKEN,uid,userFeatureText(),{reply_markup:userFeatureKeyboard()});
-  if(t==="/start" || t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\n\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
+  if(t==="/start" || t==="🏠 开始") {
+    const welcomeStore=db.settings||{};
+    if(!welcomeStore.welcomeUsers || typeof welcomeStore.welcomeUsers!=="object") welcomeStore.welcomeUsers={};
+    const firstVisit=!welcomeStore.welcomeUsers[String(uid)];
+    welcomeStore.welcomeUsers[String(uid)]=Date.now();
+    if(firstVisit) {
+      saveDb();
+      await sendHtml(TOKEN,uid,"<b>🎉 欢迎来到资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👋 很高兴见到你！\\n\\n📚 <b>这里可以：</b>\\n• 📂 浏览资源目录\\n• 🔎 搜索资源\\n• 🎲 随机获取资源\\n• 🆕 查看最新资源\\n\\n👇 <i>点击下方菜单开始使用</i>",admin?adminMenu():userMenu());
+      return;
+    }
+    return sendHtml(TOKEN,uid,"<b>🏠 资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👇 <i>请选择你要使用的功能</i>",admin?adminMenu():userMenu());
+  }
   if(t==="/admin") {
   if(t.startsWith("/start share_")) {
     const shareToken=t.slice("/start share_".length).trim();
