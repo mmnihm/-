@@ -1848,6 +1848,49 @@ async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,target
   const state=repositoryAutoSyncState();state.enabled=true;state.status="running";state.ownerId=String(uid);state.sourceId=String(sourceId);state.targetId=String(targetId);state.sourceTitle=String(sourceTitle||sourceId);state.targetTitle=String(targetTitle||targetId);state.lastMessageId=Math.max(Number(state.lastMessageId||0),Number(lastMessageId||0));state.updatedAt=Date.now();saveDb();return state;
 }
 async function stopRepositoryAutoSync(){const state=repositoryAutoSyncState();state.enabled=false;state.status="stopped";state.updatedAt=Date.now();saveDb();return state;}
+async function checkRepositoryAutoSyncAccess(){
+  const state=repositoryAutoSyncState();
+  if(!state.enabled||!state.targetId)return true;
+  try{
+    const me=await main("getMe");
+    const member=await main("getChatMember",{chat_id:state.targetId,user_id:me.id});
+    const status=String(member?.status||"");
+    if(["left","kicked"].includes(status)){
+      state.enabled=false;
+      state.status="unbound";
+      state.lastError="机器人已被移出新仓库，自动同步已自动解绑";
+      state.queue=[];
+      state.sourceId="";
+      state.targetId="";
+      state.sourceTitle="";
+      state.targetTitle="";
+      state.lastMessageId=0;
+      state.updatedAt=Date.now();
+      saveDb();
+      console.warn("⚠️ 自动同步已自动解绑：机器人已被移出新仓库");
+      return false;
+    }
+    return true;
+  }catch(e){
+    const msg=String(e?.telegramDescription||e?.message||e||"");
+    if(/chat not found|user not found|bot was kicked|kicked|not a member|member list/i.test(msg)){
+      state.enabled=false;
+      state.status="unbound";
+      state.lastError="机器人已无法访问新仓库，自动同步已自动解绑";
+      state.queue=[];
+      state.sourceId="";
+      state.targetId="";
+      state.sourceTitle="";
+      state.targetTitle="";
+      state.lastMessageId=0;
+      state.updatedAt=Date.now();
+      saveDb();
+      console.warn("⚠️ 自动同步已自动解绑：",msg);
+      return false;
+    }
+    return true;
+  }
+}
 async function showRepositoryAutoSyncStatus(uid){
   const state=repositoryAutoSyncState();
   return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n"+(state.enabled?"🟢 状态：运行中":"⏸️ 状态："+(state.status==="stopped"?"已停止":"未启用"))+"\n📤 旧仓库："+escapeHtml(state.sourceTitle||"-")+"\n📥 新仓库："+escapeHtml(state.targetTitle||"-")+"\n📌 最后消息："+Number(state.lastMessageId||0)+"\n📦 已自动同步："+Number(state.copied||0)+"\n⏳ 待处理："+state.queue.length+"\n⚠️ 失败次数："+Number(state.failed||0)+(state.lastError?"\n\n❌ "+escapeHtml(state.lastError):""),{reply_markup:{inline_keyboard:[[{text:"⏸️ 停止同步",callback_data:"adm:auto_stop"}],[{text:"▶️ 继续同步",callback_data:"adm:auto_resume"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
@@ -5754,7 +5797,10 @@ async function boot(){
       runtime.lastError = "";
       await ensureStartCommand(TOKEN);
       const autoSyncState=repositoryAutoSyncState();
-      if(autoSyncState.enabled && autoSyncState.sourceId && autoSyncState.targetId) processRepositoryAutoSyncQueue().catch(e=>console.error("❌ 自动同步恢复失败:",String(e?.message||e)));
+      if(autoSyncState.enabled && autoSyncState.sourceId && autoSyncState.targetId){
+        const accessOk=await checkRepositoryAutoSyncAccess();
+        if(accessOk) processRepositoryAutoSyncQueue().catch(e=>console.error("❌ 自动同步恢复失败:",String(e?.message||e)));
+      }
       const migrationState=db.settings.repositoryMigration||{};
       if(String(migrationState.status||"")==="running" && migrationState.sourceId && migrationState.targetId && migrationState.ownerId) {
         console.log("🔄 检测到未完成迁移，启动断点恢复：",migrationState.sourceId+"->"+migrationState.targetId);
