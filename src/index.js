@@ -3091,21 +3091,27 @@ function search(q) {
   return db.resources.filter(x=>(String(x.title||"")+" "+String(x.caption||"")+" "+String(x.directoryId||"")).toLowerCase().includes(q));
 }
 function random10(userId) {
-  const arr=[...db.resources];
+  // 随机获取只从“可定位到 Telegram 原消息”的记录中抽取。
+  // 真正失效的仓库消息会在 deliver() 发送失败后自动清理。
+  const arr=[...db.resources].filter(x =>
+    x &&
+    x.chatId !== undefined &&
+    x.chatId !== null &&
+    String(x.chatId).trim() &&
+    Number(x.messageId) > 0
+  );
   if(!arr.length) return [];
 
-  // 每个用户独立记录随机获取历史：资源未耗尽前尽量不重复。
-  // 全部资源都获取过后自动开启下一轮，保证“每次随机获取”仍然随机。
   if(!db.settings.randomHistory || typeof db.settings.randomHistory!=="object") {
     db.settings.randomHistory={};
   }
   const key=String(userId);
-  const validIds=new Set(arr.map(x=>String(x.id||x.messageId||"")));
+  const validIds=new Set(arr.map(x=>resourceKey(x)));
   let history=Array.isArray(db.settings.randomHistory[key])
     ? db.settings.randomHistory[key].filter(id=>validIds.has(String(id)))
     : [];
 
-  let pool=arr.filter(x=>!history.includes(String(x.id||x.messageId||"")));
+  let pool=arr.filter(x=>!history.includes(resourceKey(x)));
   if(!pool.length) {
     history=[];
     pool=[...arr];
@@ -3117,10 +3123,52 @@ function random10(userId) {
   }
 
   const batch=pool.slice(0,10);
-  history.push(...batch.map(x=>String(x.id||x.messageId||"")));
+  history.push(...batch.map(resourceKey));
   db.settings.randomHistory[key]=history.slice(-arr.length);
   saveDb();
   return batch;
+}
+
+function isPermanentResourceError(error) {
+  const msg=String(error?.message||error||"");
+  return /chat not found|message to copy not found|message not found|MESSAGE_ID_INVALID|message_id_invalid|file.?id.*(invalid|wrong|not found)|wrong file|bot was kicked|bot is not a member|kicked from the channel|Forbidden|Bad Request/i.test(msg);
+}
+
+function removeInvalidResource(item, reason="") {
+  if(!item) return false;
+  const key=resourceKey(item);
+  const before=db.resources.length;
+  db.resources=db.resources.filter(x=>resourceKey(x)!==key);
+
+  if(db.settings.randomHistory && typeof db.settings.randomHistory==="object") {
+    for(const uid of Object.keys(db.settings.randomHistory)) {
+      if(Array.isArray(db.settings.randomHistory[uid])) {
+        db.settings.randomHistory[uid]=db.settings.randomHistory[uid].filter(x=>String(x)!==key);
+      }
+    }
+  }
+  if(db.settings.userFavorites && typeof db.settings.userFavorites==="object") {
+    for(const uid of Object.keys(db.settings.userFavorites)) {
+      if(Array.isArray(db.settings.userFavorites[uid])) {
+        db.settings.userFavorites[uid]=db.settings.userFavorites[uid].filter(x=>String(x)!==key);
+      }
+    }
+  }
+  if(db.settings.userRecent && typeof db.settings.userRecent==="object") {
+    for(const uid of Object.keys(db.settings.userRecent)) {
+      if(Array.isArray(db.settings.userRecent[uid])) {
+        db.settings.userRecent[uid]=db.settings.userRecent[uid].filter(x=>String(x)!==key);
+      }
+    }
+  }
+
+  if(before!==db.resources.length) {
+    queueBaserowDeleteResource(item);
+    console.warn("🧹 已清理无效资源：",key,reason ? "| "+String(reason).slice(0,200) : "");
+    saveDb();
+    return true;
+  }
+  return false;
 }
 function resourceInlineKeyboard(items,page=0) {
   const start=page*10;
@@ -3210,7 +3258,13 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   const member=await allowed(TOKEN,userId);
   if(!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
 
-  let valid = items.filter(x => x && x.chatId && Number(x.messageId) > 0);
+  let valid = items.filter(x =>
+    x &&
+    x.chatId !== undefined &&
+    x.chatId !== null &&
+    String(x.chatId).trim() &&
+    Number(x.messageId) > 0
+  );
   if(!member && !isAdmin(userId)) {
     const remaining=nonMemberDailyRemaining(userId);
     if(remaining<=0) return sendQuotaNotice(token,chatId,userId);
@@ -3254,9 +3308,28 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
           lastError="批量复制结果数量不完整";
         }
       } catch(e) {
-        fail+=batch.length;
         lastError=e.message||String(e);
         console.error("COPY BATCH:",lastError,"chat=",group.chatId,"count=",batch.length);
+
+        // 批量复制只要遇到一条失效消息，Telegram 可能让整批失败。
+        // 降级为逐条发送：有效资源继续发送，确认永久失效的记录立即从本地/Baserow 清理。
+        let fallbackOk=0, fallbackFail=0;
+        for(const item of batch) {
+          try {
+            await sendIndexedResource(sourceToken,chatId,item);
+            fallbackOk++;
+          } catch(singleError) {
+            fallbackFail++;
+            const singleMsg=String(singleError?.message||singleError);
+            console.error("COPY FALLBACK:",singleMsg,"chat=",group.chatId,"message=",item.messageId);
+            if(isPermanentResourceError(singleError)) {
+              removeInvalidResource(item,singleMsg);
+            }
+          }
+          await sleep(80);
+        }
+        ok+=fallbackOk;
+        fail+=fallbackFail;
       }
       if(offset+batchSize<group.items.length) await sleep(300);
     }
