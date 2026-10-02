@@ -4160,7 +4160,7 @@ async function mainMessage(msg) {
 
   if(t==="⚡ 自动同步" && admin) {
     const a=repositoryAutoSyncState();
-    if(a.enabled||a.sourceId) return showRepositoryAutoSyncStatus(uid);
+    if(a.enabled) return showRepositoryAutoSyncStatus(uid);
     states.set(key,{step:"auto_migration_source"});
     return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\n📥 首次会先迁移历史资源，完成后以后出现的新资源会自动复制到新仓库。\n\n⚠️ 机器人必须同时在两个仓库里。\n📌 旧仓库不会删除。\n\n发送 /cancel 可取消。");
   }
