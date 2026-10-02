@@ -2397,7 +2397,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"🛠️ 恢复文件夹资源",callback_data:"adm:folder_repair"}],
  [{text:"🏷️ 标签自动建文件夹",callback_data:"adm:tagfolders"}],
  [{text:"🗑️ 删除所有文件夹",callback_data:"adm:folders_all_confirm"}],
- [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步",callback_data:"adm:auto"}],
+ [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步（可开关）",callback_data:"adm:auto"}],
  [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
