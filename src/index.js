@@ -2495,6 +2495,82 @@ function uploadStateKey(uid, child=false, token="") {
   return child ? "c:"+tokenFingerprint(token)+":"+String(uid) : "m:"+String(uid);
 }
 
+async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
+  const media=msg?.document||msg?.video||msg?.audio||msg?.animation||msg?.photo?.at(-1)||msg?.voice||msg?.video_note;
+  if(!media || !msg?.message_id) return false;
+  if(!isAdmin(uid)) return false;
+  if(!state || !["upload_folder","upload_file"].includes(String(state.step))) return false;
+  if(!repo()) {
+    states.delete(key);
+    await sendHtml(token,uid,"<b>❌ 资源仓库未绑定</b>\n\n请先绑定资源仓库。",child?childAdminMenu():adminMenu()).catch(()=>{});
+    return true;
+  }
+
+  let directoryId=state.directoryId;
+  let directoryName=String(state.directoryName||"").trim();
+
+  if(state.step==="upload_folder") {
+    if(!directoryName) directoryName="未命名-"+Math.random().toString(36).slice(2,8);
+    let d=getDirectoryByName(directoryName);
+    if(!d) d=ensureDirectory(directoryName);
+    if(!d) {
+      states.delete(key);
+      await sendHtml(token,uid,"<b>❌ 文件夹创建失败</b>\n\n请重新点击「📤 上传资源」再试。",child?childAdminMenu():adminMenu()).catch(()=>{});
+      return true;
+    }
+    directoryId=d.id;
+    directoryName=d.name;
+  }
+
+  if(!directoryId || !directoryName) return false;
+
+  const pending=Array.isArray(state.pendingUploads)?state.pendingUploads:[];
+  pending.push({messageId:Number(msg.message_id),msg});
+  if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
+  uploadTimers.set(key,setTimeout(()=>{
+    uploadTimers.delete(key);
+    const current=states.get(key);
+    if(current?.step==="upload_file") {
+      sendHtml(token,uid,
+        "<b>⏸️ 暂时没有收到新文件</b>\n\n"+
+        "📁 文件夹："+escapeHtml(current.directoryName)+"\n"+
+        "📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个\n\n"+
+        "还要继续上传吗？",
+        {reply_markup:{inline_keyboard:[[
+          {text:"▶️ 继续上传",callback_data:"upload_continue"},
+          {text:"✅ 结束上传",callback_data:"upload_finish"}
+        ]]}}
+      ).catch(()=>{});
+    }
+  },UPLOAD_TIMEOUT_MS));
+
+  states.set(key,{
+    step:"upload_file",
+    directoryId:String(directoryId),
+    directoryName,
+    pendingUploads:pending
+  });
+  saveDb();
+  console.log("📥 UPLOAD MEDIA ACCEPTED:",{
+    bot:child?"child":"main",
+    uid:String(uid),
+    folder:directoryName,
+    messageId:Number(msg.message_id),
+    pending:pending.length
+  });
+
+  await sendHtml(token,uid,
+    "📥 <b>已收到第 "+pending.length+" 个资源</b>\n\n"+
+    "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
+    "📦 当前批次：<b>"+pending.length+"</b> 个\n\n"+
+    "资源已加入批量处理队列。\n完成后点击「✅ 结束上传」。",
+    {reply_markup:{inline_keyboard:[
+      [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
+    ]}}
+  ).catch(e=>console.warn("❌ UPLOAD ACK FAILED:",e?.message||e));
+  return true;
+}
+
 const replyKeyboardClearedChats = new Set();
 async function ensureUserInlineMode(token, chatId) {
   const key = tokenFingerprint(token) + ":" + String(chatId);
@@ -3804,6 +3880,12 @@ async function mainMessage(msg) {
   const key="m:"+uid;
   const s=states.get(key);
 
+  // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
+  if(admin && (s?.step==="upload_file" || s?.step==="upload_folder")) {
+    const handled=await receiveUploadMedia(TOKEN,uid,key,s,msg,false);
+    if(handled) return;
+  }
+
   // 管理员回复客服转发消息时，优先走客服回传，不进入普通后台状态机。
   if(admin && await supportHandleAdminReply(TOKEN,msg)) return;
   // 用户处于客服会话时，普通消息直接转交客服。
@@ -4872,6 +4954,12 @@ async function childMessage(child,msg,token) {
   // 子机器人上传状态与回调统一使用 token-aware key，多个子机器人互不串任务。
   const key=uploadStateKey(uid,true,token);
   const t=msg.text||"",s=states.get(key);
+
+  // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
+  if(isAdmin(uid) && (s?.step==="upload_file" || s?.step==="upload_folder")) {
+    const handled=await receiveUploadMedia(token,uid,key,s,msg,true);
+    if(handled) return;
+  }
 
   // 子机器人也支持在线客服：管理员回复机器人转发的消息即可回传用户。
   if(isAdmin(uid) && await supportHandleAdminReply(token,msg)) return;
