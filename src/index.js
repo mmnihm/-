@@ -1990,6 +1990,7 @@ async function showRepositoryAutoSyncStatus(uid){
   const statusText=running?"🟢 状态：运行中":(state.status==="paused"?"⏸️ 状态：已暂停":(bound?"⏹️ 状态：已绑定，未同步":"⚪ 状态：未绑定"));
   return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n"+statusText+"\n📤 旧仓库："+escapeHtml(state.sourceTitle||"-")+"\n📥 新仓库："+escapeHtml(state.targetTitle||"-")+"\n📌 最后消息："+Number(state.lastMessageId||0)+"\n📦 已自动同步："+Number(state.copied||0)+"\n⏳ 待处理："+state.queue.length+"\n⚠️ 失败次数："+Number(state.failed||0)+(state.lastError?"\n\n❌ "+escapeHtml(state.lastError):""),{reply_markup:{inline_keyboard:[
     running?[{text:"⏸️ 暂停同步（保留绑定）",callback_data:"adm:auto_pause"}]:[{text:"▶️ 继续同步",callback_data:"adm:auto_resume"}],
+    [{text:"⚡ 启动自动同步",callback_data:"adm:auto_start"}],
     [{text:"🧹 解绑并重新绑定",callback_data:"adm:auto_reset"}],
     [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
   ]}});
@@ -3834,16 +3835,20 @@ async function mainMessage(msg) {
     if(!target) return send(TOKEN,uid,"⚠️ 请发送新仓库 Chat ID、@用户名，或直接转发新仓库中的任意消息/文件。");
     states.delete(key);
     try {
-      const sc=await main("getChat",{chat_id:source}),tc=await main("getChat",{chat_id:target});
-      const previous=db.settings.repositoryMigration||{};
-      db.settings.repositoryMigration={...previous,autoSync:true};
-      saveDb();
-      return await repositoryMigration(uid,String(sc.id),String(tc.id));
+      const sc=await main("getChat",{chat_id:source});
+      const tc=await main("getChat",{chat_id:target});
+      if(String(sc.id)===String(tc.id)) throw new Error("旧仓库和新仓库不能是同一个");
+      const me=await main("getMe");
+      for(const chat of [sc,tc]){
+        const member=await main("getChatMember",{chat_id:chat.id,user_id:me.id});
+        if(["left","kicked"].includes(String(member?.status||""))) throw new Error("机器人不在仓库「"+String(chat.title||chat.username||chat.id)+"」中");
+      }
+      await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),0);
+      return await showRepositoryAutoSyncStatus(uid);
     } catch(e) {
-      const m=db.settings.repositoryMigration||{};
-      db.settings.repositoryMigration={...m,autoSync:false,status:"error",finishedAt:Date.now(),error:String(e?.message||e)};
-      saveDb();
-      return sendHtml(TOKEN,uid,"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(e?.message||e)+"\n\n请确认机器人同时在旧仓库和新仓库里。",adminMenu());
+      const a=repositoryAutoSyncState();
+      a.enabled=false; a.status="error"; a.lastError=String(e?.telegramDescription||e?.message||e||"自动同步启动失败"); a.updatedAt=Date.now(); saveDb();
+      return sendHtml(TOKEN,uid,"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(a.lastError)+"\n\n请确认旧仓库、新仓库都可访问，并且机器人同时在两个仓库中。",adminMenu());
     }
   }
 
@@ -5125,6 +5130,20 @@ async function handleDirectoryCallback(token, q, child=false) {
         [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
       ]}});
     }
+    if(route==="auto_start") {
+      await answer("正在启动自动同步…");
+      try {
+        await startRepositoryAutoSyncNow(uid);
+        return showRepositoryAutoSyncStatus(uid);
+      } catch(e) {
+        const a=repositoryAutoSyncState();
+        a.enabled=false; a.status="error"; a.lastError=String(e?.telegramDescription||e?.message||e||"自动同步启动失败"); a.updatedAt=Date.now(); saveDb();
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(a.lastError)+"\n\n请确认旧仓库、新仓库都可访问，并且机器人同时在两个仓库中。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],
+          [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+        ]}});
+      }
+    }
     if(route==="auto_resume") {
       const a=repositoryAutoSyncState();
       if(!a.sourceId||!a.targetId) return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚠️ 尚未绑定仓库</b>\n\n请先重新绑定旧仓库和新仓库。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
@@ -5169,7 +5188,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const result=autoCreateTagFoldersForExistingResources();
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签自动分类完成</b>\\n━━━━━━━━━━━━━━\\n\\n📁 新建标签文件夹：<b>"+result.created+"</b>\\n📦 自动归类资源：<b>"+result.assigned+"</b>\\n\\n规则：只处理当前没有文件夹的资源。\\n第一个 #标签会作为文件夹名称。",parse_mode:"HTML",reply_markup:adminResourceInline()});
   }
-  const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步",auto_status:"⚡ 自动同步",auto_pause:"⏸️ 暂停同步",auto_stop:"⏹️ 解绑并停止自动同步",auto_reset:"🧹 解绑并重新绑定",auto_resume:"▶️ 继续自动同步"};
+  const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步",auto_status:"⚡ 自动同步",auto_start:"⚡ 启动自动同步",auto_pause:"⏸️ 暂停同步",auto_stop:"⏹️ 解绑并停止自动同步",auto_reset:"🧹 解绑并重新绑定",auto_resume:"▶️ 继续自动同步"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
