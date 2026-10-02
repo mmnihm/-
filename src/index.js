@@ -3406,7 +3406,7 @@ function supportFindRoute(token,adminChatId,messageId) {
 }
 function supportActiveSessions() {
   const store=supportSessionStore().supportSessions;
-  return Object.values(store).filter(x=>x&&x.status==="open").sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0);
+  return Object.values(store).filter(x=>x&&x.status==="open").sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0));
 }
 async function supportSendToAdmins(token,msg) {
   const uid=msg.from?.id;
