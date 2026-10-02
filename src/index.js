@@ -2643,9 +2643,10 @@ function shareResourceKeyboard(token) {
 async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadStateKey(uid,false,TOKEN), menu=adminMenu()) {
   const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
   if (!items.length) {
-    states.delete(key);
+    states.delete(stateKey);
     return send(token,uid,"📭 <b>本次没有收到资源</b>\\n\\n当前批次没有可入库的资源。",menu);
   }
+
   const r = repo();
   if (!r) {
     states.delete(stateKey);
@@ -2653,145 +2654,75 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
   }
 
   let directoryName = String(state.directoryName || "").trim();
-  if (!directoryName) {
-    directoryName = "未命名-" + Math.random().toString(36).slice(2, 8);
-  }
+  if (!directoryName) directoryName = "未命名-" + Math.random().toString(36).slice(2,8);
   const d = ensureDirectory(directoryName);
   if (!d) {
     states.delete(stateKey);
     return send(token,uid,"❌ <b>文件夹创建失败</b>\\n\\n请稍后重试。",menu);
   }
 
-  let stored = 0;
-  let failed = 0;
-
-  // Telegram 批量复制：一次请求最多 100 条，并保留原有媒体组。
+  let stored=0, failed=0;
   const sortedItems=[...items].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
-  for(let offset=0; offset<sortedItems.length; offset+=100) {
-    const batch=sortedItems.slice(offset,offset+100);
-    const ids=batch.map(x=>Number(x.messageId));
-    let copiedIds = null;
-    let usedFallback = false;
 
+  // 后台逐条转存：单个文件失败不会影响其他文件，并且每成功一个就立即保存索引。
+  for(const entry of sortedItems) {
     try {
-      // 优先批量转存，速度最快。
-      copiedIds=await tg(token,"copyMessages",{
+      const sourceMessageId=Number(entry?.messageId);
+      if(!Number.isFinite(sourceMessageId) || sourceMessageId<=0) throw new Error("源消息ID无效");
+
+      const copied=await tg(token,"copyMessage",{
         chat_id:r.chatId,
         from_chat_id:uid,
-        message_ids:ids
+        message_id:sourceMessageId,
+        protect_content:false
       });
-      if(!Array.isArray(copiedIds) || copiedIds.length!==batch.length) {
-        throw new Error("批量转存结果数量不一致");
-      }
+      const copiedId=Number(copied?.message_id);
+      if(!Number.isFinite(copiedId) || copiedId<=0) throw new Error("转存后消息ID无效");
+
+      const resourceMsg={
+        ...(entry?.msg||{}),
+        chat:{
+          ...((entry?.msg?.chat)||{}),
+          id:r.chatId,
+          title:r.title||entry?.msg?.chat?.title||r.chatId,
+          username:r.username||entry?.msg?.chat?.username||"",
+          type:r.type||"supergroup"
+        },
+        message_id:copiedId
+      };
+      indexResource(resourceMsg);
+
+      const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+      if(!item) throw new Error("资源索引写入失败");
+
+      item.directoryId=d.id;
+      item.repositoryMessageId=copiedId;
+      item.sourceUserId=String(uid);
+      item.indexedAt=Date.now();
+      queueBaserowResourceSync(item);
+      stored++;
+      saveDb();
     } catch(e) {
-      // 某些消息类型/Telegram 环境下 copyMessages 可能失败。
-      // 不让整批直接判定失败，逐条 copyMessage 兜底；这样即使只有一条异常，
-      // 其他资源仍然可以正常进入仓库。
-      usedFallback = true;
-      console.warn(
-        "⚠️ UPLOAD BATCH FINALIZE 批量转存失败，启动逐条兜底：",
-        e?.message || e,
-        "count=",batch.length
-      );
-    }
-
-    if(!usedFallback) {
-      for(let n=0;n<batch.length;n++) {
-        try {
-          const copiedId=Number(copiedIds[n]?.message_id ?? copiedIds[n]);
-          if(!Number.isFinite(copiedId)) throw new Error("批量转存消息ID无效");
-
-          const resourceMsg={
-            ...batch[n].msg,
-            chat:{
-              ...(batch[n].msg?.chat||{}),
-              id:r.chatId,
-              title:r.title||batch[n].msg?.chat?.title||r.chatId,
-              username:r.username||batch[n].msg?.chat?.username||"",
-              type:r.type||"supergroup"
-            },
-            message_id:copiedId
-          };
-          indexResource(resourceMsg);
-
-          const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
-          if(!item) throw new Error("资源索引写入失败");
-
-          item.directoryId=d.id;
-          item.repositoryMessageId=copiedId;
-          item.sourceUserId=String(uid);
-          item.indexedAt=Date.now();
-          queueBaserowResourceSync(item);
-          stored++;
-        } catch(e) {
-          failed++;
-          console.error("❌ UPLOAD RESOURCE INDEX:",e?.message||e,"sourceMessage=",batch[n]?.messageId);
-        }
-      }
-    } else {
-      // 逐条兜底：copyMessage 不依赖 copyMessages 的批量返回结构。
-      for(const entry of batch) {
-        try {
-          const copied=await tg(token,"copyMessage",{
-            chat_id:r.chatId,
-            from_chat_id:uid,
-            message_id:Number(entry.messageId),
-            // 仓库中的原始副本不受用户侧“内容保护”设置影响；
-            // 用户获取资源时仍由 sendIndexedResource 决定 protect_content。
-            protect_content:false
-          });
-          const copiedId=Number(copied?.message_id);
-          if(!Number.isFinite(copiedId)) throw new Error("逐条转存消息ID无效");
-
-          const resourceMsg={
-            ...entry.msg,
-            chat:{
-              ...(entry.msg?.chat||{}),
-              id:r.chatId,
-              title:r.title||entry.msg?.chat?.title||r.chatId,
-              username:r.username||entry.msg?.chat?.username||"",
-              type:r.type||"supergroup"
-            },
-            message_id:copiedId
-          };
-          indexResource(resourceMsg);
-
-          const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
-          if(!item) throw new Error("资源索引写入失败");
-
-          item.directoryId=d.id;
-          item.repositoryMessageId=copiedId;
-          item.sourceUserId=String(uid);
-          item.indexedAt=Date.now();
-          queueBaserowResourceSync(item);
-          stored++;
-        } catch(e) {
-          failed++;
-          console.error(
-            "❌ UPLOAD RESOURCE FALLBACK:",
-            e?.message||e,
-            "sourceMessage=",entry.messageId
-          );
-        }
-      }
+      failed++;
+      console.error("❌ UPLOAD RESOURCE:",e?.message||e,"sourceMessage=",entry?.messageId);
     }
   }
 
   recordStat(uid,"upload",1);
   recordStat(uid,"uploadedResource",stored);
+  touchSharedData(uid);
   saveDb();
-  logAdmin(uid,"结束上传",d.name+" / 收到"+items.length+" / 入库"+stored);
-
+  logAdmin(uid,"结束上传",d.name+" / 收到"+items.length+" / 入库"+stored+" / 失败"+failed);
   states.delete(stateKey);
 
   return sendHtml(token,uid,
-    "<b>📦 本批上传完成</b>\\n\\n"+
+    "<b>📦 后台转存完成</b>\\n\\n"+
     "📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n"+
     "📥 收到资源：<b>"+items.length+"</b> 个\\n"+
     "💾 已存入资源库：<b>"+stored+"</b> 个\\n"+
-    (failed ? "⚠️ 入库失败：<b>"+failed+"</b> 个\\n" : "")+
-    "\\n📚 文件夹已建立，资源已统一整理入库。",
-    adminMenu()
+    (failed ? "⚠️ 转存失败：<b>"+failed+"</b> 个\\n" : "✅ 全部转存成功\\n")+
+    "\\n📚 资源已整理完成。",
+    menu
   );
 }
 async function finalizeUpload(uid, state, token=TOKEN, stateKey=uploadStateKey(uid,false,TOKEN), menu=adminMenu()) {
