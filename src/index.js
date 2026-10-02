@@ -4053,12 +4053,12 @@ async function mainMessage(msg) {
   if(t==="⚡ 自动同步" && admin) {
     const a=repositoryAutoSyncState();
     if(a.enabled||a.sourceId) return showRepositoryAutoSyncStatus(uid);
-    states.set(key,{step:"auto_migration_source"});
+    states.set(stateKey,{step:"auto_migration_source"});
     return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\n📥 首次会先迁移历史资源，完成后以后出现的新资源会自动复制到新仓库。\n\n⚠️ 机器人必须同时在两个仓库里。\n📌 旧仓库不会删除。\n\n发送 /cancel 可取消。");
   }
 
   if(t==="🔄 迁移仓库" && admin) {
-    states.set(key,{step:"migration_source"});
+    states.set(stateKey,{step:"migration_source"});
     return sendHtml(TOKEN,uid,"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{"text":"❌ 取消","callback_data":"admin:root"}]]}});
   }
 
@@ -4897,6 +4897,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data.startsWith("admin:")||data.startsWith("adm:")){void answer();
     if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
+    const stateKey=uploadStateKey(uid,child,token);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
     if(data==="admin:resource")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 资源管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminResourceInline()});
@@ -4906,7 +4907,12 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
     if(data==="admin:backup") return backupRecoveryPreview(uid);
     if(data==="admin:backup_restore") return backupRecoveryMerge(uid);
-    if(data==="admin:upload"){
+      if(data==="bind_repo_cancel"){
+      states.delete(stateKey);
+      void answer("已取消绑定");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"❌ <b>已取消绑定资源仓库</b>",parse_mode:"HTML",reply_markup:adminResourceInline()});
+    }
+  if(data==="admin:upload"){
       if(!repo()){
         void answer("尚未绑定资源仓库",true);
         return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 尚未绑定资源仓库</b>\n\n请先绑定资源仓库。",parse_mode:"HTML",reply_markup:adminResourceInline()});
@@ -5298,6 +5304,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   // 文件夹管理：继续上传、查看、改名、移动、删除。
+  if(!child && isAdmin(uid) && data==="upload_folder_back"){
+    void answer("返回文件夹列表");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\\n━━━━━━━━━━━━━━\\n\\n👇 请选择文件夹",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+  }
   if(!child && isAdmin(uid) && data.startsWith("folder_manage:")) {
     return;
   }
