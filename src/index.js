@@ -4935,7 +4935,15 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
     }
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
-    if(route==="auto_stop") { await stopRepositoryAutoSync(); return showRepositoryAutoSyncStatus(uid); }
+    if(route==="auto_stop") {
+      await stopRepositoryAutoSync();
+      const a=repositoryAutoSyncState();
+      a.sourceId="";a.targetId="";a.sourceTitle="";a.targetTitle="";a.ownerId="";a.queue=[];a.lastMessageId=0;a.status="stopped";a.updatedAt=Date.now();saveDb();
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⏸️ 自动同步已停止</b>\\n━━━━━━━━━━━━━━\\n\\n旧仓库和新仓库已解除当前自动同步绑定。\\n\\n📤 现在可以重新设置旧仓库和新仓库。\\n\\n⚠️ 机器人必须同时在两个仓库里。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+        [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],
+        [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+      ]}});
+    }
     if(route==="auto_resume") { const a=repositoryAutoSyncState(); if(!a.sourceId||!a.targetId) return showRepositoryAutoSyncStatus(uid); a.enabled=true; a.status="running"; a.updatedAt=Date.now(); saveDb(); processRepositoryAutoSyncQueue().catch(()=>{}); return showRepositoryAutoSyncStatus(uid); }
     if(route==="folders_all_confirm"){
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚠️ 删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n这只会删除文件夹及文件夹标记。\n📦 所有资源/文件都会保留。\n🔗 资源会变成未分类。\n\n确定继续吗？",parse_mode:"HTML",reply_markup:{inline_keyboard:[
