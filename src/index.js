@@ -1941,7 +1941,12 @@ async function startRepositoryAutoSyncNow(uid){
   return state;
 }
 async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,targetTitle,lastMessageId=0){
-  const state=repositoryAutoSyncState();state.enabled=true;state.status="running";state.ownerId=String(uid);state.sourceId=String(sourceId);state.targetId=String(targetId);state.sourceTitle=String(sourceTitle||sourceId);state.targetTitle=String(targetTitle||targetId);state.lastMessageId=Math.max(Number(state.lastMessageId||0),Number(lastMessageId||0));state.updatedAt=Date.now();saveDb();return state;
+  const state=repositoryAutoSyncState();
+  state.enabled=false; state.status="bound"; state.ownerId=String(uid);
+  state.sourceId=String(sourceId); state.targetId=String(targetId);
+  state.sourceTitle=String(sourceTitle||sourceId); state.targetTitle=String(targetTitle||targetId);
+  state.lastMessageId=Number(lastMessageId||0); state.queue=[]; state.lastError="";
+  state.updatedAt=Date.now(); saveDb(); return state;
 }
 async function testRepositoryAutoSync(uid){
   const state=repositoryAutoSyncState();
@@ -2013,7 +2018,7 @@ async function showRepositoryAutoSyncStatus(uid){
     (state.lastError?"\n\n❌ "+escapeHtml(state.lastError):"");
   const rows=[];
   if(running) rows.push([{text:"⏸️ 暂停同步",callback_data:"adm:auto_pause"}]);
-  else if(bound) rows.push([{text:"▶️ 继续同步",callback_data:"adm:auto_resume"}]);
+  else if(bound) rows.push([{text:"▶️ 开始同步",callback_data:"adm:auto_start"}]);
   rows.push([{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}]);
   if(bound) rows.push([{text:"🗑️ 删除任务并解绑仓库",callback_data:"adm:auto_delete"}]);
   rows.push([{text:"🔄 重新绑定",callback_data:"adm:auto_reset"}]);
@@ -3876,7 +3881,8 @@ async function mainMessage(msg) {
       }
       states.delete(key);
       await resetRepositoryAutoSyncBinding();
-      await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),0);
+      const latestSourceMessageId=Math.max(0,...db.resources.filter(x=>String(x.chatId)===String(sc.id)&&Number(x.messageId)>0).map(x=>Number(x.messageId)));
+      await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),latestSourceMessageId);
       return await showRepositoryAutoSyncStatus(uid);
     } catch(e) {
       const msg=String(e?.telegramDescription||e?.message||e||"自动同步启动失败");
@@ -5270,7 +5276,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const result=autoCreateTagFoldersForExistingResources();
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签自动分类完成</b>\\n━━━━━━━━━━━━━━\\n\\n📁 新建标签文件夹：<b>"+result.created+"</b>\\n📦 自动归类资源：<b>"+result.assigned+"</b>\\n\\n规则：只处理当前没有文件夹的资源。\\n第一个 #标签会作为文件夹名称。",parse_mode:"HTML",reply_markup:adminResourceInline()});
   }
-  const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步任务",auto_status:"⚡ 自动同步任务",auto_add:"➕ 添加同步任务",auto_pause:"⏸️ 暂停任务",auto_stop:"⏹️ 解绑并停止自动同步",auto_reset:"🧹 解绑并重新绑定",auto_delete:"🧹 删除任务并解绑",auto_test:"🧪 测试同步",auto_resume:"▶️ 继续任务"};
+  const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步任务",auto_status:"⚡ 自动同步任务",auto_add:"➕ 添加同步任务",auto_pause:"⏸️ 暂停任务",auto_stop:"⏹️ 解绑并停止自动同步",auto_reset:"🧹 解绑并重新绑定",auto_delete:"🧹 删除任务并解绑",auto_test:"🧪 测试同步",auto_resume:"▶️ 继续任务",auto_start:"▶️ 开始同步"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
