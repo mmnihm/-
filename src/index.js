@@ -171,6 +171,12 @@ async function safeEdit(token, body, fallbackText = "") {
 }
 
 async function tg(token, method, body = {}) {
+  // 统一处理所有 Telegram 文本，避免任何直连 tg() 的消息把 \\n 或 /n 原样发给用户。
+  if(body && typeof body==="object"){
+    body={...body};
+    if(typeof body.text==="string") body.text=prettyText(body.text);
+    if(typeof body.caption==="string") body.caption=prettyText(body.caption);
+  }
   const maxAttempts = method === "getUpdates" ? 8 : 4;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const timeoutMs = method === "getUpdates" ? 50000 : 20000;
