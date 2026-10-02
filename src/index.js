@@ -5751,7 +5751,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     const uploadKey=uploadStateKey(uid,child,token);
     if(uploadTimers.has(uploadKey)) { clearTimeout(uploadTimers.get(uploadKey)); uploadTimers.delete(uploadKey); }
-    if(uploadAckTimers.has(uploadKey)) { clearTimeout(uploadAckTimers.get(uploadKey)); uploadAckTimers.delete(uploadAckTimers.get(uploadKey)); }
+    if(uploadAckTimers.has(uploadKey)) { clearTimeout(uploadAckTimers.get(uploadKey)); uploadAckTimers.delete(uploadKey); }
     states.set(uploadKey,{
       step:"upload_file",
       directoryId:d.id,
