@@ -2559,15 +2559,7 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
     pending:pending.length
   });
 
-  await sendHtml(token,uid,
-    "📥 <b>已收到第 "+pending.length+" 个资源</b>\n\n"+
-    "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
-    "📦 当前批次：<b>"+pending.length+"</b> 个\n\n"+
-    "资源已加入批量处理队列。\n完成后点击「✅ 结束上传」。",
-    {reply_markup:{inline_keyboard:[
-      [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
-    ]}}
-  ).catch(e=>console.warn("❌ UPLOAD ACK FAILED:",e?.message||e));
+  // 不逐个回复；所有资源加入当前批次，点击「结束上传」后统一处理并统一回复结果。
   return true;
 }
 
@@ -4803,14 +4795,7 @@ async function mainMessage(msg) {
     states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
     console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+existing.name, "id="+existing.id, "first="+(media?"yes":"no"), "pending="+firstPending.length);
     if(media) {
-      return send(TOKEN,uid,
-        "📥 <b>已收到第 1 个资源</b>\n\n"+
-        "📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\n\n"+
-        "继续发送文件即可批量上传。完成后点击「结束上传」。",
-        {parse_mode:"HTML",reply_markup:{inline_keyboard:[
-          [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
-        ]}}
-      );
+      return;
     }
     return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\n\n现在请发送要上传的文件、图片、视频、音频或其他资源。\n\n📥 可以连续发送多个文件，完成后点击「✅ 结束上传」。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
@@ -4858,16 +4843,6 @@ async function mainMessage(msg) {
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
       // 每收到一个文件立即确认，但不立即转存；所有文件继续留在当前批次，点击结束后统一批量处理。
-      const receivedCount=pending.length;
-      void send(TOKEN,uid,
-        "📥 <b>已收到第 "+receivedCount+" 个资源</b>\n\n"+
-        "📁 文件夹："+escapeHtml(s.directoryName)+"\n"+
-        "📦 当前批次已收到：<b>"+receivedCount+"</b> 个\n\n"+
-        "文件已加入批量处理队列，继续发送即可。\n完成后点击「✅ 结束上传」。",
-        {parse_mode:"HTML",reply_markup:{inline_keyboard:[
-          [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
-        ]}}
-      ).catch(e=>console.warn("UPLOAD ACK:",e?.message||e));
       return;
     } catch(e) {
       return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
@@ -5014,14 +4989,7 @@ async function childMessage(child,msg,token) {
     states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
     console.log("📤 CHILD UPLOAD SESSION START:", "bot="+tokenFingerprint(token), "uid="+uid, "folder="+existing.name, "pending="+firstPending.length);
     if(media) {
-      return sendHtml(token,uid,
-        "📥 <b>已收到第 1 个资源</b>\\n\\n"+
-        "📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\\n\\n"+
-        "继续发送文件即可批量上传。完成后点击「结束上传」。",
-        {reply_markup:{inline_keyboard:[
-          [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
-        ]}}
-      );
+      return;
     }
     return sendHtml(token,uid,"<b>📁 文件夹："+escapeHtml(existing.name)+"</b>\\n\\n现在请发送文件、图片、视频、音频或其他资源。\\n\\n发送 /cancel 可取消。");
   }
@@ -5060,12 +5028,6 @@ async function childMessage(child,msg,token) {
     },UPLOAD_TIMEOUT_MS));
     states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
     console.log("📥 CHILD RESOURCE RECEIVED:", "bot="+tokenFingerprint(token), "folder="+s.directoryName, "message="+msg.message_id, "pending="+pending.length);
-    if(uploadAckTimers.has(key)) clearTimeout(uploadAckTimers.get(key));
-    uploadAckTimers.set(key,setTimeout(()=>{
-      uploadAckTimers.delete(key);
-      const current=states.get(key);
-      if(current?.step==="upload_file") send(token,uid,"📥 <b>已收到 "+(current.pendingUploads?.length||0)+" 个资源</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-    },600));
     return;
   }
 
@@ -5254,7 +5216,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
-        text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹\n\n📁 选择后直接连续发送文件\n📌 上传过程中不会逐条回复。",
+        text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹\n\n📁 选择后直接连续发送文件\n📌 上传过程中不逐条回复，完成后统一处理并回复结果。",
         parse_mode:"HTML",
         reply_markup:uploadFolderInlineMenu()
       });
@@ -5845,7 +5807,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
-      text:"📤 <b>开始上传</b>\\n━━━━━━━━━━━━━━\\n\\n📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n\\n请直接发送文件、图片、视频、音频或其他资源。\\n\\n收到文件后会立即提示。完成后点击「✅ 结束上传」。",
+      text:"📤 <b>开始上传</b>\\n━━━━━━━━━━━━━━\\n\\n📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n\\n请直接发送文件、图片、视频、音频或其他资源。\\n\\n文件会自动加入当前批次。完成后点击「✅ 结束上传」，统一处理。",
       parse_mode:"HTML",
       reply_markup:{inline_keyboard:[
         [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
