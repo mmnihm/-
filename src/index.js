@@ -3345,7 +3345,7 @@ async function supportSendToAdmins(token,msg) {
   const username=msg.from?.username ? "@"+msg.from.username : "无用户名";
   const header=await tg(token,"sendMessage",{
     chat_id:admins[0],
-    text:"💬 <b>客服新消息</b>\\n\\n👤 用户：<b>"+escapeHtml(displayName)+"</b>\\n🆔 ID：<code>"+escapeHtml(String(uid))+"</code>\\n🔗 用户名："+escapeHtml(username)+"\\n\\n↩️ <i>请直接回复下面这条用户消息，机器人会自动转回给用户。</i>",
+    text:"<b>💬 客服新消息</b>\\n━━━━━━━━━━━━━━\\n\\n👤 <b>"+escapeHtml(displayName)+"</b>\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n🔗 "+escapeHtml(username)+"\\n\\n↩️ <i>直接回复下面这条消息，即可回复用户。</i>",
     parse_mode:"HTML"
   });
   for(const adminId of admins) {
@@ -3354,7 +3354,7 @@ async function supportSendToAdmins(token,msg) {
       try {
         targetHeader=await tg(token,"sendMessage",{
           chat_id:adminId,
-          text:"💬 <b>客服新消息</b>\\n\\n👤 用户：<b>"+escapeHtml(displayName)+"</b>\\n🆔 ID：<code>"+escapeHtml(String(uid))+"</code>\\n🔗 用户名："+escapeHtml(username)+"\\n\\n↩️ <i>请直接回复下面这条用户消息。</i>",
+          text:"<b>💬 客服新消息</b>\\n━━━━━━━━━━━━━━\\n\\n👤 <b>"+escapeHtml(displayName)+"</b>\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n🔗 "+escapeHtml(username)+"\\n\\n↩️ <i>直接回复下面这条消息，即可回复用户。</i>",
           parse_mode:"HTML"
         });
       } catch(e) {
@@ -4820,13 +4820,13 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="support:start") {
     supportOpenSession(token,uid);
     return safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n👤 你现在已进入客服会话。\\n\\n📨 请直接发送你的问题、文字、图片、视频或文件，客服会收到并回复你。\\n\\n⏱️ 客服回复后会自动发送给你。\\n\\n👇 完成后可结束会话。",
+      text:"<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n👋 你已进入客服会话\\n\\n📨 直接发送问题、文字、图片、视频或文件即可。\\n💬 客服回复后会自动发送给你。\\n\\n📌 需要结束时，点击下方「❌ 结束客服」。",
       parse_mode:"HTML",reply_markup:supportUserKeyboard()});
   }
   if(data==="support:end") {
     supportCloseSession(token,uid);
     return safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"<b>💬 客服会话已结束</b>\\n\\n如需帮助，可以再次点击「💬 联系客服」。",
+      text:"<b>💬 客服会话已结束</b>\\n━━━━━━━━━━━━━━\\n\\n📭 本次客服会话已结束。\\n\\n💬 如需帮助，可再次点击「💬 联系客服」。",
       parse_mode:"HTML",reply_markup:userHomeInlineKeyboard().reply_markup});
   }
   if(data==="support:admin" && isAdmin(uid)) {
