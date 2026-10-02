@@ -3455,7 +3455,7 @@ async function supportHandleUserMessage(token,msg) {
     supportCloseSession(token,uid);
     return true;
   }
-  await sendHtml(token,uid,"📨 <b>消息已转给客服</b>\\n\\n客服回复后会自动发给你。\\n\\n继续发送内容即可，发送「❌ 结束客服」可结束会话。");
+  await sendHtml(token,uid,"<b>📨 消息已转给客服</b>\\n━━━━━━━━━━━━━━\\n\\n✅ 已收到，你的消息已转给客服。\\n💬 客服回复后会自动发送给你。\\n\\n👇 需要结束会话时，点击下方按钮。",{reply_markup:supportUserKeyboard()});
   return true;
 }
 function supportUserKeyboard() {
