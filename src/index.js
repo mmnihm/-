@@ -3345,7 +3345,7 @@ async function supportSendToAdmins(token,msg) {
   const username=msg.from?.username ? "@"+msg.from.username : "无用户名";
   const header=await tg(token,"sendMessage",{
     chat_id:admins[0],
-    text:"<b>💬 客服新消息</b>\\n━━━━━━━━━━━━━━\\n\\n👤 <b>"+escapeHtml(displayName)+"</b>\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n🔗 "+escapeHtml(username)+"\\n\\n↩️ <i>直接回复下面这条消息，即可回复用户。</i>",
+    text:"<b>💬 收到新的客服消息</b>\\n\\n👤 <b>"+escapeHtml(displayName)+"</b>\\n🔗 "+escapeHtml(username)+"\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n\\n📨 <b>用户消息</b>\\n请直接回复下面这条消息，机器人会自动回复给用户。 ",
     parse_mode:"HTML"
   });
   for(const adminId of admins) {
@@ -3354,7 +3354,7 @@ async function supportSendToAdmins(token,msg) {
       try {
         targetHeader=await tg(token,"sendMessage",{
           chat_id:adminId,
-          text:"<b>💬 客服新消息</b>\\n━━━━━━━━━━━━━━\\n\\n👤 <b>"+escapeHtml(displayName)+"</b>\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n🔗 "+escapeHtml(username)+"\\n\\n↩️ <i>直接回复下面这条消息，即可回复用户。</i>",
+          text:"<b>💬 收到新的客服消息</b>\\n\\n👤 <b>"+escapeHtml(displayName)+"</b>\\n🔗 "+escapeHtml(username)+"\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n\\n📨 <b>用户消息</b>\\n请直接回复下面这条消息，机器人会自动回复给用户。 ",
           parse_mode:"HTML"
         });
       } catch(e) {
