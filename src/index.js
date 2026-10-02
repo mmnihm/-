@@ -3883,7 +3883,7 @@ async function mainMessage(msg) {
       await resetRepositoryAutoSyncBinding();
       const latestSourceMessageId=Math.max(0,...db.resources.filter(x=>String(x.chatId)===String(sc.id)&&Number(x.messageId)>0).map(x=>Number(x.messageId)));
       await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),latestSourceMessageId);
-      return await showRepositoryAutoSyncStatus(uid);
+      return await sendHtml(TOKEN,uid,"<b>✅ 自动同步任务已绑定</b>\n━━━━━━━━━━━━━━\n\n📤 旧仓库："+escapeHtml(String(sc.title||sc.username||sc.id))+"\n📥 新仓库："+escapeHtml(String(tc.title||tc.username||tc.id))+"\n\n⏸️ 当前尚未启动同步。\n👇 点击下面的「▶️ 开始同步」后，旧仓库收到的新消息才会自动复制到新仓库。",{reply_markup:{inline_keyboard:[[{text:"▶️ 开始同步",callback_data:"adm:auto_start"}],[{text:"🗑️ 删除任务并解绑",callback_data:"adm:auto_delete"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
     } catch(e) {
       const msg=String(e?.telegramDescription||e?.message||e||"自动同步启动失败");
       const a=repositoryAutoSyncState();
