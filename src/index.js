@@ -1916,7 +1916,12 @@ function queueRepositoryAutoSyncMessage(msg){
   const exists=state.queue.some(x=>Number(x.messageId)===messageId);
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(!exists&&!already)state.queue.push({messageId,queuedAt:Date.now()});
-  state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);state.status="queued";state.updatedAt=Date.now();saveDb();processRepositoryAutoSyncQueue().catch(()=>{});
+  state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
+  // 已因异常暂停时只保存新消息，不自动恢复发送；管理员点击“继续同步”后再处理。
+  if(state.status!=="paused") state.status="queued";
+  state.updatedAt=Date.now();
+  saveDb();
+  if(state.status!=="paused") processRepositoryAutoSyncQueue().catch(()=>{});
 }
 async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,targetTitle,lastMessageId=0){
   const state=repositoryAutoSyncState();state.enabled=true;state.status="running";state.ownerId=String(uid);state.sourceId=String(sourceId);state.targetId=String(targetId);state.sourceTitle=String(sourceTitle||sourceId);state.targetTitle=String(targetTitle||targetId);state.lastMessageId=Math.max(Number(state.lastMessageId||0),Number(lastMessageId||0));state.updatedAt=Date.now();saveDb();return state;
@@ -2161,17 +2166,16 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
         const ok=await applyCopied(needCopy,copied);
         if(ok!==needCopy.length) throw new Error("批量复制结果未能完整写入索引");
       }catch(e){
-        console.error("MIGRATION BATCH FAILED:",e?.message||e);
-        for(const item of needCopy){
-          const key=resourceKey(item);
-          if(completed.has(key)) continue;
-          try{
-            await applySingle(item);
-          }catch(err){
-            failedKeys.add(key);
-            console.error("MIGRATION ITEM FAILED:",key,err?.message||err);
-          }
-        }
+        const message=String(e?.telegramDescription||e?.message||e||"");
+        console.error("⏸️ MIGRATION BATCH FAILED，暂停任务并保留断点:",message);
+        state.status="paused";
+        state.error=message;
+        state.lastError=message;
+        state.completedKeys=[...completed].slice(-Math.max(MAX_RESOURCES,25000));
+        state.failedKeys=[...failedKeys].slice(-Math.max(MAX_RESOURCES,25000));
+        state.queued=Math.max(0,ordered.length-completed.size);
+        saveDb();
+        throw e;
       }
     };
 
