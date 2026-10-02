@@ -106,11 +106,6 @@ if (!TOKEN) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const api = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
-const TELEGRAM_API_HOSTS = [
-  "https://api.telegram.org",
-  "https://api.telegram.org"
-];
-
 async function telegramHttpsRequest(token, method, body, timeoutMs) {
   const payload = JSON.stringify(body || {});
   return await new Promise((resolve, reject) => {
@@ -4722,7 +4717,7 @@ async function childMessage(child,msg,token) {
     }
     if(!existing) { states.delete(key); return sendHtml(token,uid,"<b>❌ 文件夹创建失败</b>\\n\\n请重新点击上传资源再试。",childAdminMenu()); }
     const firstPending=media?[{messageId:Number(msg.message_id),msg}]:[];
-    states.set(key,{step:"upload_file",stateKey:key,directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
+    states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
     console.log("📤 CHILD UPLOAD SESSION START:", "bot="+tokenFingerprint(token), "uid="+uid, "folder="+existing.name, "pending="+firstPending.length);
     if(media) return;
     return sendHtml(token,uid,"<b>📁 文件夹："+escapeHtml(existing.name)+"</b>\\n\\n现在请发送文件、图片、视频、音频或其他资源。\\n\\n发送 /cancel 可取消。");
@@ -4760,7 +4755,7 @@ async function childMessage(child,msg,token) {
       const current=states.get(key);
       if(current?.step==="upload_file") send(token,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
     },UPLOAD_TIMEOUT_MS));
-    states.set(key,{step:"upload_file",stateKey:key,directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
+    states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
     console.log("📥 CHILD RESOURCE RECEIVED:", "bot="+tokenFingerprint(token), "folder="+s.directoryName, "message="+msg.message_id, "pending="+pending.length);
     if(uploadAckTimers.has(key)) clearTimeout(uploadAckTimers.get(key));
     uploadAckTimers.set(key,setTimeout(()=>{
@@ -4956,7 +4951,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const key=uploadStateKey(uid,child,token);
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-      states.set(key,{step:"upload_folder",stateKey:key,pendingUploads:[]});
+      states.set(key,{step:"upload_folder",pendingUploads:[]});
       void answer("已进入上传模式");
       return safeEdit(token,{
         chat_id:chatId,
@@ -5352,7 +5347,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
     if(!d){void answer("文件夹不存在",true);return;}
     const uploadKey=uploadStateKey(uid,child,token);
-    states.set(uploadKey,{step:"upload_file",stateKey:uploadKey,directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    states.set(uploadKey,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
     void answer("已进入上传");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n📤 <b>继续发送文件</b>\\n收到的文件会自动归入此文件夹。\\n\\n完成后点击「✅ 结束上传」。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}});
   }
@@ -5440,7 +5435,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
     }
     if(data==="upload_new") {
-      states.set(uploadStateKey(uid,child,token),{step:"upload_folder",stateKey:uploadStateKey(uid,child,token)});
+      states.set(uploadStateKey(uid,child,token),{step:"upload_folder"});
       void answer("请输入新文件夹名称");
       return safeEdit(token,{
         chat_id:chatId,
