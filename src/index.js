@@ -3875,6 +3875,7 @@ async function mainMessage(msg) {
         if(["left","kicked"].includes(String(member?.status||""))) throw new Error("机器人不在仓库「"+String(chat.title||chat.username||chat.id)+"」中");
       }
       states.delete(key);
+      await resetRepositoryAutoSyncBinding();
       await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),0);
       return await showRepositoryAutoSyncStatus(uid);
     } catch(e) {
