@@ -1917,11 +1917,24 @@ function queueRepositoryAutoSyncMessage(msg){
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(!exists&&!already)state.queue.push({messageId,queuedAt:Date.now()});
   state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
-  // 已因异常暂停时只保存新消息，不自动恢复发送；管理员点击“继续同步”后再处理。
+  
   if(state.status!=="paused") state.status="queued";
   state.updatedAt=Date.now();
   saveDb();
-  if(state.status!=="paused") processRepositoryAutoSyncQueue().catch(()=>{});
+  if(state.status!=="paused") processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
+}
+async function startRepositoryAutoSyncNow(uid){
+  const state=repositoryAutoSyncState();
+  if(!state.sourceId||!state.targetId)throw new Error("请先绑定旧仓库和新仓库");
+  const [sc,tc]=await Promise.all([main("getChat",{chat_id:state.sourceId}),main("getChat",{chat_id:state.targetId})]);
+  const me=await main("getMe");
+  for(const chat of [sc,tc]){
+    const member=await main("getChatMember",{chat_id:chat.id,user_id:me.id});
+    if(["left","kicked"].includes(String(member?.status||"")))throw new Error("机器人不在仓库「"+String(chat.title||chat.username||chat.id)+"」中");
+  }
+  state.enabled=true;state.status="running";state.updatedAt=Date.now();state.lastError="";saveDb();
+  processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC START:",String(e?.message||e)));
+  return state;
 }
 async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,targetTitle,lastMessageId=0){
   const state=repositoryAutoSyncState();state.enabled=true;state.status="running";state.ownerId=String(uid);state.sourceId=String(sourceId);state.targetId=String(targetId);state.sourceTitle=String(sourceTitle||sourceId);state.targetTitle=String(targetTitle||targetId);state.lastMessageId=Math.max(Number(state.lastMessageId||0),Number(lastMessageId||0));state.updatedAt=Date.now();saveDb();return state;
@@ -5093,7 +5106,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       if(a.enabled||a.sourceId) return showRepositoryAutoSyncStatus(uid);
       states.set(key,{step:"auto_migration_source"});
       void answer("已进入自动同步设置");
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚡ 自动同步</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库里的任意消息/文件。\\n\\n📥 第二步：发送新仓库 Chat ID、@用户名，或直接转发新仓库里的任意消息/文件。\\n\\n⚠️ 机器人需要能够访问两个仓库。\\n📌 旧仓库不会删除。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚡ 自动同步</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库里的任意消息/文件。\\n\\n📥 第二步：发送新仓库 Chat ID、@用户名，或直接转发新仓库里的任意消息/文件。\\n\\n⚠️ 机器人必须同时在两个仓库里，并拥有读取旧仓库、发送到新仓库的权限。\n📌 绑定完成后，新消息会自动同步。\\n📌 旧仓库不会删除。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
     }
     if(route==="migrate") {
       states.set(key,{step:"migration_source"});
@@ -5117,9 +5130,14 @@ async function handleDirectoryCallback(token, q, child=false) {
       if(!a.sourceId||!a.targetId) return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚠️ 尚未绑定仓库</b>\n\n请先重新绑定旧仓库和新仓库。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
       ]}});
-      a.enabled=true; a.status="running"; a.updatedAt=Date.now(); saveDb();
-      processRepositoryAutoSyncQueue().catch(e=>console.error("❌ 自动同步恢复失败:",String(e?.message||e)));
-      return showRepositoryAutoSyncStatus(uid);
+      try{
+        await startRepositoryAutoSyncNow(uid);
+        return showRepositoryAutoSyncStatus(uid);
+      }catch(e){
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(String(e?.message||e))+"\n\n请检查机器人是否同时在旧仓库和新仓库中。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"🔄 重新绑定",callback_data:"adm:auto_reset"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+        ]}});
+      }
     }
     if(route==="folders_all_confirm"){
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚠️ 删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n这只会删除文件夹及文件夹标记。\n📦 所有资源/文件都会保留。\n🔗 资源会变成未分类。\n\n确定继续吗？",parse_mode:"HTML",reply_markup:{inline_keyboard:[
