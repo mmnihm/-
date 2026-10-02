@@ -4052,10 +4052,6 @@ async function mainMessage(msg) {
     return sendHtml(TOKEN,uid,"<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\n📥 首次会先迁移历史资源，完成后以后出现的新资源会自动复制到新仓库。\n\n⚠️ 机器人必须同时在两个仓库里。\n📌 旧仓库不会删除。\n\n发送 /cancel 可取消。");
   }
 
-  if(t==="🔄 迁移仓库" && admin) {
-    states.set(stateKey,{step:"migration_source"});
-    return sendHtml(TOKEN,uid,"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{"text":"❌ 取消","callback_data":"admin:root"}]]}});
-  }
 
   if(t==="🔄 迁移仓库" && admin) {
     states.set(key,{step:"migration_source"});
