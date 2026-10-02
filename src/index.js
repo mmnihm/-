@@ -5339,9 +5339,6 @@ async function handleDirectoryCallback(token, q, child=false) {
     void answer("返回文件夹列表");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\\n━━━━━━━━━━━━━━\\n\\n👇 请选择文件夹",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
   }
-  if(!child && isAdmin(uid) && data.startsWith("folder_manage:")) {
-    return;
-  }
   if(isAdmin(uid) && data.startsWith("folder_manage_upload:")) {
     const directoryId=data.slice("folder_manage_upload:".length);
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
