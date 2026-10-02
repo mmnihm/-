@@ -3716,10 +3716,10 @@ async function mainMessage(msg) {
     welcomeStore.welcomeUsers[String(uid)]=Date.now();
     if(firstVisit) {
       saveDb();
-      await sendHtml(TOKEN,uid,"<b>🎉 欢迎来到资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👋 很高兴见到你！\\n\\n📚 <b>这里可以：</b>\\n• 📂 浏览资源目录\\n• 🔎 搜索资源\\n• 🎲 随机获取资源\\n• 🆕 查看最新资源\\n\\n👇 <i>点击下方菜单开始使用</i>",admin?adminMenu():userMenu());
+      await sendHtml(TOKEN,uid,"<b>🎉 欢迎来到资源平台</b>\n━━━━━━━━━━━━━━\n\n👋 很高兴见到你！\n\n📚 <b>这里可以：</b>\n• 📂 浏览资源目录\n• 🔎 搜索资源\n• 🎲 随机获取资源\n• 🆕 查看最新资源\n\n👇 <i>点击下方菜单开始使用</i>",admin?adminMenu():userMenu());
       return;
     }
-    return sendHtml(TOKEN,uid,"<b>🏠 资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👇 <i>请选择你要使用的功能</i>",admin?adminMenu():userMenu());
+    return sendHtml(TOKEN,uid,"<b>🏠 资源平台</b>\n━━━━━━━━━━━━━━\n\n👇 <i>请选择你要使用的功能</i>",admin?adminMenu():userMenu());
   }
   if(t==="/admin") {
   if(t.startsWith("/start share_")) {
