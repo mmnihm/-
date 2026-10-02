@@ -1866,9 +1866,9 @@ async function processRepositoryAutoSyncQueue(){
     const state=repositoryAutoSyncState();
     if(!state.enabled)return;
 
-    const batchSize=5;
-    const perMessageDelay=2500;
-    const batchDelay=8000;
+    const batchSize=10;
+    const perMessageDelay=2000;
+    const batchDelay=10000;
     let processedInBatch=0;
 
     while(state.queue.length){
@@ -2180,7 +2180,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
     };
 
     let lastUi=0;
-    for(let i=0;i<ordered.length;i+=5){
+    for(let i=0;i<ordered.length;i+=10){
       const batch=ordered.slice(i,i+5);
       state.current=Math.min(i+batch.length,ordered.length);
       state.queued=Math.max(0,ordered.length-completed.size);
@@ -2188,7 +2188,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
       state.failedKeys=[...failedKeys].slice(-Math.max(MAX_RESOURCES,25000));
       saveDb();
       await processBatch(batch);
-      // 每个小批次完成后强制保存断点，并主动冷却，避免新频道被短时间大量写入。
+      // 每个10条批次完成后强制保存断点，并主动冷却，避免新频道被短时间大量写入。
       state.failed=failedKeys.size;
       await sleep(3500);
       state.current=Math.min(i+batch.length,ordered.length);
@@ -2198,7 +2198,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
       state.lastError=state.failed?"仍有 "+state.failed+" 条资源待重试":"";
       saveDb();
 
-      if(i===0||i+5>=ordered.length||Date.now()-lastUi>=10000){
+      if(i===0||i+10>=ordered.length||Date.now()-lastUi>=10000){
         lastUi=Date.now();
         await safeEdit(TOKEN,{chat_id:uid,message_id:progress.message_id,text:renderProgress("processing"),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:state.failed?"🔁 正在处理失败项":"⏳ 迁移进行中",callback_data:"admin:root"}]]}}).catch(()=>{});
       }
