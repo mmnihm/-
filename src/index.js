@@ -2641,71 +2641,91 @@ function shareResourceKeyboard(token) {
   ]};
 }
 async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadStateKey(uid,false,TOKEN), menu=adminMenu()) {
-  const items = Array.isArray(state?.pendingUploads) ? state.pendingUploads : [];
-  if (!items.length) {
+  const items=Array.isArray(state?.pendingUploads)?state.pendingUploads:[];
+  if(!items.length){
     states.delete(stateKey);
     return send(token,uid,"📭 <b>本次没有收到资源</b>\\n\\n当前批次没有可入库的资源。",menu);
   }
-
-  const r = repo();
-  if (!r) {
+  const r=repo();
+  if(!r){
     states.delete(stateKey);
     return send(token,uid,"❌ <b>资源仓库未绑定</b>\\n\\n请先绑定资源仓库，再进行上传。",menu);
   }
 
-  let directoryName = String(state.directoryName || "").trim();
-  if (!directoryName) directoryName = "未命名-" + Math.random().toString(36).slice(2,8);
-  const d = ensureDirectory(directoryName);
-  if (!d) {
+  let directoryName=String(state.directoryName||"").trim();
+  if(!directoryName) directoryName="未命名-"+Math.random().toString(36).slice(2,8);
+  const d=ensureDirectory(directoryName);
+  if(!d){
     states.delete(stateKey);
     return send(token,uid,"❌ <b>文件夹创建失败</b>\\n\\n请稍后重试。",menu);
   }
 
-  let stored=0, failed=0;
+  let stored=0,failed=0;
   const sortedItems=[...items].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
 
-  // 后台逐条转存：单个文件失败不会影响其他文件，并且每成功一个就立即保存索引。
-  for(const entry of sortedItems) {
-    try {
-      const sourceMessageId=Number(entry?.messageId);
-      if(!Number.isFinite(sourceMessageId) || sourceMessageId<=0) throw new Error("源消息ID无效");
+  // 批量转存：每批最多100条；批量失败时只对失败批次逐条兜底。
+  for(let offset=0;offset<sortedItems.length;offset+=100){
+    const batch=sortedItems.slice(offset,offset+100);
+    const ids=batch.map(x=>Number(x.messageId)).filter(Number.isFinite);
+    if(!ids.length) continue;
+    let copiedIds=null;
 
-      const copied=await tg(token,"copyMessage",{
+    try{
+      copiedIds=await tg(token,"copyMessages",{
         chat_id:r.chatId,
         from_chat_id:uid,
-        message_id:sourceMessageId,
+        message_ids:ids,
         protect_content:false
       });
-      const copiedId=Number(copied?.message_id);
-      if(!Number.isFinite(copiedId) || copiedId<=0) throw new Error("转存后消息ID无效");
-
-      const resourceMsg={
-        ...(entry?.msg||{}),
-        chat:{
-          ...((entry?.msg?.chat)||{}),
-          id:r.chatId,
-          title:r.title||entry?.msg?.chat?.title||r.chatId,
-          username:r.username||entry?.msg?.chat?.username||"",
-          type:r.type||"supergroup"
-        },
-        message_id:copiedId
-      };
-      indexResource(resourceMsg);
-
-      const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
-      if(!item) throw new Error("资源索引写入失败");
-
-      item.directoryId=d.id;
-      item.repositoryMessageId=copiedId;
-      item.sourceUserId=String(uid);
-      item.indexedAt=Date.now();
-      queueBaserowResourceSync(item);
-      stored++;
+      if(!Array.isArray(copiedIds)||copiedIds.length!==batch.length) throw new Error("批量转存结果数量不一致");
+    }catch(e){
+      console.warn("⚠️ UPLOAD BATCH COPY FAILED:",e?.message||e,"count=",batch.length);
+      for(const entry of batch){
+        try{
+          const copied=await tg(token,"copyMessage",{
+            chat_id:r.chatId,
+            from_chat_id:uid,
+            message_id:Number(entry.messageId),
+            protect_content:false
+          });
+          const copiedId=Number(copied?.message_id);
+          if(!Number.isFinite(copiedId)) throw new Error("逐条转存消息ID无效");
+          const resourceMsg={
+            ...(entry.msg||{}),
+            chat:{...(entry.msg?.chat||{}),id:r.chatId,title:r.title||entry.msg?.chat?.title||r.chatId,username:r.username||entry.msg?.chat?.username||"",type:r.type||"supergroup"},
+            message_id:copiedId
+          };
+          indexResource(resourceMsg);
+          const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+          if(!item) throw new Error("资源索引写入失败");
+          item.directoryId=d.id; item.repositoryMessageId=copiedId; item.sourceUserId=String(uid); item.indexedAt=Date.now();
+          queueBaserowResourceSync(item); stored++;
+        }catch(err){ failed++; console.error("❌ UPLOAD RESOURCE FALLBACK:",err?.message||err,"sourceMessage=",entry?.messageId); }
+      }
       saveDb();
-    } catch(e) {
-      failed++;
-      console.error("❌ UPLOAD RESOURCE:",e?.message||e,"sourceMessage=",entry?.messageId);
+      continue;
     }
+
+    for(let n=0;n<batch.length;n++){
+      try{
+        const copiedId=Number(copiedIds[n]?.message_id??copiedIds[n]);
+        if(!Number.isFinite(copiedId)) throw new Error("批量转存消息ID无效");
+        const resourceMsg={
+          ...(batch[n].msg||{}),
+          chat:{...(batch[n].msg?.chat||{}),id:r.chatId,title:r.title||batch[n].msg?.chat?.title||r.chatId,username:r.username||batch[n].msg?.chat?.username||"",type:r.type||"supergroup"},
+          message_id:copiedId
+        };
+        indexResource(resourceMsg);
+        const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+        if(!item) throw new Error("资源索引写入失败");
+        item.directoryId=d.id; item.repositoryMessageId=copiedId; item.sourceUserId=String(uid); item.indexedAt=Date.now();
+        queueBaserowResourceSync(item); stored++;
+      }catch(e){
+        failed++;
+        console.error("❌ UPLOAD RESOURCE INDEX:",e?.message||e,"sourceMessage=",batch[n]?.messageId);
+      }
+    }
+    saveDb();
   }
 
   recordStat(uid,"upload",1);
@@ -2716,11 +2736,11 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
   states.delete(stateKey);
 
   return sendHtml(token,uid,
-    "<b>📦 后台转存完成</b>\\n\\n"+
+    "<b>📦 后台批量转存完成</b>\\n\\n"+
     "📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n"+
     "📥 收到资源：<b>"+items.length+"</b> 个\\n"+
     "💾 已存入资源库：<b>"+stored+"</b> 个\\n"+
-    (failed ? "⚠️ 转存失败：<b>"+failed+"</b> 个\\n" : "✅ 全部转存成功\\n")+
+    (failed?"⚠️ 转存失败：<b>"+failed+"</b> 个\\n":"✅ 全部转存成功\\n")+
     "\\n📚 资源已整理完成。",
     menu
   );
