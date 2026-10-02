@@ -608,13 +608,6 @@ async function listAllBaserowRows() {
   return rows;
 }
 
-function baserowRowKey(row, fields) {
-  const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
-  const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
-  const chat=chatField ? String(row?.[chatField.name]??"").trim() : "";
-  const message=messageField ? Number(row?.[messageField.name]??0) : 0;
-  return chat && message ? chat+":"+message : "";
-}
 
 async function baserowSyncDirectory(directory) {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || !directory) return;
@@ -1027,7 +1020,6 @@ async function initializeSharedBaserow() {
     console.error("❌ 共享数据初始化失败:",String(e?.message||e));  }
 }
 
-function getBaserowFieldsCacheForSync() { return Array.isArray(baserowFieldsCache)?baserowFieldsCache:[]; }
 
 async function refreshSharedData(force=false) {
   if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
@@ -2204,11 +2196,6 @@ function nonMemberMessage(menu) {
 function postResourceMessage() {
   return String(db.settings.postResourceMessage || "").trim();
 }
-async function sendNonMemberNotice(token, chatId, menu) {
-  const n = nonMemberMessage(menu);
-  return sendHtml(token, chatId, n.text, n.extra);
-}
-
 
 function resourceKey(item){return String(item?.chatId??"")+":"+String(item?.messageId??"");}
 function resourceByKey(key){const s=String(key||"");const p=s.lastIndexOf(":");if(p<1)return null;const chatId=s.slice(0,p),messageId=Number(s.slice(p+1));return db.resources.find(x=>String(x.chatId)===chatId&&Number(x.messageId)===messageId)||null;}
@@ -2308,11 +2295,7 @@ async function ensureUserInlineMode(token, chatId) {
     console.warn("⚠️ 清理旧键盘失败:", String(e?.message || e));
   }
 }
-function backMenu(admin=false) {
-  return admin
-    ? {reply_markup:{inline_keyboard:[[{text:"⬅️ 返回管理",callback_data:"admin:root"}]]}}
-    : userMenu();
-}
+
 function adminMenu(){return{reply_markup:adminRootInline()};}
 function adminResourceMenu(){return{reply_markup:adminResourceInline()};}
 function adminSettingsMenu(){return{reply_markup:adminSettingsInline()};}
@@ -2362,12 +2345,7 @@ function deleteResourceMenu() {
   rows.push(["⬅️ 返回管理"]);
   return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择要管理的文件夹"}};
 }
-function scanMenu() {
-  return {reply_markup:{keyboard:[
-    ["🔍 开始历史扫描","🔐 扫描授权"],
-    ["⬅️ 返回管理"]
-  ],resize_keyboard:true,input_field_placeholder:"仓库扫描"}};
-}
+
 function platformMenu() {
   return adminSettingsMenu();
 }
@@ -2843,11 +2821,7 @@ function directoryKeyboard() {
   rows.push(["🏠 开始"]);
   return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件夹"}};
 }
-function folderFileKeyboard(items) {
-  const rows=items.map((x,i)=>[(i+1)+". "+String(x.title||"未命名资源").slice(0,42)]);
-  rows.push(["⬅️ 返回文件夹"]);
-  return {reply_markup:{keyboard:rows,resize_keyboard:true,input_field_placeholder:"选择文件"}};
-}
+
 function directoryInlineKeyboard(page=0) {
   const all=db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id)));
   const pageSize=10;
@@ -2917,17 +2891,6 @@ function configText() {
   ].join("\n");
 }
 
-function resourceSourceChats() {
-  const set = new Set();
-  const r = repo();
-  if (r?.chatId) set.add(String(r.chatId));
-  const list = Array.isArray(db.settings.resourceSources) ? db.settings.resourceSources : [];
-  for (const x of list) {
-    const id = typeof x === "object" ? x.chatId : x;
-    if (id !== undefined && id !== null && String(id).trim()) set.add(String(id).trim());
-  }
-  return set;
-}
 
 function indexResource(msg) {
   if (!msg?.chat?.id || !["group","supergroup","channel"].includes(String(msg.chat.type))) return;
