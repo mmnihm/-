@@ -5299,12 +5299,14 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
     if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-    void answer("正在结束上传");
-    await finalizeUpload(uid,s,token,key,child ? childAdminMenu() : adminMenu());
+    void answer("已结束，正在后台转存");
+    void finalizeUpload(uid,s,token,key,child ? childAdminMenu() : adminMenu()).catch(e=>{
+      console.error("❌ UPLOAD FINALIZE BACKGROUND:",e?.message||e);
+    });
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
-      text:"✅ <b>已结束本次上传</b>",
+      text:"⏳ <b>已结束上传</b>\n\n📦 正在后台转存资源，请稍候……\n\n完成后会自动发送整理结果。",
       parse_mode:"HTML",
       reply_markup:{inline_keyboard:[]}
     });
