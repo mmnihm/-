@@ -3214,6 +3214,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
       "<b>📦 本批资源获取完成</b>\n━━━━━━━━━━━━━━\n\n📤 成功发送：<b>"+ok+"</b> 条\n⚠️ 失败："+fail+" 条\n📚 本批："+items.length+" 条\n\n"+
       (mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。"),
       batchNavigation(mode,offset,total));
+    // 把附加提示放在按钮之前，确保历史随机获取完成后“🎲 再来一组”位于最底部。
     if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
     return;
   }catch(e){
@@ -3383,9 +3384,9 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
         ? "🎲 <i>这是本次随机获取的一批</i>"
         : "✨ <i>资源已发送完成</i>"),
     {parse_mode:"HTML",...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length):{})});
+  // 把附加提示放在按钮之前，确保随机获取完成后“🎲 再来一组”始终位于最底部。
   if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
   return;
-}
 const states=new Map();
 
 // 在线客服：用户与管理员之间通过“回复机器人转发的原消息”完成双向会话。
