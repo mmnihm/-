@@ -4831,6 +4831,42 @@ async function handleDirectoryCallback(token, q, child=false) {
   // 按钮回调绝不能等待 Baserow：确认请求后台发送，业务逻辑立即继续。
   void refreshSharedData(false);
 
+  // 自动同步控制按钮优先处理，避免被其他管理员菜单路由抢先截断。
+  if(data==="adm:auto_stop"){
+    await answer("正在停止自动同步…");
+    await stopRepositoryAutoSync();
+    const a=repositoryAutoSyncState();
+    a.sourceId="";a.targetId="";a.sourceTitle="";a.targetTitle="";a.ownerId="";
+    a.queue=[];a.lastMessageId=0;a.status="stopped";a.updatedAt=Date.now();saveDb();
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"<b>⏸️ 自动同步已停止</b>\n━━━━━━━━━━━━━━\n\n旧仓库和新仓库已解除当前自动同步绑定。\n\n现在可以重新设置旧仓库和新仓库。",
+      parse_mode:"HTML",
+      reply_markup:{inline_keyboard:[
+        [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],
+        [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+      ]}});
+  }
+  if(data==="adm:auto_resume"){
+    await answer("正在恢复自动同步…");
+    const a=repositoryAutoSyncState();
+    if(!a.sourceId||!a.targetId){
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"<b>⚠️ 无法继续自动同步</b>\n\n旧仓库或新仓库绑定信息已不存在，请重新绑定。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[
+          [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],
+          [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+        ]}});
+    }
+    a.enabled=true;a.status="running";a.updatedAt=Date.now();saveDb();
+    processRepositoryAutoSyncQueue().catch(e=>console.error("❌ 自动同步恢复失败:",String(e?.message||e)));
+    return showRepositoryAutoSyncStatus(uid);
+  }
+  if(data==="adm:auto_status"){
+    await answer();
+    return showRepositoryAutoSyncStatus(uid);
+  }
+
   if(data==="user:dirs") {
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});
   }
