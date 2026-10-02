@@ -3185,7 +3185,14 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
         ok++;
         recordResourceDownload(item);
         recordRecent(userId,item);
-      }catch(e){fail++;console.error("HISTORY SEND:",e.message,"message=",item.messageId);}
+      }catch(e){
+        fail++;
+        const historyError=String(e?.message||e);
+        console.error("HISTORY SEND:",historyError,"message=",item.messageId);
+        if(/历史消息或媒体不存在|message not found|MESSAGE_ID_INVALID|message.?id.?invalid|media.*not found|message.*does not exist/i.test(historyError)){
+          removeInvalidResource(item,historyError);
+        }
+      }
       await sleep(150);
     }
     if(ok>0){recordStat(userId,"download",ok); if(!member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok); else saveDb();}
