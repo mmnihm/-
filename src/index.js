@@ -1811,14 +1811,9 @@ async function repositoryAutoSyncOne(job){
   if(!state.enabled||!sourceId||!targetId||!messageId)return false;
   const already=db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(already)return true;
-  const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId);
-  if(!sourceItem){
-    state.lastError="找不到源消息索引："+repositoryAutoSyncKey(sourceId,messageId);
-    state.failed=Number(state.failed||0)+1;
-    state.status="paused";
-    saveDb();
-    return false;
-  }
+  // 自动同步不能依赖 Baserow/本地资源索引；只要 Telegram 源消息真实存在，就直接复制。
+  // 这样即使索引暂时没写入，也不会因为“找不到源消息索引”导致整个自动同步暂停。
+  const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId)||null;
 
   let copied=null,lastError=null;
   for(let attempt=1;attempt<=3;attempt++){
@@ -1844,8 +1839,17 @@ async function repositoryAutoSyncOne(job){
     return false;
   }
 
-  const directoryId=repositoryAutoSyncFolderId(sourceItem,targetId);
-  const targetItem={...sourceItem,chatId:targetId,messageId:Number(copied.message_id),directoryId:directoryId||null,fileId:null,baserowRowId:null,migratedFrom:{chatId:sourceId,messageId,at:Date.now()}};
+  const directoryId=sourceItem?repositoryAutoSyncFolderId(sourceItem,targetId):null;
+  const targetItem={
+    ...(sourceItem||{}),
+    chatId:targetId,
+    messageId:Number(copied.message_id),
+    directoryId:directoryId||sourceItem?.directoryId||null,
+    fileId:null,
+    baserowRowId:null,
+    title:String(sourceItem?.title||sourceItem?.name||("资源 "+messageId)),
+    migratedFrom:{chatId:sourceId,messageId,at:Date.now()}
+  };
   if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId)){
     db.resources.unshift(targetItem);
     db.resources=db.resources.slice(0,MAX_RESOURCES);
