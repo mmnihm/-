@@ -5148,11 +5148,11 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
     if(route==="auto_add") {
-      const a=repositoryAutoSyncState();
-      if(a.sourceId&&a.targetId) return showRepositoryAutoSyncStatus(uid);
+      await resetRepositoryAutoSyncBinding();
+      states.delete(key);
       states.set(key,{step:"auto_migration_source"});
       void answer("正在添加自动同步任务");
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>➕ 添加自动同步任务</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库里的任意消息/文件。\\n\\n📥 第二步：发送新仓库 Chat ID、@用户名，或直接转发新仓库里的任意消息/文件。\\n\\n⚠️ 机器人必须同时在两个仓库里。\\n📌 添加完成后，旧仓库收到新消息会自动复制到新仓库。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消",callback_data:"admin:resource"}]]}});
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>➕ 添加自动同步任务</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库中的任意消息/文件。\\n\\n📥 第二步：确认旧仓库后，再发送新仓库。\\n\\n📌 添加完成后，旧仓库收到新消息会自动复制到新仓库。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消",callback_data:"admin:resource"}]]}});
     }
     if(route==="auto_delete") {
       await resetRepositoryAutoSyncBinding();
