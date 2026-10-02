@@ -4933,7 +4933,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data.startsWith("admin:")||data.startsWith("adm:")){void answer();
     if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
-    const stateKey=uploadStateKey(uid,child,token);
+    const key=uploadStateKey(uid,child,token);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
     if(data==="admin:resource")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 资源管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminResourceInline()});
