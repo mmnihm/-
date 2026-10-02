@@ -3177,8 +3177,19 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
         const found=await client.getMessages(entity,{ids:[Number(item.messageId)]});
         const message=Array.isArray(found)?found[0]:found;
         if(!message||!message.media) throw new Error("历史消息或媒体不存在");
-        const buffer=await client.downloadMedia(message,{});
-        if(!buffer||!buffer.length) throw new Error("媒体下载失败");
+        let buffer=null;
+        let downloadError=null;
+        for(let attempt=0;attempt<2;attempt++){
+          try{
+            buffer=await client.downloadMedia(message,{});
+            if(buffer && buffer.length) break;
+            downloadError=new Error("媒体下载失败");
+          }catch(downloadErr){
+            downloadError=downloadErr;
+            if(attempt===0) await sleep(500);
+          }
+        }
+        if(!buffer||!buffer.length) throw downloadError||new Error("媒体下载失败");
         const file=message.file||{},mime=String(file.mimeType||""),name=String(file.name||item.title||"resource");
         const method=mime.startsWith("video")?"sendVideo":"sendDocument";
         await tgUploadBuffer(token,method,chatId,buffer,name,item.caption||"");
@@ -3275,8 +3286,32 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
         ok+=copiedCount;
         if(Array.isArray(copied) && copied.length) scheduleAutoDelete(sourceToken,chatId,copied.map(x=>x?.message_id).filter(Boolean));
         if(copiedCount<batch.length) {
-          fail+=batch.length-copiedCount;
+          const missingCount=batch.length-copiedCount;
+          fail+=missingCount;
           lastError="批量复制结果数量不完整";
+          // Telegram 批量复制遇到异常消息时可能只返回部分结果。
+          // 对未确认成功的记录逐条重试，避免出现“数据库有记录但用户没收到”的情况。
+          const retryItems=orderedBatch.slice(copiedCount);
+          let retryOk=0;
+          let retryFail=0;
+          for(const item of retryItems){
+            try{
+              await sendIndexedResource(sourceToken,chatId,item);
+              retryOk++;
+              fail=Math.max(0,fail-1);
+            }catch(retryError){
+              retryFail++;
+              const retryMsg=String(retryError?.message||retryError);
+              console.error("COPY PARTIAL RETRY:",retryMsg,"chat=",group.chatId,"message=",item.messageId);
+              if(isPermanentResourceError(retryError) || (/^Bad Request(?::|$)/i.test(retryMsg) && /message|file/i.test(retryMsg))){
+                removeInvalidResource(item,retryMsg);
+              }
+            }
+            await sleep(80);
+          }
+          ok+=retryOk;
+          fail=Math.max(0,fail-retryOk);
+          if(retryFail===0 && retryOk===retryItems.length) lastError="";
         }
       } catch(e) {
         lastError=e.message||String(e);
