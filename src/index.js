@@ -3406,7 +3406,7 @@ function supportFindRoute(token,adminChatId,messageId) {
 }
 function supportActiveSessions() {
   const store=supportSessionStore().supportSessions;
-  return Object.values(store).filter(x=>x&&x.status==="open").sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0);
+  return Object.values(store).filter(x=>x&&x.status==="open").sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0));
 }
 async function supportSendToAdmins(token,msg) {
   const uid=msg.from?.id;
@@ -5675,4 +5675,4 @@ async function boot(){
 }
 boot().catch(e=>console.error("❌ FATAL BOOT:",e));
 process.on("SIGTERM",()=>{console.log("SIGTERM received");server.close(()=>process.exit(0));});
-// syntax-check trigger
+// syntax-check trigger 2
