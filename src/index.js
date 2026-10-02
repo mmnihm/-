@@ -3239,7 +3239,11 @@ function batchNavigation(mode,offset,total){
 
 async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   const member=await allowed(TOKEN,userId);
-  if(!items.length) return send(token,chatId,"📭 <b>暂无相关资源</b>\\n\\n暂时没有找到可用内容。");
+  if(!Array.isArray(items) || !items.length) {
+    return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",{
+      ...(options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0)} : {})
+    });
+  }
 
   let valid = items.filter(x =>
     x &&
@@ -3248,145 +3252,81 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     String(x.chatId).trim() &&
     Number(x.messageId) > 0
   );
+
   if(!member && !isAdmin(userId)) {
     const remaining=nonMemberDailyRemaining(userId);
     if(remaining<=0) return sendQuotaNotice(token,chatId,userId);
     valid=valid.slice(0,remaining);
   }
-  if(!valid.length) return send(token,chatId,"📭 <b>暂无可发送的资源</b>\\n\\n请稍后再试。");
 
-  let ok = 0, fail = 0, lastError = "";
-  const batchSize = 10;
+  if(!valid.length) {
+    return sendHtml(token,chatId,
+      "<b>📭 暂无可发送的资源</b>\\n\\n无效资源记录已被过滤，请重新获取。",
+      options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0)} : {}
+    );
+  }
 
-  // 同一资源仓库的资源按 10 条一组复制，避免随机获取逐条发送。
-  // 如果数据库里存在多个来源仓库，则按 chatId 自动分组，避免 Telegram 拒绝跨仓库批量复制。
-  const groups = [];
-  const groupMap = new Map();
+  let ok=0;
+  let fail=0;
+  let lastError="";
+
+  // 不再使用 copyMessages 作为用户随机/最新批次的主发送方式。
+  // Telegram 批量复制只要碰到一条失效消息，整批可能失败或返回不完整结果，
+  // 从而造成“数据库有记录、用户却收不到”。现在固定按本批逐条发送：
+  // 一条失败不会影响其他资源；确认永久失效的记录立即清理。
   for(const item of valid) {
-    const sourceChatId = String(item.chatId);
-    if(!groupMap.has(sourceChatId)) {
-      const group = {chatId:sourceChatId, items:[]};
-      groupMap.set(sourceChatId,group);
-      groups.push(group);
-    }
-    groupMap.get(sourceChatId).items.push(item);
-  }
+    try {
+      await sendIndexedResource(sourceToken,chatId,item);
+      ok++;
+      recordResourceDownload(item);
+      recordRecent(userId,item);
+    } catch(e) {
+      fail++;
+      lastError=String(e?.message||e);
+      console.error("DELIVER ITEM FAILED:",lastError,"chat=",item.chatId,"message=",item.messageId);
 
-  for(const group of groups) {
-    for(let offset=0; offset<group.items.length; offset+=batchSize) {
-      const batch=group.items.slice(offset,offset+batchSize);
-      try {
-        const orderedBatch=[...batch].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
-        const copied=await tg(sourceToken,"copyMessages",{
-          chat_id:chatId,
-          from_chat_id:group.chatId,
-          message_ids:orderedBatch.map(x=>Number(x.messageId)),
-          ...(contentProtectionEnabled()?{protect_content:true}:{})
-        });
-        const copiedCount=Array.isArray(copied)?copied.length:0;
-        ok+=copiedCount;
-        if(Array.isArray(copied) && copied.length) scheduleAutoDelete(sourceToken,chatId,copied.map(x=>x?.message_id).filter(Boolean));
-        if(copiedCount<batch.length) {
-          const missingCount=batch.length-copiedCount;
-          fail+=missingCount;
-          lastError="批量复制结果数量不完整";
-          // Telegram 批量复制遇到异常消息时可能只返回部分结果。
-          // 对未确认成功的记录逐条重试，避免出现“数据库有记录但用户没收到”的情况。
-          const retryItems=orderedBatch.slice(copiedCount);
-          let retryOk=0;
-          let retryFail=0;
-          for(const item of retryItems){
-            try{
-              await sendIndexedResource(sourceToken,chatId,item);
-              retryOk++;
-              fail=Math.max(0,fail-1);
-            }catch(retryError){
-              retryFail++;
-              const retryMsg=String(retryError?.message||retryError);
-              console.error("COPY PARTIAL RETRY:",retryMsg,"chat=",group.chatId,"message=",item.messageId);
-              if(isPermanentResourceError(retryError) || (/^Bad Request(?::|$)/i.test(retryMsg) && /message|file/i.test(retryMsg))){
-                removeInvalidResource(item,retryMsg);
-              }
-            }
-            await sleep(80);
-          }
-          ok+=retryOk;
-          fail=Math.max(0,fail-retryOk);
-          if(retryFail===0 && retryOk===retryItems.length) lastError="";
-        }
-      } catch(e) {
-        lastError=e.message||String(e);
-        console.error("COPY BATCH:",lastError,"chat=",group.chatId,"count=",batch.length);
-
-        // 批量复制只要遇到一条失效消息，Telegram 可能让整批失败。
-        // 降级为逐条发送：有效资源继续发送，确认永久失效的记录立即从本地/Baserow 清理。
-        let fallbackOk=0, fallbackFail=0;
-        for(const item of batch) {
-          try {
-            await sendIndexedResource(sourceToken,chatId,item);
-            fallbackOk++;
-          } catch(singleError) {
-            fallbackFail++;
-            const singleMsg=String(singleError?.message||singleError);
-            console.error("COPY FALLBACK:",singleMsg,"chat=",group.chatId,"message=",item.messageId);
-            if(isPermanentResourceError(singleError)) {
-              removeInvalidResource(item,singleMsg);
-            } else if (/^Bad Request(?::|$)/i.test(singleMsg) && /message|file/i.test(singleMsg)) {
-              removeInvalidResource(item,singleMsg);
-            }
-          }
-          await sleep(80);
-        }
-        ok+=fallbackOk;
-        fail+=fallbackFail;
+      const permanent=isPermanentResourceError(e) ||
+        (/^Bad Request(?::|$)/i.test(lastError) && /message|file|copy|forward/i.test(lastError));
+      if(permanent) {
+        removeInvalidResource(item,lastError);
       }
-      if(offset+batchSize<group.items.length) await sleep(300);
     }
+    // 给 Telegram 留一点间隔，避免连续发送触发限流。
+    await sleep(100);
   }
 
-  if(ok>0 && !member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok);
-
-  if(fail>0) {
-    const total=valid.length;    if(ok===0) {
-      const isChatNotFound=/chat not found/i.test(lastError);
-      const isKicked=/bot was kicked|bot is not a member|kicked from the channel|Forbidden/i.test(lastError);
-      return send(token,chatId,
-        "❌ <b>资源暂时无法发送</b>\\n\\n"+
-        "📦 找到资源："+total+" 条\\n"+
-        "📤 成功发送：0 条\\n"+
-        "⚠️ 发送失败："+fail+" 条\\n\\n"+
-        (isKicked
-          ? "🔧 <b>机器人已失去资源仓库权限</b>\\n\\n请把当前机器人重新加入资源仓库。\\n如果资源仓库是频道，请将机器人重新添加为频道管理员后再试。\\n\\n⚠️ Baserow 里仍然可以保存资源记录，但 Telegram 发送资源时，机器人必须还能访问原始消息。"
-          : isChatNotFound
-            ? "🔧 <b>需要管理员处理</b>\\n\\n请把当前机器人加入「资源仓库」。如果仓库是频道，请将机器人加入并确认有读取消息权限。\\n\\n历史扫描账号能看到资源，只代表扫描账号能读取历史消息；用户获取资源时，机器人本身也必须能够访问仓库消息。"
-            : "🔧 <b>资源仓库读取失败</b>\\n\\n请确认机器人仍在资源仓库中，并有读取消息的权限。\\n\\nTelegram：<code>"+String(lastError).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")+"</code>")
-      ,{parse_mode:"HTML"});
-    }
-    return send(token,chatId,
-      "⚠️ <b>本批获取完成</b>\\n\\n"+
-      "📦 本组："+valid.length+" 个资源\\n"+
-      "📤 成功："+ok+" 个\\n"+
-      "⚠️ 失败："+fail+" 个",
-      {parse_mode:"HTML"});
+  if(ok>0) {
+    recordStat(userId,"download",ok);
+    if(!member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok);
+    else saveDb();
+  } else {
+    saveDb();
   }
 
-  recordStat(userId,"download",ok);
-  saveDb();
-  await send(token,chatId,
-    "✅ <b>本批获取完成</b>\\n"+
+  const navigation=options.mode
+    ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||valid.length)}
+    : {};
+
+  const summary =
+    "<b>"+(fail ? "⚠️ 本批获取完成" : "✅ 本批获取完成")+"</b>\\n"+
     "━━━━━━━━━━━━━━\\n\\n"+
-    "📦 本次资源：<b>"+valid.length+"</b> 个\\n"+
-    "📤 已发送：<b>"+ok+"</b> 个\\n\\n"+
-    "━━━━━━━━━━━━━━\\n"+
+    "📦 本批资源：<b>"+valid.length+"</b> 个\\n"+
+    "📤 成功发送：<b>"+ok+"</b> 个\\n"+
+    (fail ? "⚠️ 发送失败：<b>"+fail+"</b> 个\\n" : "")+
+    (fail && lastError ? "\\n<i>失效记录会自动清理，下次随机获取不会再重复抽到。</i>\\n" : "")+
+    "\\n━━━━━━━━━━━━━━\\n"+
     (options.mode==="latest"
       ? "🆕 <i>这是最新资源的一批</i>"
       : options.mode==="random"
         ? "🎲 <i>这是本次随机获取的一批</i>"
-        : "✨ <i>资源已发送完成</i>"),
-    {parse_mode:"HTML",...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length):{})});
-  // 把附加提示放在按钮之前，确保随机获取完成后“🎲 再来一组”始终位于最底部。
+        : "✨ <i>资源已发送完成</i>");
+
+  // 无论本批是否有失败，都必须保留“再来一组”按钮。
+  // postResourceMessage 单独发送，避免把按钮从结果消息上挤掉。
+  await sendHtml(token,chatId,summary,navigation);
   if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
   return;
+}
 const states=new Map();
 
 // 在线客服：用户与管理员之间通过“回复机器人转发的原消息”完成双向会话。
