@@ -4923,7 +4923,16 @@ async function childMessage(child,msg,token) {
     const firstPending=media?[{messageId:Number(msg.message_id),msg}]:[];
     states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
     console.log("📤 CHILD UPLOAD SESSION START:", "bot="+tokenFingerprint(token), "uid="+uid, "folder="+existing.name, "pending="+firstPending.length);
-    if(media) return;
+    if(media) {
+      return sendHtml(token,uid,
+        "📥 <b>已收到第 1 个资源</b>\\n\\n"+
+        "📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\\n\\n"+
+        "继续发送文件即可批量上传。完成后点击「结束上传」。",
+        {reply_markup:{inline_keyboard:[
+          [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]
+        ]}}
+      );
+    }
     return sendHtml(token,uid,"<b>📁 文件夹："+escapeHtml(existing.name)+"</b>\\n\\n现在请发送文件、图片、视频、音频或其他资源。\\n\\n发送 /cancel 可取消。");
   }
 
