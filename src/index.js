@@ -3708,15 +3708,19 @@ async function mainMessage(msg) {
 
   if (admin && s?.step === "auto_migration_source") {
     if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消自动同步设置。",adminMenu()); }
-    const source=String(t||"").trim();
-    if(!source) return send(TOKEN,uid,"⚠️ 请输入旧仓库 Chat ID 或 @用户名。");
+    let source=String(t||"").trim();
+    const sourceChat=msg.forward_origin?.chat || msg.forward_origin?.sender_chat || msg.forward_from_chat || msg.sender_chat;
+    if(!source && sourceChat?.id) source=String(sourceChat.id).trim();
+    if(!source) return send(TOKEN,uid,"⚠️ 请发送旧仓库 Chat ID、@用户名，或直接转发旧仓库中的任意消息/文件。");
     states.set(key,{step:"auto_migration_target",source});
     return sendHtml(TOKEN,uid,"<b>📥 现在发送新仓库</b>\n\n请输入新仓库 Chat ID 或 @用户名。\n\n机器人必须同时在两个仓库里。发送 /cancel 可取消。");
   }
   if (admin && s?.step === "auto_migration_target") {
     if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消自动同步设置。",adminMenu()); }
-    const target=String(t||"").trim(), source=String(s?.source||"").trim();
-    if(!target) return send(TOKEN,uid,"⚠️ 请输入新仓库 ID 或 @用户名。");
+    let target=String(t||"").trim(), source=String(s?.source||"").trim();
+    const targetChat=msg.forward_origin?.chat || msg.forward_origin?.sender_chat || msg.forward_from_chat || msg.sender_chat;
+    if(!target && targetChat?.id) target=String(targetChat.id).trim();
+    if(!target) return send(TOKEN,uid,"⚠️ 请发送新仓库 Chat ID、@用户名，或直接转发新仓库中的任意消息/文件。");
     states.delete(key);
     try {
       const sc=await main("getChat",{chat_id:source}),tc=await main("getChat",{chat_id:target});
@@ -3734,15 +3738,19 @@ async function mainMessage(msg) {
 
   if (admin && s?.step === "migration_source") {
     if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消仓库迁移。",adminMenu()); }
-    const source=String(t||"").trim();
-    if(!source) return send(TOKEN,uid,"⚠️ 请输入旧仓库 Chat ID 或 @用户名。");
+    let source=String(t||"").trim();
+    const sourceChat=msg.forward_origin?.chat || msg.forward_origin?.sender_chat || msg.forward_from_chat || msg.sender_chat;
+    if(!source && sourceChat?.id) source=String(sourceChat.id).trim();
+    if(!source) return send(TOKEN,uid,"⚠️ 请发送旧仓库 Chat ID、@用户名，或直接转发旧仓库中的任意消息/文件。");
     states.set(key,{step:"migration_target",source});
     return sendHtml(TOKEN,uid,"<b>📥 现在发送新仓库</b>\\n\\n请输入新仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n机器人必须同时在两个仓库里。发送 /cancel 可取消。");
   }
   if (admin && s?.step === "migration_target") {
     if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消仓库迁移。",adminMenu()); }
-    const target=String(t||"").trim(), source=String(s?.source||"").trim();
-    if(!target) return send(TOKEN,uid,"⚠️ 请输入新仓库 ID 或 @用户名。");
+    let target=String(t||"").trim(), source=String(s?.source||"").trim();
+    const targetChat=msg.forward_origin?.chat || msg.forward_origin?.sender_chat || msg.forward_from_chat || msg.sender_chat;
+    if(!target && targetChat?.id) target=String(targetChat.id).trim();
+    if(!target) return send(TOKEN,uid,"⚠️ 请发送新仓库 Chat ID、@用户名，或直接转发新仓库中的任意消息/文件。");
     states.delete(key);
     try { return await repositoryMigration(uid,source,target); }
     catch(e) { const m=db.settings.repositoryMigration||{}; if(!repositoryMigrationRunning) { db.settings.repositoryMigration={...m,status:"error",finishedAt:Date.now(),error:String(e?.message||e)}; saveDb(); } return sendHtml(TOKEN,uid,"<b>❌ 仓库迁移失败</b>\\n\\n⚠️ "+escapeHtml(e?.message||e)+"\\n\\n请确认机器人同时在旧仓库和新仓库里，并具有读取消息权限。",adminMenu()); }
