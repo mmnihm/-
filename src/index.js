@@ -2392,7 +2392,6 @@ async function cleanupNumericTagFolders() {
       const fields=await getBaserowFields(true);
       const allRows=await listAllBaserowRows();
       const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
-      const badNames=new Set(bad.map(d=>String(d.name||"").trim()));
       for(const row of allRows) {
         if(!row?.id) continue;
         const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
