@@ -5749,13 +5749,25 @@ async function handleDirectoryCallback(token, q, child=false) {
         reply_markup:uploadFolderInlineMenu()
       });
     }
-    void answer("已打开文件夹");
+    const uploadKey=uploadStateKey(uid,child,token);
+    if(uploadTimers.has(uploadKey)) { clearTimeout(uploadTimers.get(uploadKey)); uploadTimers.delete(uploadKey); }
+    if(uploadAckTimers.has(uploadKey)) { clearTimeout(uploadAckTimers.get(uploadKey)); uploadAckTimers.delete(uploadAckTimers.get(uploadKey)); }
+    states.set(uploadKey,{
+      step:"upload_file",
+      directoryId:d.id,
+      directoryName:d.name,
+      pendingUploads:[]
+    });
+    void answer("已进入上传模式");
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
-      text:folderManageText(d.id),
+      text:"📤 <b>开始上传</b>\\n━━━━━━━━━━━━━━\\n\\n📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n\\n请直接发送文件、图片、视频、音频或其他资源。\\n\\n收到文件后会立即提示。完成后点击「✅ 结束上传」。",
       parse_mode:"HTML",
-      reply_markup:child ? childFolderManageMenu(d.id) : folderManageMenu(d.id)
+      reply_markup:{inline_keyboard:[
+        [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
+        [{text:"❌ 取消上传",callback_data:"upload_cancel"}]
+      ]}
     });
   }
 
