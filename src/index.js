@@ -2001,29 +2001,24 @@ async function checkRepositoryAutoSyncAccess(){
 }
 async function showRepositoryAutoSyncStatus(uid){
   const state=repositoryAutoSyncState();
-  const running=Boolean(state.enabled);
   const bound=Boolean(state.sourceId&&state.targetId);
-  const statusText=running?"🟢 运行中":(state.status==="paused"?"⏸️ 已暂停":(bound?"⏹️ 已绑定":"⚪ 未绑定"));
-  const buttons=[];
-  if(bound){
-    buttons.push([{text:"🧪 测试同步",callback_data:"adm:auto_test"}]);
-    buttons.push([running?{text:"⏸️ 暂停任务",callback_data:"adm:auto_pause"}:{text:"▶️ 继续任务",callback_data:"adm:auto_resume"}]);
-    buttons.push([{text:"🧹 删除任务并解绑",callback_data:"adm:auto_delete"}]);
-  }else{
-    buttons.push([{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}]);
-  }
-  buttons.push([{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]);
-  return sendHtml(TOKEN,uid,
-    "<b>⚡ 自动同步任务</b>\n━━━━━━━━━━━━━━\n\n"+
-    "<b>任务状态：</b>"+statusText+"\n"+
-    "📤 旧仓库："+escapeHtml(state.sourceTitle||"-")+"\n"+
-    "📥 新仓库："+escapeHtml(state.targetTitle||"-")+"\n"+
-    "📌 最后消息："+Number(state.lastMessageId||0)+"\n"+
-    "📦 已同步："+Number(state.copied||0)+"\n"+
-    "⏳ 待处理："+state.queue.length+"\n"+
-    "⚠️ 失败："+Number(state.failed||0)+
-    (state.lastError?"\n\n❌ "+escapeHtml(state.lastError):""),
-    {reply_markup:{inline_keyboard:buttons}});
+  const running=Boolean(state.enabled);
+  const statusText=running?"🟢 正在自动同步":(state.status==="paused"?"⏸️ 已暂停":"⚪ 未运行");
+  const body="<b>⚡ 自动同步</b>\n━━━━━━━━━━━━━━\n\n"+statusText+
+    "\n📤 旧仓库："+escapeHtml(state.sourceTitle||"-")+
+    "\n📥 新仓库："+escapeHtml(state.targetTitle||"-")+
+    "\n📌 最后消息："+Number(state.lastMessageId||0)+
+    "\n📦 已同步："+Number(state.copied||0)+
+    "\n⏳ 待处理："+state.queue.length+
+    (state.lastError?"\n\n❌ "+escapeHtml(state.lastError):"");
+  const rows=[];
+  if(running) rows.push([{text:"⏸️ 暂停同步",callback_data:"adm:auto_pause"}]);
+  else if(bound) rows.push([{text:"▶️ 继续同步",callback_data:"adm:auto_resume"}]);
+  rows.push([{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}]);
+  if(bound) rows.push([{text:"🗑️ 删除任务并解绑仓库",callback_data:"adm:auto_delete"}]);
+  rows.push([{text:"🔄 重新绑定",callback_data:"adm:auto_reset"}]);
+  rows.push([{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]);
+  return sendHtml(TOKEN,uid,body,{reply_markup:{inline_keyboard:rows}});
 }
 async function resetRepositoryAutoSyncBinding(){
   try{await stopRepositoryAutoSync();}catch(e){console.warn("⚠️ 停止自动同步任务时出现异常：",String(e?.message||e));}
@@ -5137,13 +5132,9 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Baserow 历史恢复已启动</b>\\n\\n📚 读取现有 Baserow 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverBaserowHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }
     if(route==="folder_repair") return repairLostFolderAssignments(uid);
     if(route==="auto") {
-      const a=repositoryAutoSyncState();
-      if(a.enabled||a.sourceId) return showRepositoryAutoSyncStatus(uid);
-      states.set(key,{step:"auto_migration_source"});
-      void answer("已进入自动同步设置");
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚡ 自动同步</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库里的任意消息/文件。\\n\\n📥 第二步：发送新仓库 Chat ID、@用户名，或直接转发新仓库里的任意消息/文件。\\n\\n⚠️ 机器人必须同时在两个仓库里，并拥有读取旧仓库、发送到新仓库的权限。\n📌 绑定完成后，新消息会自动同步。\\n📌 旧仓库不会删除。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
+      return showRepositoryAutoSyncStatus(uid);
     }
-    if(route==="migrate") {
+        if(route==="migrate") {
       states.set(key,{step:"migration_source"});
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
     }
@@ -5179,6 +5170,26 @@ async function handleDirectoryCallback(token, q, child=false) {
           [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
         ]}});
       }
+    }
+    if(route==="auto_add") {
+      states.set(key,{step:"auto_migration_source"});
+      void answer("请选择旧仓库");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"<b>➕ 添加自动同步任务</b>\n━━━━━━━━━━━━━━\n\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库中的任意消息/文件。\n\n📥 下一步再发送新仓库。\n\n机器人必须同时能访问两个仓库。\n发送 /cancel 可取消。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[
+          [{text:"❌ 取消",callback_data:"admin:resource"}]
+        ]}});
+    }
+    if(route==="auto_delete") {
+      await resetRepositoryAutoSyncBinding();
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"<b>🗑️ 同步任务已删除</b>\n━━━━━━━━━━━━━━\n\n旧仓库和新仓库绑定已解除。\n待处理队列已清空。\n\n现在可以重新添加同步任务。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[
+          [{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}],
+          [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+        ]}});
     }
     if(route==="auto_pause") {
       const a=repositoryAutoSyncState(); a.enabled=false; a.status="paused"; a.updatedAt=Date.now(); saveDb();
