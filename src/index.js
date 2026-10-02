@@ -2259,8 +2259,8 @@ function adminSettingsInline(){return{inline_keyboard:[
 ]};}
 function adminOpsInline(){return{inline_keyboard:[
  [{text:"📊 数据统计",callback_data:"adm:stats"},{text:"📢 广播消息",callback_data:"adm:broadcast"}],
- [{text:"📜 操作日志",callback_data:"adm:logs"},{text:"📌 广播后置顶",callback_data:"adm:pin"}],
- [{text:"📝 用户提示",callback_data:"admin:prompts"}],
+ [{text:"💬 在线客服",callback_data:"support:admin"},{text:"📜 操作日志",callback_data:"adm:logs"}],
+ [{text:"📌 广播后置顶",callback_data:"adm:pin"},{text:"📝 用户提示",callback_data:"admin:prompts"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
 function adminBotInline(){return{inline_keyboard:[
@@ -2273,7 +2273,8 @@ function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
     [{text:"📂 资源目录",callback_data:"user:dirs"},{text:"🔎 搜索资源",callback_data:"user:search"}],
     [{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}],
-    [{text:"⭐ 我的资源",callback_data:"hub"},{text:"🤖 克隆机器人",callback_data:"user:clone"}]
+    [{text:"⭐ 我的资源",callback_data:"hub"},{text:"🤖 克隆机器人",callback_data:"user:clone"}],
+    [{text:"💬 联系客服",callback_data:"support:start"}]
   ]}};
 }
 function userMenu() {
@@ -3380,6 +3381,162 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
 }
 const states=new Map();
 
+// 在线客服：用户与管理员之间通过“回复机器人转发的原消息”完成双向会话。
+// 会话/路由写入 db.settings，重启后仍可继续处理已经建立的会话。
+const supportSessions = new Map();
+const supportRoutes = new Map();
+
+function supportSessionStore() {
+  if(!db.settings || typeof db.settings!=="object") db.settings={};
+  if(!db.settings.supportSessions || typeof db.settings.supportSessions!=="object") db.settings.supportSessions={};
+  if(!Array.isArray(db.settings.supportRoutes)) db.settings.supportRoutes=[];
+  return db.settings;
+}
+function supportSessionKey(token, uid) {
+  return tokenFingerprint(token)+":"+String(uid);
+}
+function supportRouteKey(token, adminChatId, messageId) {
+  return tokenFingerprint(token)+":"+String(adminChatId)+":"+String(messageId);
+}
+function supportOpenSession(token, uid) {
+  const key=supportSessionKey(token,uid);
+  supportSessionStore().supportSessions[key]={userId:Number(uid),tokenFingerprint:tokenFingerprint(token),updatedAt:Date.now(),status:"open"};
+  supportSessions.set(key,{userId:Number(uid),tokenFingerprint:tokenFingerprint(token),updatedAt:Date.now(),status:"open"});
+  saveDb();
+}
+function supportCloseSession(token, uid) {
+  const key=supportSessionKey(token,uid);
+  delete supportSessionStore().supportSessions[key];
+  supportSessions.delete(key);
+  const rows=supportSessionStore().supportRoutes.filter(x=>!(String(x?.tokenFingerprint)===tokenFingerprint(token)&&String(x?.userId)===String(uid)));
+  supportSessionStore().supportRoutes=rows.slice(-2000);
+  for(const [k,v] of supportRoutes) {
+    if(String(v?.userId)===String(uid)&&String(v?.tokenFingerprint)===tokenFingerprint(token)) supportRoutes.delete(k);
+  }
+  saveDb();
+}
+function supportIsOpen(token,uid) {
+  const key=supportSessionKey(token,uid);
+  const row=supportSessionStore().supportSessions[key];
+  return Boolean(row && row.status==="open");
+}
+function supportRememberRoute(token,adminChatId,adminMessageId,uid) {
+  const row={
+    tokenFingerprint:tokenFingerprint(token),
+    adminChatId:String(adminChatId),
+    adminMessageId:Number(adminMessageId),
+    userId:Number(uid),
+    createdAt:Date.now()
+  };
+  supportRoutes.set(supportRouteKey(token,adminChatId,adminMessageId),row);
+  const rows=supportSessionStore().supportRoutes.filter(x=>supportRouteKey(token,x?.adminChatId,x?.adminMessageId)!==supportRouteKey(token,adminChatId,adminMessageId));
+  rows.push(row);
+  supportSessionStore().supportRoutes=rows.slice(-2000);
+}
+function supportFindRoute(token,adminChatId,messageId) {
+  const key=supportRouteKey(token,adminChatId,messageId);
+  const mem=supportRoutes.get(key);
+  if(mem) return mem;
+  const row=supportSessionStore().supportRoutes.find(x=>supportRouteKey(token,x?.adminChatId,x?.adminMessageId)===key);
+  if(row) supportRoutes.set(key,row);
+  return row||null;
+}
+function supportActiveSessions() {
+  const store=supportSessionStore().supportSessions;
+  return Object.values(store).filter(x=>x&&x.status==="open").sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0);
+}
+async function supportSendToAdmins(token,msg) {
+  const uid=msg.from?.id;
+  const admins=[...ADMIN_IDS].map(Number).filter(Number.isFinite);
+  if(!admins.length) return false;
+  const displayName=[msg.from?.first_name,msg.from?.last_name].filter(Boolean).join(" ")||msg.from?.username||"用户";
+  const username=msg.from?.username ? "@"+msg.from.username : "无用户名";
+  const header=await tg(token,"sendMessage",{
+    chat_id:admins[0],
+    text:"💬 <b>客服新消息</b>\\n\\n👤 用户：<b>"+escapeHtml(displayName)+"</b>\\n🆔 ID：<code>"+escapeHtml(String(uid))+"</code>\\n🔗 用户名："+escapeHtml(username)+"\\n\\n↩️ <i>请直接回复下面这条用户消息，机器人会自动转回给用户。</i>",
+    parse_mode:"HTML"
+  });
+  for(const adminId of admins) {
+    let targetHeader=header;
+    if(adminId!==admins[0]) {
+      try {
+        targetHeader=await tg(token,"sendMessage",{
+          chat_id:adminId,
+          text:"💬 <b>客服新消息</b>\\n\\n👤 用户：<b>"+escapeHtml(displayName)+"</b>\\n🆔 ID：<code>"+escapeHtml(String(uid))+"</code>\\n🔗 用户名："+escapeHtml(username)+"\\n\\n↩️ <i>请直接回复下面这条用户消息。</i>",
+          parse_mode:"HTML"
+        });
+      } catch(e) {
+        console.warn("⚠️ 客服管理员通知失败:",String(e?.message||e));
+        continue;
+      }
+    }
+    try {
+      const copied=await tg(token,"copyMessage",{chat_id:adminId,from_chat_id:msg.chat.id,message_id:msg.message_id});
+      supportRememberRoute(token,adminId,copied.message_id,uid);
+      if(adminId===admins[0]) {
+        // 第一位管理员的提示和用户原消息相邻，其他管理员同样收到完整会话。
+      }
+    } catch(e) {
+      console.warn("⚠️ 客服转发用户消息失败:",String(e?.message||e));
+    }
+  }
+  supportSessionStore().supportSessions[supportSessionKey(token,uid)].updatedAt=Date.now();
+  saveDb();
+  return true;
+}
+async function supportHandleAdminReply(token,msg) {
+  if(!isAdmin(msg.from?.id) || !msg.reply_to_message?.message_id) return false;
+  const route=supportFindRoute(token,msg.chat?.id,msg.reply_to_message.message_id);
+  if(!route) return false;
+  if((msg.text||"").trim()==="/结束客服") {
+    supportCloseSession(token,route.userId);
+    await sendHtml(token,route.userId,"<b>💬 客服会话已结束</b>\\n\\n如需帮助，可以再次点击「💬 联系客服」。",userMenu());
+    await sendHtml(token,msg.chat.id,"✅ 已结束用户 <code>"+escapeHtml(String(route.userId))+"</code> 的客服会话。");
+    return true;
+  }
+  try {
+    await tg(token,"copyMessage",{chat_id:route.userId,from_chat_id:msg.chat.id,message_id:msg.message_id});
+    const key=supportSessionKey(token,route.userId);
+    if(supportSessionStore().supportSessions[key]) supportSessionStore().supportSessions[key].updatedAt=Date.now();
+    saveDb();
+    return true;
+  } catch(e) {
+    await sendHtml(token,msg.chat.id,"❌ 回复用户失败：<code>"+escapeHtml(String(e?.telegramDescription||e?.message||e).slice(0,300))+"</code>");
+    return true;
+  }
+}
+async function supportHandleUserMessage(token,msg) {
+  const uid=msg.from?.id;
+  if(!uid || !supportIsOpen(token,uid)) return false;
+  const t=String(msg.text||"").trim();
+  if(t==="/cancel" || t==="❌ 结束客服" || t==="结束客服") {
+    supportCloseSession(token,uid);
+    await sendHtml(token,uid,"<b>💬 客服会话已结束</b>\\n\\n如需帮助，可以再次点击「💬 联系客服」。",userMenu());
+    return true;
+  }
+  const ok=await supportSendToAdmins(token,msg);
+  if(!ok) {
+    await sendHtml(token,uid,"<b>⚠️ 暂时无法接入客服</b>\\n\\n管理员客服通道尚未配置，请稍后再试。",userMenu());
+    supportCloseSession(token,uid);
+    return true;
+  }
+  await sendHtml(token,uid,"📨 <b>消息已转给客服</b>\\n\\n客服回复后会自动发给你。\\n\\n继续发送内容即可，发送「❌ 结束客服」可结束会话。");
+  return true;
+}
+function supportUserKeyboard() {
+  return {inline_keyboard:[
+    [{text:"❌ 结束客服",callback_data:"support:end"}],
+    [{text:"⬅️ 返回首页",callback_data:"user:home"}]
+  ]};
+}
+function supportAdminText() {
+  const rows=supportActiveSessions();
+  if(!rows.length) return "<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n📭 当前没有进行中的客服会话。";
+  return "<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n📨 进行中：<b>"+rows.length+"</b> 个\\n\\n"+
+    rows.slice(0,20).map((x,i)=>(i+1)+". 👤 <code>"+escapeHtml(String(x.userId))+"</code>\\n   🕒 "+new Date(Number(x.updatedAt||Date.now())).toLocaleString("zh-CN")).join("\\n");
+}
+
+
 async function binding(msg) {
   const admin=isAdmin(msg.from?.id);
   const rawText=(msg.text||"").trim();
@@ -3534,6 +3691,11 @@ async function mainMessage(msg) {
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
   const s=states.get(key);
+
+  // 管理员回复客服转发消息时，优先走客服回传，不进入普通后台状态机。
+  if(admin && await supportHandleAdminReply(TOKEN,msg)) return;
+  // 用户处于客服会话时，普通消息直接转交客服。
+  if(!admin && await supportHandleUserMessage(TOKEN,msg)) return;
 
   if(admin && s?.step==="bind_repository") {
     if(t==="/cancel") {
@@ -4453,6 +4615,10 @@ async function childMessage(child,msg,token) {
   // 子机器人上传状态与回调统一使用 token-aware key，多个子机器人互不串任务。
   const key=uploadStateKey(uid,true,token);
   const t=msg.text||"",s=states.get(key);
+
+  // 子机器人也支持在线客服：管理员回复机器人转发的消息即可回传用户。
+  if(isAdmin(uid) && await supportHandleAdminReply(token,msg)) return;
+  if(!isAdmin(uid) && await supportHandleUserMessage(token,msg)) return;
   const startCommand=t.split(" ")[0].split("@")[0];
 
   // 主机器人和所有子机器人共用同一个 db.resources / db.directories。
@@ -4481,7 +4647,7 @@ async function childMessage(child,msg,token) {
   }
 
   if(startCommand==="/start" || t==="🏠 开始") return sendHtml(token,uid,
-    "<b>👋 欢迎使用资源机器人</b>\n\n📚 <b>共享资源功能</b>：目录 · 搜索 · 随机 · 最新\n\n👇 <i>请选择下方功能</i>",childMenu());
+    "<b>👋 欢迎使用资源机器人</b>\n\n📚 <b>共享资源功能</b>：目录 · 搜索 · 随机 · 最新\n💬 <b>在线客服</b>：联系客服\n\n👇 <i>请选择下方功能</i>",childMenu());
 
   // 子机器人管理员上传：必须在 allowed() 之前处理，否则管理员若未加入指定群会被拦截。
   if(isAdmin(uid) && s?.step==="upload_folder") {
@@ -4618,6 +4784,21 @@ async function handleDirectoryCallback(token, q, child=false) {
       text:"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n💡 支持模糊搜索，最多返回 10 条。\n↩️ 发送 <code>/cancel</code> 可退出搜索。",
       parse_mode:"HTML",
       reply_markup:{inline_keyboard:[[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
+  }
+  if(data==="support:start") {
+    supportOpenSession(token,uid);
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n👤 你现在已进入客服会话。\\n\\n📨 请直接发送你的问题、文字、图片、视频或文件，客服会收到并回复你。\\n\\n⏱️ 客服回复后会自动发送给你。\\n\\n👇 完成后可结束会话。",
+      parse_mode:"HTML",reply_markup:supportUserKeyboard()});
+  }
+  if(data==="support:end") {
+    supportCloseSession(token,uid);
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"<b>💬 客服会话已结束</b>\\n\\n如需帮助，可以再次点击「💬 联系客服」。",
+      parse_mode:"HTML",reply_markup:userHomeInlineKeyboard().reply_markup});
+  }
+  if(data==="support:admin" && isAdmin(uid)) {
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:supportAdminText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"🔄 刷新",callback_data:"support:admin"},{text:"⬅️ 返回",callback_data:"admin:ops"}]]}});
   }
   if(data==="user:random") {
     return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
