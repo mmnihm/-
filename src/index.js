@@ -3845,35 +3845,43 @@ async function mainMessage(msg) {
 
   if (admin && s?.step === "auto_migration_source") {
     if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消自动同步设置。",adminMenu()); }
-    let source=String(t||"").trim();
     const sourceChat=msg.forward_origin?.chat || msg.forward_origin?.sender_chat || msg.forward_from_chat || msg.sender_chat;
-    if(!source && sourceChat?.id) source=String(sourceChat.id).trim();
+    const source=sourceChat?.id ? String(sourceChat.id).trim() : String(t||"").trim();
     if(!source) return send(TOKEN,uid,"⚠️ 请发送旧仓库 Chat ID、@用户名，或直接转发旧仓库中的任意消息/文件。");
-    states.set(key,{step:"auto_migration_target",source});
-    return sendHtml(TOKEN,uid,"<b>📥 现在发送新仓库</b>\n\n请输入新仓库 Chat ID 或 @用户名。\n\n机器人必须同时在两个仓库里。发送 /cancel 可取消。");
+    try {
+      const sc=await main("getChat",{chat_id:source});
+      states.set(key,{step:"auto_migration_target",source:String(sc.id),sourceTitle:String(sc.title||sc.username||sc.id)});
+      return sendHtml(TOKEN,uid,"<b>✅ 旧仓库已确认</b>\n\n📤 旧仓库："+escapeHtml(String(sc.title||sc.username||sc.id))+"\n🆔 <code>"+escapeHtml(String(sc.id))+"</code>\n\n📥 现在发送新仓库 Chat ID、@用户名，或直接转发新仓库中的任意消息/文件。\n\n⚠️ 新仓库必须与旧仓库不同。发送 /cancel 可取消。");
+    } catch(e) {
+      return sendHtml(TOKEN,uid,"<b>❌ 旧仓库无法确认</b>\n\n⚠️ "+escapeHtml(String(e?.telegramDescription||e?.message||e))+"\n\n请重新发送旧仓库。");
+    }
   }
   if (admin && s?.step === "auto_migration_target") {
     if (t === "/cancel") { states.delete(key); return send(TOKEN,uid,"❌ 已取消自动同步设置。",adminMenu()); }
-    let target=String(t||"").trim(), source=String(s?.source||"").trim();
     const targetChat=msg.forward_origin?.chat || msg.forward_origin?.sender_chat || msg.forward_from_chat || msg.sender_chat;
-    if(!target && targetChat?.id) target=String(targetChat.id).trim();
+    const target=targetChat?.id ? String(targetChat.id).trim() : String(t||"").trim();
+    const source=String(s?.source||"").trim();
     if(!target) return send(TOKEN,uid,"⚠️ 请发送新仓库 Chat ID、@用户名，或直接转发新仓库中的任意消息/文件。");
-    states.delete(key);
     try {
       const sc=await main("getChat",{chat_id:source});
       const tc=await main("getChat",{chat_id:target});
-      if(String(sc.id)===String(tc.id)) throw new Error("旧仓库和新仓库不能是同一个");
+      console.log("⚡ AUTO BIND CHECK:",{sourceInput:source,targetInput:target,sourceId:String(sc.id),targetId:String(tc.id)});
+      if(String(sc.id)===String(tc.id)){
+        return sendHtml(TOKEN,uid,"<b>❌ 新仓库不能与旧仓库相同</b>\n\n📤 旧仓库："+escapeHtml(String(sc.title||sc.username||sc.id))+"\n🆔 <code>"+escapeHtml(String(sc.id))+"</code>\n\n📥 你发送的新仓库：<code>"+escapeHtml(String(tc.id))+"</code>\n\n请重新发送一个不同的新仓库。");
+      }
       const me=await main("getMe");
       for(const chat of [sc,tc]){
         const member=await main("getChatMember",{chat_id:chat.id,user_id:me.id});
         if(["left","kicked"].includes(String(member?.status||""))) throw new Error("机器人不在仓库「"+String(chat.title||chat.username||chat.id)+"」中");
       }
+      states.delete(key);
       await enableRepositoryAutoSync(uid,String(sc.id),String(tc.id),String(sc.title||sc.username||sc.id),String(tc.title||tc.username||tc.id),0);
       return await showRepositoryAutoSyncStatus(uid);
     } catch(e) {
+      const msg=String(e?.telegramDescription||e?.message||e||"自动同步启动失败");
       const a=repositoryAutoSyncState();
-      a.enabled=false; a.status="error"; a.lastError=String(e?.telegramDescription||e?.message||e||"自动同步启动失败"); a.updatedAt=Date.now(); saveDb();
-      return sendHtml(TOKEN,uid,"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(a.lastError)+"\n\n请确认旧仓库、新仓库都可访问，并且机器人同时在两个仓库中。",adminMenu());
+      a.enabled=false; a.status="error"; a.lastError=msg; a.updatedAt=Date.now(); saveDb();
+      return sendHtml(TOKEN,uid,"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(msg)+"\n\n请检查两个仓库是否都能被机器人访问。");
     }
   }
 
