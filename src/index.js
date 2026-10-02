@@ -4936,7 +4936,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       const a=repositoryAutoSyncState();
       if(a.enabled||a.sourceId) return showRepositoryAutoSyncStatus(uid);
       states.set(key,{step:"auto_migration_source"});
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚡ 自动同步</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n📥 首次会先迁移历史资源，完成后以后出现的新资源会自动复制到新仓库。\\n\\n⚠️ 机器人必须同时在两个仓库里。\\n📌 旧仓库不会删除。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
+      void answer("已进入自动同步设置");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚡ 自动同步</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库里的任意消息/文件。\\n\\n📥 第二步：发送新仓库 Chat ID、@用户名，或直接转发新仓库里的任意消息/文件。\\n\\n⚠️ 机器人需要能够访问两个仓库。\\n📌 旧仓库不会删除。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
     }
     if(route==="migrate") {
       states.set(key,{step:"migration_source"});
