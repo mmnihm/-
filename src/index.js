@@ -6508,10 +6508,19 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,sent);
     else saveDb();
   }
-  return safeEdit(token,{
+  // 批量发送完成后单独发送一个控制消息，避免编辑原文件夹消息失败导致“下面没有按钮”。
+  // 下一批仍然从 next 位置开始，不重复发送已经处理过的资源。
+  if(next < all.length) {
+    return tg(token,"sendMessage",{
+      chat_id:chatId,
+      text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n👇 下面还有 <b>"+(all.length-next)+"</b> 个资源",
+      parse_mode:"HTML",
+      reply_markup:folderProgressKeyboard(d.id,all.length,next)
+    });
+  }
+  return tg(token,"sendMessage",{
     chat_id:chatId,
-    message_id:messageId,
-    text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源。\\n📤 本次已发送：<b>"+sent+"</b> 个。\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>",
+    text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"\\n\\n✅ 已全部获取完成",
     parse_mode:"HTML",
     reply_markup:folderProgressKeyboard(d.id,all.length,next)
   });
