@@ -1788,6 +1788,7 @@ let repositoryMigrationRunning=false;
 
 let repositoryAutoSyncRunning = false;
 let repositoryAutoSyncQueue = Promise.resolve();
+const repositoryAutoSyncDebounceTimers=new Map();
 function repositoryAutoSyncState() {
   const base={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:0};
   const current=db.settings.repositoryAutoSync;
@@ -1981,11 +1982,28 @@ function queueRepositoryAutoSyncMessage(msg){
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(!exists&&!already)state.queue.push({messageId,queuedAt:Date.now()});
   state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
-  
   if(state.status!=="paused") state.status="queued";
   state.updatedAt=Date.now();
   saveDb();
-  if(state.status!=="paused") processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
+
+  const queueTimerKey="autosync:"+tokenFingerprint(TOKEN);
+  if(state.status==="paused") return;
+  if(state.queue.length>=10){
+    if(repositoryAutoSyncDebounceTimers.has(queueTimerKey)){
+      clearTimeout(repositoryAutoSyncDebounceTimers.get(queueTimerKey));
+      repositoryAutoSyncDebounceTimers.delete(queueTimerKey);
+    }
+    processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
+    return;
+  }
+  if(repositoryAutoSyncDebounceTimers.has(queueTimerKey)) clearTimeout(repositoryAutoSyncDebounceTimers.get(queueTimerKey));
+  repositoryAutoSyncDebounceTimers.set(queueTimerKey,setTimeout(()=>{
+    repositoryAutoSyncDebounceTimers.delete(queueTimerKey);
+    const current=repositoryAutoSyncState();
+    if(current.enabled&&current.status!=="paused"&&current.queue.length){
+      processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
+    }
+  },1000));
 }
 async function startRepositoryAutoSyncNow(uid){
   const state=repositoryAutoSyncState();
@@ -3979,6 +3997,17 @@ async function mainMessage(msg) {
     }
   }
 
+  // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
+  if(admin && (s?.step==="upload_file" || s?.step==="upload_folder")) {
+    const handled=await receiveUploadMedia(TOKEN,uid,key,s,msg,false);
+    if(handled) return;
+  }
+
+  // 管理员回复客服转发消息时，优先走客服回传，不进入普通后台状态机。
+  if(admin && await supportHandleAdminReply(TOKEN,msg)) return;
+  // 用户处于客服会话时，普通消息直接转交客服。
+  if(!admin && await supportHandleUserMessage(TOKEN,msg)) return;
+
   // 新建文件夹名称必须在所有客服/普通状态处理之前优先消费，避免被其他状态机截走。
   if(s?.step==="folder_create"&&admin) {
     if(t==="/cancel" || t==="❌ 取消") {
@@ -4005,16 +4034,6 @@ async function mainMessage(msg) {
   }
 
 
-  // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
-  if(admin && (s?.step==="upload_file" || s?.step==="upload_folder")) {
-    const handled=await receiveUploadMedia(TOKEN,uid,key,s,msg,false);
-    if(handled) return;
-  }
-
-  // 管理员回复客服转发消息时，优先走客服回传，不进入普通后台状态机。
-  if(admin && await supportHandleAdminReply(TOKEN,msg)) return;
-  // 用户处于客服会话时，普通消息直接转交客服。
-  if(!admin && await supportHandleUserMessage(TOKEN,msg)) return;
 
   if(admin && s?.step==="bind_repository") {
     if(t==="/cancel") {
