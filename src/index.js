@@ -3979,6 +3979,32 @@ async function mainMessage(msg) {
     }
   }
 
+  // 新建文件夹名称必须在所有客服/普通状态处理之前优先消费，避免被其他状态机截走。
+  if(s?.step==="folder_create"&&admin) {
+    if(t==="/cancel" || t==="❌ 取消") {
+      states.delete(key);
+      if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
+      return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
+    }
+    const folderName=String(t||"").trim().replace(/^📁\\s*/,"").slice(0,80);
+    if(!folderName) return sendHtml(TOKEN,uid,"⚠️ <b>文件夹名称不能为空</b>\\n\\n请重新发送名称。");
+    const same=db.directories.find(x=>String(x.name||"").trim().toLowerCase()===folderName.toLowerCase());
+    if(same) {
+      states.set(key,{step:"upload_file",directoryId:same.id,directoryName:same.name,pendingUploads:[]});
+      return sendHtml(TOKEN,uid,"⚠️ <b>这个文件夹已经存在</b>\\n\\n📁 "+escapeHtml(same.name)+"\\n\\n已切换到这个文件夹，现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
+    }
+    const d=ensureDirectory(folderName);
+    if(!d) return sendHtml(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请换一个名称再试。");
+    touchSharedData(uid);
+    queueBaserowDirectorySync(d);
+    saveDb();
+    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; }
+    logAdmin(uid,"新建文件夹",d.name);
+    return sendHtml(TOKEN,uid,"✅ <b>文件夹创建成功</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n\\n现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
+  }
+
+
   // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
   if(admin && (s?.step==="upload_file" || s?.step==="upload_folder")) {
     const handled=await receiveUploadMedia(TOKEN,uid,key,s,msg,false);
@@ -4854,30 +4880,6 @@ async function mainMessage(msg) {
     logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
     return sendHtml(TOKEN,uid,"✅ <b>文件夹名称已修改</b>\\n\\n📁 原名称："+escapeHtml(oldName)+"\\n📁 新名称："+escapeHtml(newName),{reply_markup:uploadFolderInlineMenu()});
   }
-  if(s?.step==="folder_create"&&admin) {
-    if(t==="/cancel" || t==="❌ 取消") {
-      states.delete(key);
-      if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
-      return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
-    }
-    const folderName=String(t||"").trim().replace(/^📁\\s*/,"").slice(0,80);
-    if(!folderName) return sendHtml(TOKEN,uid,"⚠️ <b>文件夹名称不能为空</b>\\n\\n请重新发送名称。");
-    const same=db.directories.find(x=>String(x.name||"").trim().toLowerCase()===folderName.toLowerCase());
-    if(same) {
-      states.set(key,{step:"upload_file",directoryId:same.id,directoryName:same.name,pendingUploads:[]});
-      return sendHtml(TOKEN,uid,"⚠️ <b>这个文件夹已经存在</b>\\n\\n📁 "+escapeHtml(same.name)+"\\n\\n已切换到这个文件夹，现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
-    }
-    const d=ensureDirectory(folderName);
-    if(!d) return sendHtml(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请换一个名称再试。");
-    touchSharedData(uid);
-    queueBaserowDirectorySync(d);
-    saveDb();
-    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
-    if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; }
-    logAdmin(uid,"新建文件夹",d.name);
-    return sendHtml(TOKEN,uid,"✅ <b>文件夹创建成功</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n\\n现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
-  }
-
   if(s?.step==="upload_folder"&&admin) {
     if(t==="❌ 取消") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
