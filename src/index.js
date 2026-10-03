@@ -2485,7 +2485,8 @@ function userMenu() {
 function childMenu() {
   return userHomeInlineKeyboard();
 }
-function uploadBottomKeyboard() { return {reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["❌ 取消上传"]],resize_keyboard:true,is_persistent:true}}; }\nfunction childAdminMenu() {
+function uploadBottomKeyboard() { return {reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["❌ 取消上传"]],resize_keyboard:true,is_persistent:true}}; }
+function childAdminMenu() {
   return {reply_markup:{inline_keyboard:[
     [{text:"📤 上传资源",callback_data:"admin:upload"}],
     [{text:"🏠 返回首页",callback_data:"admin:home"}]
