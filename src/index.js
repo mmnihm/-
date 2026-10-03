@@ -5534,7 +5534,13 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
     if(route==="auto_content"){
       const a=repositoryAutoSyncState();
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:repositoryAutoSyncContentText(a),parse_mode:"HTML",reply_markup:repositoryAutoSyncContentMenu()});
+      await answer("已打开同步内容设置");
+      try {
+        return await safeEdit(token,{chat_id:chatId,message_id:messageId,text:repositoryAutoSyncContentText(a),parse_mode:"HTML",reply_markup:repositoryAutoSyncContentMenu()});
+      } catch(e) {
+        console.error("❌ AUTO CONTENT 页面刷新失败:",String(e?.telegramDescription||e?.message||e));
+        return sendHtml(token,chatId,repositoryAutoSyncContentText(a),repositoryAutoSyncContentMenu());
+      }
     }
     if(route==="auto_content_toggle"){
       const type=data.split(":")[2]||"";
@@ -5543,8 +5549,20 @@ async function handleDirectoryCallback(token, q, child=false) {
       else if(type==="photo") a.syncPhoto=a.syncPhoto===false;
       else if(type==="video") a.syncVideo=a.syncVideo===false;
       else if(type==="file") a.syncFiles=a.syncFiles===false;
-      a.updatedAt=Date.now(); saveDb();
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:repositoryAutoSyncContentText(a),parse_mode:"HTML",reply_markup:repositoryAutoSyncContentMenu()});
+      else {
+        await answer("未知同步内容选项",true);
+        return;
+      }
+      a.updatedAt=Date.now();
+      saveDb();
+      const labels={text:"文字",photo:"图片/相册",video:"视频",file:"文件/音频"};
+      await answer((a["sync"+(type==="file"?"Files":type==="photo"?"Photo":type==="video"?"Video":"Text")]===false?"已关闭 ":"已开启 ")+(labels[type]||"同步"));
+      try {
+        return await safeEdit(token,{chat_id:chatId,message_id:messageId,text:repositoryAutoSyncContentText(a),parse_mode:"HTML",reply_markup:repositoryAutoSyncContentMenu()});
+      } catch(e) {
+        console.error("❌ AUTO CONTENT 刷新失败:",String(e?.telegramDescription||e?.message||e));
+        return sendHtml(token,chatId,repositoryAutoSyncContentText(a),repositoryAutoSyncContentMenu());
+      }
     }
 
     if(route==="auto_add") {
