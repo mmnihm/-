@@ -1788,6 +1788,7 @@ let repositoryMigrationRunning=false;
 
 let repositoryAutoSyncRunning = false;
 let repositoryAutoSyncQueue = Promise.resolve();
+let repositoryAutoSyncRecoveryTimer = null;
 const repositoryAutoSyncDebounceTimers=new Map();
 function repositoryAutoSyncState() {
   const base={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",manualPaused:false,updatedAt:0};
