@@ -2049,8 +2049,15 @@ async function processRepositoryAutoSyncQueue(){
         }
         if(!batch.length)batch=[first];
       }else{
-        // 实时单条消息仍保持实时到达顺序。
-        batch=[first];
+        // 实时队列也禁止逐条复制：在没有相册组标记时，按到达顺序合并，
+        // 一次最多 100 条交给 Telegram。这样日志不再长期显示“批量完成 1 条”。
+        batch=[];
+        for(const item of state.queue){
+          if(!item || String(item?.mediaGroupId||"")) break;
+          batch.push(item);
+          if(batch.length>=100) break;
+        }
+        if(!batch.length) batch=[first];
       }
 
       if(!batch.length)batch=[first];
