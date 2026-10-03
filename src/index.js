@@ -1806,104 +1806,132 @@ function repositoryAutoSyncFolderId(sourceItem,targetId){
   if(!targetDir){targetDir={id:sharedDirectoryId(folderName),name:folderName,createdAt:Date.now(),sourceMigration:"auto:"+String(targetId)};db.directories.push(targetDir);queueBaserowDirectorySync(targetDir);}
   return String(targetDir.id);
 }
-async function repositoryAutoSyncOne(job){
-  const state=repositoryAutoSyncState(),sourceId=String(state.sourceId||""),targetId=String(state.targetId||""),messageId=Number(job?.messageId||0);
-  if(!state.enabled||!sourceId||!targetId||!messageId)return false;
-  const already=db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
-  if(already)return true;
+async function repositoryAutoSyncBatch(batch){
+  const state=repositoryAutoSyncState();
+  const sourceId=String(state.sourceId||""),targetId=String(state.targetId||"");
+  if(!state.enabled||!sourceId||!targetId||!Array.isArray(batch)||!batch.length)return true;
 
-  // 自动同步直接复制 Telegram 原消息，保持原消息中的文件、图片、视频、文字、说明等内容。
-  const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId)||null;
-  let copied=null,lastError=null;
+  const jobs=batch
+    .map(x=>({messageId:Number(x?.messageId||0),queuedAt:x?.queuedAt||Date.now()}))
+    .filter(x=>x.messageId>0);
 
+  if(!jobs.length)return true;
+
+  // Telegram Bot API copyMessages：真正一次复制一组消息。
+  // 本项目最多 10 条一组；不足 10 条按实际数量发送。
+  const messageIds=[...new Set(jobs.map(x=>x.messageId))].sort((a,b)=>a-b);
+  console.log("📦 AUTO SYNC 批量复制:",messageIds.length+" 条",sourceId+" -> "+targetId,messageIds.join(","));
+
+  let copiedIds=null,lastError=null;
   for(let attempt=1;attempt<=3;attempt++){
     try{
-      copied=await main("copyMessage",{
+      copiedIds=await main("copyMessages",{
         chat_id:targetId,
         from_chat_id:sourceId,
-        message_id:messageId,
+        message_ids:messageIds,
         ...(contentProtectionEnabled()?{protect_content:true}:{})
       });
-      if(!copied?.message_id)throw new Error("Telegram 未返回目标消息ID");
+      if(!Array.isArray(copiedIds))throw new Error("Telegram 未返回批量复制结果");
       break;
-    }catch(e){
-      lastError=e;
-      const desc=String(e?.telegramDescription||e?.message||e||"");
-      console.warn("⚠️ AUTO SYNC 复制失败:",sourceId+"#"+messageId,"attempt="+attempt,desc);
+    }catch(err){
+      lastError=err;
+      const desc=String(err?.telegramDescription||err?.message||err||"");
+      console.warn("⚠️ AUTO SYNC 批量复制失败:",sourceId+" -> "+targetId,"count="+messageIds.length,"attempt="+attempt,desc);
       if(attempt<3) await sleep(3000*attempt);
     }
   }
 
-  if(!copied?.message_id){
-    const errorText=String(lastError?.telegramDescription||lastError?.message||lastError||"复制失败");
+  if(!Array.isArray(copiedIds)){
+    const errorText=String(lastError?.telegramDescription||lastError?.message||lastError||"批量复制失败");
     state.lastError=errorText;
-    state.failed=Number(state.failed||0)+1;
     state.updatedAt=Date.now();
 
-    // 无效媒体不阻塞后面的同步任务，只跳过当前消息。
     if(/MEDIA_FILE_INVALID|media file is invalid/i.test(errorText)){
+      // 整组无法判断是哪一条媒体失效，拆成两半继续批量检查。
+      if(messageIds.length>1){
+        const mid=Math.ceil(jobs.length/2);
+        const left=jobs.slice(0,mid),right=jobs.slice(mid);
+        console.warn("↪️ AUTO SYNC 批量失败，拆分为两组继续:",left.length+"+"+right.length);
+        const leftOk=await repositoryAutoSyncBatch(left);
+        if(!leftOk)return false;
+        return await repositoryAutoSyncBatch(right);
+      }
+
+      const badId=messageIds[0];
+      state.queue=state.queue.filter(x=>Number(x?.messageId||0)!==badId);
+      state.failed=Number(state.failed||0)+1;
       state.status="running";
+      state.lastMessageId=Math.max(Number(state.lastMessageId||0),badId);
       saveDb();
-      console.warn("⏭️ AUTO SYNC 跳过无效媒体:",sourceId+"#"+messageId,errorText);
+      console.warn("⏭️ AUTO SYNC 跳过无效媒体:",sourceId+"#"+badId);
       return true;
     }
 
-    // 权限、仓库不存在、网络等真正错误保留断点并暂停。
     state.status="paused";
+    state.lastError=errorText;
     saveDb();
-    console.error("⏸️ AUTO SYNC 已暂停，保留断点:",sourceId+"#"+messageId,errorText);
+    console.error("⏸️ AUTO SYNC 批量复制已暂停:",errorText);
     return false;
   }
 
-  const directoryId=sourceItem?repositoryAutoSyncFolderId(sourceItem,targetId):null;
-  const targetItem={
-    ...(sourceItem||{}),
-    chatId:targetId,
-    messageId:Number(copied.message_id),
-    directoryId:directoryId||sourceItem?.directoryId||null,
-    fileId:null,
-    baserowRowId:null,
-    title:String(sourceItem?.title||sourceItem?.name||("资源 "+messageId)),
-    migratedFrom:{chatId:sourceId,messageId,at:Date.now()}
-  };
-
-  if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId)){
-    db.resources.unshift(targetItem);
-    db.resources=db.resources.slice(0,MAX_RESOURCES);
-    queueBaserowResourceSync(targetItem);
-  }
-
-  state.copied=Number(state.copied||0)+1;
-  state.lastError="";
-  state.updatedAt=Date.now();
-  state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
-  saveDb();
-  console.log("⚡ AUTO MIGRATION:",sourceId+"#"+messageId,"->",targetId+"#"+Number(copied.message_id));
-  return true;
-}
-
-async function repositoryAutoSyncBatch(batch){
-  const state=repositoryAutoSyncState();
-  if(!state.enabled||!Array.isArray(batch)||!batch.length)return true;
-
-  console.log("📦 AUTO SYNC 批次开始:",batch.length+" 条","source="+String(state.sourceId||""),"target="+String(state.targetId||""));
-
-  for(const job of batch){
-    const ok=await repositoryAutoSyncOne(job);
-    if(!ok){
-      // 当前消息失败时不删除它，也不动后面的任务，确保可以从断点继续。
-      return false;
+  // copyMessages 成功时返回目标消息 ID 数组。
+  // 正常情况下数量与输入一致；若 Telegram 跳过不可复制消息，
+  // 将当前组拆分后重试，以准确定位无效消息，同时尽量保持批量复制。
+  if(copiedIds.length!==messageIds.length){
+    if(messageIds.length>1){
+      const mid=Math.ceil(jobs.length/2);
+      console.warn("⚠️ AUTO SYNC 批量结果数量不一致:",copiedIds.length+"/"+messageIds.length,"拆分继续");
+      const leftOk=await repositoryAutoSyncBatch(jobs.slice(0,mid));
+      if(!leftOk)return false;
+      return await repositoryAutoSyncBatch(jobs.slice(mid));
     }
-
-    const messageId=Number(job?.messageId||0);
-    const index=state.queue.findIndex(x=>Number(x?.messageId||0)===messageId);
-    if(index>=0) state.queue.splice(index,1);
-
+    const badId=messageIds[0];
+    state.queue=state.queue.filter(x=>Number(x?.messageId||0)!==badId);
+    state.failed=Number(state.failed||0)+1;
+    state.lastMessageId=Math.max(Number(state.lastMessageId||0),badId);
     state.updatedAt=Date.now();
     saveDb();
+    console.warn("⏭️ AUTO SYNC 跳过 Telegram 未复制的消息:",sourceId+"#"+badId);
+    return true;
   }
 
-  console.log("✅ AUTO SYNC 批次完成:",batch.length+" 条","剩余="+state.queue.length);
+  for(let i=0;i<jobs.length;i++){
+    const messageId=jobs[i].messageId;
+    const copiedId=Number(copiedIds[i]?.message_id||0);
+    if(!copiedId)continue;
+
+    const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId)||null;
+    const directoryId=sourceItem?repositoryAutoSyncFolderId(sourceItem,targetId):null;
+    const targetItem={
+      ...(sourceItem||{}),
+      chatId:targetId,
+      messageId:copiedId,
+      directoryId:directoryId||sourceItem?.directoryId||null,
+      fileId:null,
+      baserowRowId:null,
+      title:String(sourceItem?.title||sourceItem?.name||("资源 "+messageId)),
+      migratedFrom:{chatId:sourceId,messageId,at:Date.now()}
+    };
+
+    if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId)){
+      db.resources.unshift(targetItem);
+      db.resources=db.resources.slice(0,MAX_RESOURCES);
+      queueBaserowResourceSync(targetItem);
+    }
+
+    const index=state.queue.findIndex(x=>Number(x?.messageId||0)===messageId);
+    if(index>=0)state.queue.splice(index,1);
+
+    state.copied=Number(state.copied||0)+1;
+    state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
+  }
+
+  state.lastError="";
+  state.updatedAt=Date.now();
+  state.status=state.queue.length?"queued":"running";
+  saveDb();
+
+  console.log("✅ AUTO SYNC 批量完成:",messageIds.length+" 条","剩余="+state.queue.length);
   return true;
 }
 
@@ -1916,9 +1944,7 @@ async function processRepositoryAutoSyncQueue(){
     if(!state.enabled)return;
 
     const batchSize=10;
-
     while(state.queue.length){
-      // 每次最多取10条；不足10条就按实际数量处理。
       const batch=state.queue.slice(0,batchSize);
       state.status="running";
       state.updatedAt=Date.now();
@@ -1927,12 +1953,7 @@ async function processRepositoryAutoSyncQueue(){
       const ok=await repositoryAutoSyncBatch(batch);
       if(!ok)break;
 
-      // 一组完成后再保存一次断点，不要求凑够10条才继续。
-      state.updatedAt=Date.now();
-      saveDb();
-
-      // 控制组与组之间的节奏，避免连续大量写入触发 Telegram 限流。
-      if(state.queue.length) await sleep(3000);
+      if(state.queue.length)await sleep(3000);
     }
 
     if(state.enabled){
