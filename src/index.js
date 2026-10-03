@@ -2030,18 +2030,10 @@ async function processRepositoryAutoSyncQueue(){
       // 普通消息逐条同步；Telegram 相册按原 media_group_id 整组同步，
       // 不再人为限制 10 条，保证一组有几个就完整复制几个。
       const first=state.queue[0];
-      const firstId=Number(first?.messageId||0);
-      const firstItem=db.resources.find(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)===firstId);
-      const groupId=String(firstItem?.mediaGroupId||"");
+      const groupId=String(first?.mediaGroupId||"");
       let batch;
       if(groupId){
-        const groupIds=new Set(
-          db.resources
-            .filter(x=>String(x.chatId)===String(state.sourceId)&&String(x.mediaGroupId||"")===groupId)
-            .map(x=>Number(x.messageId))
-            .filter(Number.isFinite)
-        );
-        batch=state.queue.filter(x=>groupIds.has(Number(x?.messageId||0)));
+        batch=state.queue.filter(x=>String(x?.mediaGroupId||"")===groupId).sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
       }else{
         batch=state.queue.slice(0,1);
       }
@@ -2104,7 +2096,7 @@ function queueRepositoryAutoSyncMessage(msg){
   const messageId=Number(msg.message_id);if(!messageId)return;
   const exists=state.queue.some(x=>Number(x.messageId)===messageId);
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
-  if(!exists&&!already)state.queue.push({messageId,queuedAt:Date.now()});
+  if(!exists&&!already)state.queue.push({messageId,mediaGroupId:String(msg.media_group_id||""),queuedAt:Date.now()});
   state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
   if(state.status!=="paused") state.status="queued";
   state.updatedAt=Date.now();
@@ -2143,7 +2135,7 @@ async function startRepositoryAutoSyncNow(uid){
     const messageId=Number(item.messageId);
     const already=db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
     if(already||pendingKeys.has(String(messageId)))continue;
-    state.queue.push({messageId,queuedAt:Date.now()});
+    state.queue.push({messageId,mediaGroupId:String(item?.mediaGroupId||""),queuedAt:Date.now()});
     pendingKeys.add(String(messageId));
     added++;
   }
