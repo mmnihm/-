@@ -1834,7 +1834,8 @@ function repositoryAutoSyncBatchAllowed(batch,state){
   // 相册永远整组处理：只要组内有一种媒体被关闭，就整组跳过，绝不拆相册。
   const groupIds=new Set(batch.map(x=>String(x?.mediaGroupId||"")).filter(Boolean));
   if(groupIds.size){
-    return batch.every(item=>repositoryAutoSyncItemAllowed(item,state));
+    // 相册是不可拆分的完整媒体组，由“图片/相册”开关统一控制。
+    return state.syncPhoto!==false;
   }
   return repositoryAutoSyncItemAllowed(batch[0],state);
 }
