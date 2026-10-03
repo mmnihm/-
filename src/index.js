@@ -1790,7 +1790,7 @@ let repositoryAutoSyncRunning = false;
 let repositoryAutoSyncQueue = Promise.resolve();
 const repositoryAutoSyncDebounceTimers=new Map();
 function repositoryAutoSyncState() {
-  const base={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:0};
+  const base={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",manualPaused:false,updatedAt:0};
   const current=db.settings.repositoryAutoSync;
   const state=current&&typeof current==="object"?current:{};
   db.settings.repositoryAutoSync={...base,...state};
