@@ -1998,7 +1998,7 @@ async function processRepositoryAutoSyncQueue(){
         state.status="running";
         state.updatedAt=Date.now();
         saveDb();
-        console.warn("⏭️ AUTO SYNC 防止队列卡死，跳过未消费消息:",sourceId+"#"+stuckId);
+        console.warn("⏭️ AUTO SYNC 防止队列卡死，跳过未消费消息:",String(state.sourceId||"")+"#"+stuckId);
       }
 
       if(state.queue.length)await sleep(300);
