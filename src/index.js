@@ -2824,18 +2824,21 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
     saveDb();
   }
   // 上传过程中不频繁落盘，避免每个文件都阻塞主机器人。
-  // 点击「结束上传」后 finalizeUpload 会统一保存入库结果。
-  if(pending.length===1) {
-    const statusText="📤 <b>正在接收上传</b>\n━━━━━━━━━━━━━━\n\n📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n\n📥 已收到：<b>1</b> 个资源\n\n📌 后续文件不会逐条回复，全部发送完成后点击「✅ 结束上传」。";
-    const statusMarkup={inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]};
-    // 无论控制消息 ID 是否存在，第一次收到文件都必须产生可见反馈。
-    // 有原控制消息则编辑；没有则新发一条状态消息，避免“文件发过去完全没反应”。
-    if(Number(state.controlMessageId)>0) {
-      void safeEdit(token,{chat_id:uid,message_id:Number(state.controlMessageId),text:statusText,parse_mode:"HTML",reply_markup:statusMarkup}).catch(e=>console.warn("⚠️ 上传状态编辑失败:",String(e?.message||e)));
-    } else {
-      void sendHtml(token,uid,statusText,{reply_markup:statusMarkup}).catch(e=>console.warn("⚠️ 上传首次反馈失败:",String(e?.message||e)));
-    }
-  }
+  // 每收到一个文件，都立即发送一次上传控制提示。
+  // 不再只在第一个文件后提示，也不编辑上一条提示，确保管理员能在每个文件下看到
+  // “继续上传 / 结束上传”两个明确操作。
+  const statusText="📤 <b>文件已收到</b>\n━━━━━━━━━━━━━━\n\n"+
+    "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
+    "📥 本批已收到：<b>"+pending.length+"</b> 个资源\n\n"+
+    "还要继续上传，还是现在结束上传？";
+  const statusMarkup={inline_keyboard:[
+    [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
+    [{text:"❌ 取消上传",callback_data:"upload_cancel"}]
+  ]};
+  void sendHtml(token,uid,statusText,{reply_markup:statusMarkup}).catch(e=>
+    console.warn("⚠️ 上传文件反馈发送失败:",String(e?.message||e))
+  );
+
   console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
     uid:String(uid),
