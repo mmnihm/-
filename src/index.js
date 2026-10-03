@@ -2550,7 +2550,8 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
     directoryName,
     pendingUploads:pending
   });
-  saveDb();
+  // 上传过程中不频繁落盘，避免每个文件都阻塞主机器人。
+  // 点击「结束上传」后 finalizeUpload 会统一保存入库结果。
   console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
     uid:String(uid),
@@ -3857,8 +3858,12 @@ async function backupRecoveryMerge(uid) {
 }
 
 async function mainMessage(msg) {
-  // 共享数据刷新放到后台，绝不能阻塞 Telegram 菜单响应；后台每 5 秒也会自动同步。
-  refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
+  // 上传中的文件只进入当前批次，不要为每个文件触发跨机器人 Baserow 刷新。
+  const preUploadState=msg?.chat?.type==="private" ? states.get("m:"+String(msg.from?.id||"")) : null;
+  if(!(preUploadState?.step==="upload_file" || preUploadState?.step==="upload_folder")) {
+    // 共享数据刷新放到后台，绝不能阻塞 Telegram 菜单和普通消息响应。
+    refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
+  }
   // Telegram 消息处理不能等待 Baserow；共享数据在后台同步。
   if(await binding(msg)) return;
   if(msg.chat?.type!=="private") { indexResource(msg); queueRepositoryAutoSyncMessage(msg); return; }
@@ -5204,6 +5209,11 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:backup") return backupRecoveryPreview(uid);
     if(data==="admin:backup_restore") return backupRecoveryMerge(uid);
       if(data==="admin:upload"){
+      // 先清理可能残留的旧上传状态，避免上一次未结束的批次拦截新上传。
+      const oldUploadKey=uploadStateKey(uid,child,token);
+      if(uploadTimers.has(oldUploadKey)) { clearTimeout(uploadTimers.get(oldUploadKey)); uploadTimers.delete(oldUploadKey); }
+      if(uploadAckTimers.has(oldUploadKey)) { clearTimeout(uploadAckTimers.get(oldUploadKey)); uploadAckTimers.delete(oldUploadKey); }
+      states.delete(oldUploadKey);
       if(!repo()){
         void answer("尚未绑定资源仓库",true);
         return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 尚未绑定资源仓库</b>\n\n请先绑定资源仓库。",parse_mode:"HTML",reply_markup:adminResourceInline()});
