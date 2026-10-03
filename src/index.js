@@ -1886,17 +1886,15 @@ async function repositoryAutoSyncBatch(batch){
     return true;
   }
   const messageIds=[...new Set(jobs.map(x=>x.messageId))].sort((a,b)=>a-b);
-  console.log("📦 AUTO SYNC 批量复制:",messageIds.length+" 条",sourceId+" -> "+targetId,messageIds.join(","));
+  const groupIds=[...new Set(sourceItems.map(x=>String(x?.mediaGroupId||"")).filter(Boolean))];
+  console.log("📦 AUTO SYNC 批量复制:",messageIds.length+" 条"+(groupIds.length?"（相册组 "+groupIds.length+"）":""),sourceId+" -> "+targetId,messageIds.join(","));
 
   let copiedIds=null,lastError=null;
   for(let attempt=1;attempt<=3;attempt++){
     try{
-      const hasMediaGroup=jobs.some(job=>{
-        const item=db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(job.messageId));
-        return Boolean(item?.mediaGroupId);
-      });
-      const syncMethod=hasMediaGroup ? "forwardMessages" : "copyMessages";
-      copiedIds=await main(syncMethod,{
+      // copyMessages 本身会保留 Telegram 原生相册分组；只要同一相册的全部 message_id
+      // 一起提交，就不会在目标仓库拆成单条。
+      copiedIds=await main("copyMessages",{
         chat_id:targetId,
         from_chat_id:sourceId,
         message_ids:messageIds,
@@ -2132,6 +2130,55 @@ function queueRepositoryAutoSyncMessage(msg){
     }
   },2500));
 }
+async function hydrateRepositoryAutoSyncMediaGroups(uid,sourceId){
+  const sid=String(sourceId||"");
+  if(!sid) return 0;
+  let client=historyClient;
+  if(!client){
+    const auth=db.settings.historyAuth||{};
+    const hasCredentials=Boolean(auth.apiId||TG_API_ID)&&Boolean(auth.apiHash||TG_API_HASH)&&Boolean(auth.session||process.env.TG_SESSION);
+    if(!hasCredentials) return 0;
+    try{ client=await ensureHistoryClient(Number(uid||0)); }catch(e){
+      console.warn("⚠️ AUTO SYNC 相册信息补全失败：",String(e?.message||e));
+      return 0;
+    }
+  }
+  try{
+    const entity=await client.getEntity(sid);
+    const items=db.resources
+      .filter(x=>String(x?.chatId||"")===sid&&Number(x?.messageId||0)>0)
+      .sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+    const missing=items.filter(x=>!String(x?.mediaGroupId||""));
+    if(!missing.length) return 0;
+    let updated=0;
+    for(let offset=0;offset<missing.length;offset+=100){
+      const ids=missing.slice(offset,offset+100).map(x=>Number(x.messageId)).filter(Number.isFinite);
+      if(!ids.length) continue;
+      let found=await client.getMessages(entity,{ids});
+      if(!Array.isArray(found)) found=[found];
+      for(const message of found){
+        const id=Number(message?.id||0);
+        const groupedId=message?.groupedId!=null ? String(message.groupedId) : String(message?.mediaGroupId||"");
+        if(!id||!groupedId) continue;
+        const item=db.resources.find(x=>String(x?.chatId||"")===sid&&Number(x?.messageId||0)===id);
+        if(item && String(item.mediaGroupId||"")!==groupedId){
+          item.mediaGroupId=groupedId;
+          updated++;
+        }
+      }
+      if(ids.length) await sleep(30);
+    }
+    if(updated){
+      saveDb();
+      console.log("🖼️ AUTO SYNC 相册分组信息已补全：",updated,"条");
+    }
+    return updated;
+  }catch(e){
+    console.warn("⚠️ AUTO SYNC 获取旧仓库相册分组失败：",String(e?.message||e));
+    return 0;
+  }
+}
+
 async function startRepositoryAutoSyncNow(uid){
   const state=repositoryAutoSyncState();
   if(!state.sourceId||!state.targetId)throw new Error("请先绑定旧仓库和新仓库");
@@ -2145,6 +2192,13 @@ async function startRepositoryAutoSyncNow(uid){
   // 启动时先把旧仓库已有的资源加入队列，避免出现“显示正在同步但一直不转发”。
   // 后续 channel_post 会继续通过 queueRepositoryAutoSyncMessage() 自动加入新消息。
   const sourceId=String(state.sourceId),targetId=String(state.targetId);
+  // 旧版本数据库中的资源可能没有保存 mediaGroupId；启动同步前从 MTProto 补全，
+  // 否则同一相册会被错误当成多条单独消息。
+  await hydrateRepositoryAutoSyncMediaGroups(uid,sourceId);
+  for(const queued of state.queue){
+    const saved=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===Number(queued?.messageId));
+    if(saved?.mediaGroupId) queued.mediaGroupId=String(saved.mediaGroupId);
+  }
   const existing=db.resources
     .filter(x=>String(x.chatId)===sourceId&&Number(x.messageId)>0)
     .sort((a,b)=>Number(a.messageId)-Number(b.messageId));
@@ -6544,6 +6598,12 @@ async function boot(){
       await ensureStartCommand(TOKEN);
       const autoSyncState=repositoryAutoSyncState();
       if(autoSyncState.enabled && autoSyncState.sourceId && autoSyncState.targetId){
+        await hydrateRepositoryAutoSyncMediaGroups(autoSyncState.ownerId||0,autoSyncState.sourceId);
+        for(const queued of autoSyncState.queue){
+          const saved=db.resources.find(x=>String(x.chatId)===String(autoSyncState.sourceId)&&Number(x.messageId)===Number(queued?.messageId));
+          if(saved?.mediaGroupId) queued.mediaGroupId=String(saved.mediaGroupId);
+        }
+        saveDb();
         const accessOk=await checkRepositoryAutoSyncAccess();
         if(accessOk && !autoSyncState.manualPaused){
           autoSyncState.status=autoSyncState.queue.length?"queued":"running";
