@@ -2552,6 +2552,9 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
   });
   // 上传过程中不频繁落盘，避免每个文件都阻塞主机器人。
   // 点击「结束上传」后 finalizeUpload 会统一保存入库结果。
+  if(pending.length===1 && Number(state.controlMessageId)>0) {
+    void safeEdit(token,{chat_id:uid,message_id:Number(state.controlMessageId),text:"📤 <b>正在接收上传</b>\n━━━━━━━━━━━━━━\n\n📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n\n📥 已收到：<b>1</b> 个资源\n\n📌 后续文件不会逐条回复，全部发送完成后点击「✅ 结束上传」。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}}).catch(e=>console.warn("⚠️ 上传状态更新失败:",String(e?.message||e)));
+  }
   console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
     uid:String(uid),
@@ -4797,7 +4800,7 @@ async function mainMessage(msg) {
     },UPLOAD_TIMEOUT_MS));
 
     const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
-    states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending});
+    states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending,controlMessageId:Number(s?.controlMessageId||0)});
     console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+existing.name, "id="+existing.id, "first="+(media?"yes":"no"), "pending="+firstPending.length);
     if(media) {
       return;
@@ -5221,7 +5224,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const key=uploadStateKey(uid,child,token);
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-      states.set(key,{step:"upload_folder",pendingUploads:[]});
+      states.set(key,{step:"upload_folder",pendingUploads:[],controlMessageId:Number(messageId)});
       void answer("已进入上传模式");
       return safeEdit(token,{
         chat_id:chatId,
@@ -5694,7 +5697,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
     if(!d){void answer("文件夹不存在",true);return;}
     const uploadKey=uploadStateKey(uid,child,token);
-    states.set(uploadKey,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    states.set(uploadKey,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[],controlMessageId:Number(messageId)});
     void answer("已进入上传");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"📁 <b>"+escapeHtml(d.name)+"</b>\\n\\n📤 <b>继续发送文件</b>\\n收到的文件会自动归入此文件夹。\\n\\n完成后点击「✅ 结束上传」。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}});
   }
