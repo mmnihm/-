@@ -5452,7 +5452,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data.startsWith("user:")) {
     const action=data.slice("user:".length);
     if(action==="search") {
-      const key=(child ? "c:" : "m:")+uid;
+      const key=child ? uploadStateKey(uid,true,token) : "m:"+uid;
       states.set(key,{step:"search"});
       await answer("请输入搜索关键词");
       return safeEdit(token,{
