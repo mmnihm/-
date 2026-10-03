@@ -3332,14 +3332,26 @@ function directoryInlineKeyboard(page=0) {
 }
 function folderSummaryKeyboard(directoryId,count,offset=0) {
   const rows=[];
-  if(offset<count) rows.push([{text:offset===0?"📦 获取全部资源":"➡️ 继续获取10个",callback_data:"get:"+directoryId+":"+offset}]);
+  if(offset<count) {
+    rows.push([{
+      text:offset===0?"📦 获取全部资源":"📦 获取剩余资源",
+      callback_data:"get:"+directoryId+":"+offset
+    }]);
+  }
   if(offset>0) rows.push([{text:"⬅️ 返回资源目录",callback_data:"dirs"}]);
   return {inline_keyboard:rows};
 }
 function folderProgressKeyboard(directoryId,count,nextOffset) {
   const rows=[];
-  if(nextOffset<count) rows.push([{text:"➡️ 继续获取10个",callback_data:"get:"+directoryId+":"+nextOffset}]);
-  else rows.push([{text:"✅ 已全部获取",callback_data:"done"}]);
+  if(nextOffset<count) {
+    const remaining=count-nextOffset;
+    rows.push([{
+      text:"📦 获取剩余资源（"+remaining+"个）",
+      callback_data:"get:"+directoryId+":"+nextOffset
+    }]);
+  } else {
+    rows.push([{text:"✅ 已全部获取",callback_data:"done"}]);
+  }
   rows.push([{text:"⬅️ 返回资源目录",callback_data:"dirs"}]);
   return {inline_keyboard:rows};
 }
