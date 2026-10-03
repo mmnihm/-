@@ -5713,7 +5713,8 @@ async function handleDirectoryCallback(token, q, child=false) {
           ).catch(()=>{});
         }
       },UPLOAD_TIMEOUT_MS));
-      void sendHtml(token,uid,"📤 <b>上传控制</b>\n\n可继续发送文件；底部固定按钮可直接结束上传。",uploadBottomKeyboard()).catch(()=>{});\n      void answer("可以继续上传");
+      void sendHtml(token,uid,"📤 <b>上传控制</b>\n\n可继续发送文件；底部固定按钮可直接结束上传。",uploadBottomKeyboard()).catch(()=>{});
+      void answer("可以继续上传");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -5727,7 +5728,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
     if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-    void sendHtml(token,uid,"🔄 <b>正在结束上传</b>\n\n正在统一转存本批资源，请稍候……",{reply_markup:{remove_keyboard:true}}).catch(()=>{});\n    void answer("已结束，正在后台转存");
+    void sendHtml(token,uid,"🔄 <b>正在结束上传</b>\n\n正在统一转存本批资源，请稍候……",{reply_markup:{remove_keyboard:true}}).catch(()=>{});
+    void answer("已结束，正在后台转存");
     void finalizeUpload(uid,s,token,key,child ? childAdminMenu() : adminMenu()).catch(e=>{
       console.error("❌ UPLOAD FINALIZE BACKGROUND:",e?.message||e);
     });
