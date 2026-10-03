@@ -1832,7 +1832,7 @@ function repositoryAutoSyncContentText(state){
     "🖼️ 图片/相册：<b>"+on(state.syncPhoto)+"</b>\n"+
     "🎬 视频：<b>"+on(state.syncVideo)+"</b>\n"+
     "📦 文件/音频：<b>"+on(state.syncFiles)+"</b>\n\n"+
-    "📌 <i>相册始终整组复制，不会拆开。若相册内有关闭的媒体类型，则整组跳过。</i>";
+    "📌 <i>复制严格按旧仓库 message_id 顺序提交；Telegram 原生相册会保持原相册分组。</i>";
 }
 function repositoryAutoSyncContentMenu(){
   const state=repositoryAutoSyncState();
@@ -2029,35 +2029,33 @@ async function processRepositoryAutoSyncQueue(){
     if(!state.enabled)return;
 
     while(state.queue.length){
+      // 永远以旧仓库 message_id 为唯一顺序依据。
+      // Telegram 的 copyMessages 会保留原生相册分组，所以不需要为了“相册”把消息拆成单条。
+      state.queue=state.queue
+        .filter(x=>Number(x?.messageId||0)>0)
+        .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
+
       const first=state.queue[0];
-      const firstGroupId=String(first?.mediaGroupId||"");
+      if(!first)break;
+
       let batch=[];
+      const firstGroupId=String(first?.mediaGroupId||"");
 
       if(firstGroupId){
-        // Telegram 原生相册：必须整组复制，绝不拆开。
+        // 已知相册：整组一次提交，绝不拆组。
         batch=state.queue
           .filter(x=>String(x?.mediaGroupId||"")===firstGroupId)
           .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
-      }else if(first?.historical || !Object.prototype.hasOwnProperty.call(first,"historical")){
-        // 旧版本队列没有 historical 标记时也按旧仓库队列恢复。
-        // 连续历史消息一次最多 100 条；有 mediaGroupId 的相册优先整组处理。
-        batch=[];
-        for(const item of state.queue){
-          if(!item || item?.historical===false || String(item?.mediaGroupId||"")) break;
-          batch.push(item);
-          if(batch.length>=100) break;
-        }
-        if(!batch.length)batch=[first];
       }else{
-        // 实时队列也禁止逐条复制：在没有相册组标记时，按到达顺序合并，
-        // 一次最多 100 条交给 Telegram。这样日志不再长期显示“批量完成 1 条”。
-        batch=[];
+        // 普通消息按旧仓库原始 message_id 顺序连续取。
+        // 最多 100 条只是 Telegram API 单次请求上限，不代表改变仓库排序。
+        // 如果下一项已经明确属于相册，则先结束当前普通批次，让相册下一轮完整复制。
         for(const item of state.queue){
-          if(!item || String(item?.mediaGroupId||"")) break;
+          if(!item || Number(item?.messageId||0)<=0)continue;
+          if(String(item?.mediaGroupId||""))break;
           batch.push(item);
-          if(batch.length>=100) break;
+          if(batch.length>=100)break;
         }
-        if(!batch.length) batch=[first];
       }
 
       if(!batch.length)batch=[first];
@@ -2067,6 +2065,9 @@ async function processRepositoryAutoSyncQueue(){
       saveDb();
 
       const beforeQueueLength=state.queue.length;
+      const messageOrder=batch.map(x=>Number(x.messageId)).filter(Number.isFinite).sort((a,b)=>a-b);
+      console.log("📦 AUTO SYNC 按旧仓库顺序复制:",messageOrder.length+" 条",String(state.sourceId)+" -> "+String(state.targetId),messageOrder.join(","));
+
       const ok=await repositoryAutoSyncBatch(batch);
       if(!ok)break;
 
@@ -2085,7 +2086,7 @@ async function processRepositoryAutoSyncQueue(){
     }
 
     if(state.enabled){
-      state.status=state.queue.length?"paused":"running";
+      state.status=state.queue.length?"queued":"running";
       state.updatedAt=Date.now();
       saveDb();
     }
