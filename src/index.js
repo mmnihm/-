@@ -5095,6 +5095,33 @@ async function handleDirectoryCallback(token, q, child=false) {
       console.warn("⚠️ callback确认失败（继续处理按钮）:", String(e?.telegramDescription || e?.message || e));
     }
   };
+  // 上传结束必须最高优先级处理：先立即给按钮一个可见结果，再后台转存，避免任何共享同步/菜单逻辑拦截。
+  if(isAdmin(uid) && data==="upload_finish") {
+    const finishKey=uploadStateKey(uid,child,token);
+    const finishState=states.get(finishKey);
+    if(!finishState || finishState.step!=="upload_file") {
+      await answer("当前没有进行中的上传",true);
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"⚠️ <b>当前没有进行中的上传</b>\n\n请重新点击「📤 上传资源」开始。",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+    }
+    if(uploadTimers.has(finishKey)){clearTimeout(uploadTimers.get(finishKey));uploadTimers.delete(finishKey);}
+    if(uploadAckTimers.has(finishKey)){clearTimeout(uploadAckTimers.get(finishKey));uploadAckTimers.delete(finishKey);}
+    const count=Array.isArray(finishState.pendingUploads)?finishState.pendingUploads.length:0;
+    await answer(count?"已结束，正在整理资源":"当前批次没有文件",false);
+    // 先编辑当前按钮消息，确保用户立即看到响应。
+    await safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"⏳ <b>已结束上传</b>\n━━━━━━━━━━━━━━\n\n📁 文件夹：<b>"+escapeHtml(finishState.directoryName||"未命名")+"</b>\n📥 本批收到：<b>"+count+"</b> 个\n\n📦 正在后台转存资源，请稍候……",
+      parse_mode:"HTML",reply_markup:{inline_keyboard:[]}});
+    if(!count){
+      states.delete(finishKey);
+      return;
+    }
+    void finalizeUpload(uid,finishState,token,finishKey,child?childAdminMenu():adminMenu()).catch(e=>{
+      console.error("❌ UPLOAD FINALIZE BACKGROUND:",String(e?.message||e));
+      sendHtml(token,uid,"❌ <b>上传整理失败</b>\n\n<code>"+escapeHtml(String(e?.message||e))+"</code>",child?childAdminMenu():adminMenu()).catch(()=>{});
+    });
+    return;
+  }
+
   void answer();
   // 按钮回调绝不能等待 Baserow：确认请求后台发送，业务逻辑立即继续。
   void refreshSharedData(false);
