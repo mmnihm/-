@@ -2544,16 +2544,39 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
     }
   },UPLOAD_TIMEOUT_MS));
 
-  states.set(key,{
+  const nextUploadState={
     step:"upload_file",
     directoryId:String(directoryId),
     directoryName,
-    pendingUploads:pending
-  });
+    pendingUploads:pending,
+    controlMessageId:Number(state.controlMessageId||0)
+  };
+  states.set(key,nextUploadState);
+  // 保存上传会话元数据，部署重启后也能继续接收并在结束时转存。
+  if(db.settings && typeof db.settings==="object"){
+    if(!db.settings.uploadSessions || typeof db.settings.uploadSessions!=="object") db.settings.uploadSessions={};
+    db.settings.uploadSessions[String(key)]={
+      step:"upload_file",
+      directoryId:String(directoryId),
+      directoryName,
+      pendingMessageIds:pending.map(x=>Number(x.messageId)).filter(Number.isFinite),
+      controlMessageId:Number(state.controlMessageId||0),
+      updatedAt:Date.now()
+    };
+    saveDb();
+  }
   // 上传过程中不频繁落盘，避免每个文件都阻塞主机器人。
   // 点击「结束上传」后 finalizeUpload 会统一保存入库结果。
-  if(pending.length===1 && Number(state.controlMessageId)>0) {
-    void safeEdit(token,{chat_id:uid,message_id:Number(state.controlMessageId),text:"📤 <b>正在接收上传</b>\n━━━━━━━━━━━━━━\n\n📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n\n📥 已收到：<b>1</b> 个资源\n\n📌 后续文件不会逐条回复，全部发送完成后点击「✅ 结束上传」。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}}).catch(e=>console.warn("⚠️ 上传状态更新失败:",String(e?.message||e)));
+  if(pending.length===1) {
+    const statusText="📤 <b>正在接收上传</b>\n━━━━━━━━━━━━━━\n\n📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n\n📥 已收到：<b>1</b> 个资源\n\n📌 后续文件不会逐条回复，全部发送完成后点击「✅ 结束上传」。";
+    const statusMarkup={inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]};
+    // 无论控制消息 ID 是否存在，第一次收到文件都必须产生可见反馈。
+    // 有原控制消息则编辑；没有则新发一条状态消息，避免“文件发过去完全没反应”。
+    if(Number(state.controlMessageId)>0) {
+      void safeEdit(token,{chat_id:uid,message_id:Number(state.controlMessageId),text:statusText,parse_mode:"HTML",reply_markup:statusMarkup}).catch(e=>console.warn("⚠️ 上传状态编辑失败:",String(e?.message||e)));
+    } else {
+      void sendHtml(token,uid,statusText,{reply_markup:statusMarkup}).catch(e=>console.warn("⚠️ 上传首次反馈失败:",String(e?.message||e)));
+    }
   }
   console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
@@ -3878,7 +3901,22 @@ async function mainMessage(msg) {
   const admin=isAdmin(uid);
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
-  const s=states.get(key);
+  let s=states.get(key);
+  // 主机器人重启后恢复未完成的上传会话，避免文件消息因内存状态丢失而被静默忽略。
+  if(!s && db.settings?.uploadSessions?.[key]){
+    const saved=db.settings.uploadSessions[key];
+    if(saved.step==="upload_file"){
+      s={
+        step:"upload_file",
+        directoryId:String(saved.directoryId||""),
+        directoryName:String(saved.directoryName||""),
+        pendingUploads:(Array.isArray(saved.pendingMessageIds)?saved.pendingMessageIds:[]).map(id=>({messageId:Number(id)})).filter(x=>Number.isFinite(x.messageId)),
+        controlMessageId:Number(saved.controlMessageId||0)
+      };
+      states.set(key,s);
+      console.log("♻️ UPLOAD SESSION RESTORED:",{uid:String(uid),pending:s.pendingUploads.length,folder:s.directoryName});
+    }
+  }
 
   // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
   if(admin && (s?.step==="upload_file" || s?.step==="upload_folder")) {
