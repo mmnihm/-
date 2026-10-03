@@ -1869,9 +1869,7 @@ async function repositoryAutoSyncBatch(batch){
 
   if(!jobs.length)return true;
 
-  // Telegram Bot API copyMessages：真正一次复制一组消息。
-  // 普通消息逐条复制；相册按 media_group_id 整组复制，不人为拆成 10 条。
-  const sourceItems=jobs.map(x=>db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(x.messageId))).filter(Boolean);
+  // Telegram Bot API 批量转发/复制：原生相册必须整组进入同一次请求。\n  // 有 media_group_id 时绝不拆组；普通历史消息才按连续队列批量处理。\n  const sourceItems=jobs.map(x=>db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(x.messageId))).filter(Boolean);
   if(!repositoryAutoSyncBatchAllowed(sourceItems,state)){
     for(const job of jobs){
       const idx=state.queue.findIndex(x=>Number(x?.messageId||0)===Number(job.messageId));
@@ -1891,7 +1889,12 @@ async function repositoryAutoSyncBatch(batch){
   let copiedIds=null,lastError=null;
   for(let attempt=1;attempt<=3;attempt++){
     try{
-      copiedIds=await main("copyMessages",{
+      const hasMediaGroup=jobs.some(job=>{
+        const item=db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(job.messageId));
+        return Boolean(item?.mediaGroupId);
+      });
+      const syncMethod=hasMediaGroup ? "forwardMessages" : "copyMessages";
+      copiedIds=await main(syncMethod,{
         chat_id:targetId,
         from_chat_id:sourceId,
         message_ids:messageIds,
@@ -5363,7 +5366,19 @@ async function handleDirectoryCallback(token, q, child=false) {
       console.warn("⚠️ callback确认失败（继续处理按钮）:", String(e?.telegramDescription || e?.message || e));
     }
   };
-  // 用户首页内联按钮：统一处理资源目录、搜索、随机、最新，避免 user:* 回调落空。\n  if(data.startsWith("user:")) {\n    const action=data.slice("user:".length);\n    if(action==="search") {\n      const key=(child ? "c:" : "m:")+uid;\n      states.set(key,{step:"search"});\n      await answer("请输入搜索关键词");\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔎 搜索资源</b>\\n\\n请输入关键词，例如：作者名、标题或关键词。\\n\\n💡 支持模糊搜索，最多返回 10 条。\\n↩️ 发送 <code>/cancel</code> 可退出搜索。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消搜索",callback_data:"src"}],[{text:"🏠 返回首页",callback_data:"user:home"}]]}});\n    }\n    if(action==="dirs") {\n      const key=(child ? "c:" : "m:")+uid;\n      states.delete(key);\n      await answer("已打开资源目录");\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});\n    }\n    if(action==="random") {\n      await answer("正在随机获取");\n      return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});\n    }\n    if(action==="latest") {\n      await answer("正在获取最新资源");\n      return deliver(token,uid,uid,db.resources.slice(0,10),token,{mode:"latest",offset:0,total:db.resources.length});\n    }\n    if(action==="home") {\n      const key=(child ? "c:" : "m:")+uid;\n      states.delete(key);\n      await answer("已返回首页");\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏠 资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👇 <i>请选择你要使用的功能</i>",parse_mode:"HTML",reply_markup:userHomeInlineKeyboard()});\n    }\n    if(action==="clone") {\n      await answer("该功能暂未开放");\n      return;\n    }\n  }\n\n  // 上传结束必须最高优先级处理：先立即给按钮一个可见结果，再后台转存，避免任何共享同步/菜单逻辑拦截。
+  // 用户首页内联按钮：统一处理资源目录、搜索、随机、最新，避免 user:* 回调落空。\n  if(data.startsWith("user:")) {\n    const action=data.slice("user:".length);\n    if(action==="search") {
+      const key=(child ? "c:" : "m:")+uid;
+      states.set(key,{step:"search"});
+      await answer("请输入搜索关键词");
+      const searchPrompt="<b>🔎 搜索资源</b>\\n\\n请输入关键词，例如：作者名、标题或关键词。\\n\\n💡 支持模糊搜索，最多返回 10 条。\\n↩️ 发送 <code>/cancel</code> 可退出搜索。";
+      try {
+        return await safeEdit(token,{chat_id:chatId,message_id:messageId,text:searchPrompt,parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消搜索",callback_data:"src"}],[{text:"🏠 返回首页",callback_data:"user:home"}]]}});
+      } catch(e) {
+        console.warn("⚠️ USER SEARCH BUTTON FALLBACK:",String(e?.telegramDescription||e?.message||e));
+        return sendHtml(token,chatId,searchPrompt,{reply_markup:{inline_keyboard:[[{text:"❌ 取消搜索",callback_data:"src"}],[{text:"🏠 返回首页",callback_data:"user:home"}]]}});
+      }
+    }
+    if(action==="dirs") {\n      const key=(child ? "c:" : "m:")+uid;\n      states.delete(key);\n      await answer("已打开资源目录");\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});\n    }\n    if(action==="random") {\n      await answer("正在随机获取");\n      return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});\n    }\n    if(action==="latest") {\n      await answer("正在获取最新资源");\n      return deliver(token,uid,uid,db.resources.slice(0,10),token,{mode:"latest",offset:0,total:db.resources.length});\n    }\n    if(action==="home") {\n      const key=(child ? "c:" : "m:")+uid;\n      states.delete(key);\n      await answer("已返回首页");\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏠 资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👇 <i>请选择你要使用的功能</i>",parse_mode:"HTML",reply_markup:userHomeInlineKeyboard()});\n    }\n    if(action==="clone") {\n      await answer("该功能暂未开放");\n      return;\n    }\n  }\n\n  // 上传结束必须最高优先级处理：先立即给按钮一个可见结果，再后台转存，避免任何共享同步/菜单逻辑拦截。
   if(isAdmin(uid) && data==="upload_finish") {
     const finishKey=uploadStateKey(uid,child,token);
     const finishState=states.get(finishKey);
