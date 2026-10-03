@@ -1830,12 +1830,24 @@ async function repositoryAutoSyncOne(job){
   }
 
   if(!copied?.message_id){
-    state.lastError=String(lastError?.telegramDescription||lastError?.message||lastError||"复制失败");
+    const errorText=String(lastError?.telegramDescription||lastError?.message||lastError||"复制失败");
+    state.lastError=errorText;
     state.failed=Number(state.failed||0)+1;
-    state.status="paused";
     state.updatedAt=Date.now();
+
+    // Telegram 对已经失效/不可复制的媒体会返回 MEDIA_FILE_INVALID。
+    // 这类消息继续重试没有意义，不能让整个自动同步任务停在这一条。
+    if(/MEDIA_FILE_INVALID|media file is invalid/i.test(errorText)){
+      state.status="running";
+      saveDb();
+      console.warn("⏭️ AUTO SYNC 跳过无效媒体，继续下一条:",sourceId+"#"+messageId,errorText);
+      return true;
+    }
+
+    // 其他错误仍然保留断点并暂停，避免真正的权限/仓库/网络问题被静默跳过。
+    state.status="paused";
     saveDb();
-    console.error("⏸️ AUTO SYNC 已暂停，保留断点:",sourceId+"#"+messageId,state.lastError);
+    console.error("⏸️ AUTO SYNC 已暂停，保留断点:",sourceId+"#"+messageId,errorText);
     return false;
   }
 
