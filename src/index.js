@@ -1831,13 +1831,11 @@ function repositoryAutoSyncItemAllowed(item,state){
 }
 function repositoryAutoSyncBatchAllowed(batch,state){
   if(!Array.isArray(batch)||!batch.length)return false;
-  // 相册永远整组处理：只要组内有一种媒体被关闭，就整组跳过，绝不拆相册。
+  // 相册永远整组处理，由“图片/相册”开关统一控制。
   const groupIds=new Set(batch.map(x=>String(x?.mediaGroupId||"")).filter(Boolean));
-  if(groupIds.size){
-    // 相册是不可拆分的完整媒体组，由“图片/相册”开关统一控制。
-    return state.syncPhoto!==false;
-  }
-  return repositoryAutoSyncItemAllowed(batch[0],state);
+  if(groupIds.size) return state.syncPhoto!==false;
+  // 历史消息按原仓库顺序批量复制；整批内容类型都允许时才一次复制。
+  return batch.every(item=>repositoryAutoSyncItemAllowed(item,state));
 }
 function repositoryAutoSyncContentText(state){
   const on=v=>v!==false?"✅":"❌";
@@ -2038,14 +2036,14 @@ async function processRepositoryAutoSyncQueue(){
           .filter(x=>String(x?.mediaGroupId||"")===firstGroupId)
           .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
       }else if(first?.historical){
-        // 历史仓库：连续的普通消息一次交给 copyMessages，最多 100 条。
-        // 这样不会一个文件一个请求；Telegram 会继续保留原有 media_group 分组。
-        const firstType=String(first?.syncType||"file");
-        batch=state.queue.slice(0,100).filter(x=>
-          x?.historical &&
-          !String(x?.mediaGroupId||"") &&
-          String(x?.syncType||"file")===firstType
-        );
+        // 历史仓库严格按旧仓库消息顺序取连续队列，最多 100 条一次交给 copyMessages。
+        // 不再按文件类型把消息拆开；Telegram 原生相册仍由 mediaGroupId 整组处理。
+        batch=[];
+        for(const item of state.queue){
+          if(!item?.historical || String(item?.mediaGroupId||"")) break;
+          batch.push(item);
+          if(batch.length>=100) break;
+        }
         if(!batch.length)batch=[first];
       }else{
         // 实时单条消息仍保持实时到达顺序。
@@ -5437,10 +5435,16 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
   if(data==="user:search") {
     states.set("m:"+uid,{step:"search"});
-    return safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n💡 支持模糊搜索，最多返回 10 条。\n↩️ 发送 <code>/cancel</code> 可退出搜索。",
-      parse_mode:"HTML",
-      reply_markup:{inline_keyboard:[[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
+    await answer("请输入搜索关键词");
+    try {
+      return await safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n💡 支持模糊搜索，最多返回 10 条。\n↩️ 发送 <code>/cancel</code> 可退出搜索。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
+    } catch(e) {
+      console.warn("⚠️ 搜索页面刷新失败:",String(e?.telegramDescription||e?.message||e));
+      return sendHtml(token,uid,"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可退出搜索。",{reply_markup:{inline_keyboard:[[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
+    }
   }
   if(data==="support:start") {
     supportOpenSession(token,uid);
