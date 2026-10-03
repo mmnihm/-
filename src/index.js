@@ -1969,7 +1969,20 @@ async function processRepositoryAutoSyncQueue(){
     state.status="paused";
     state.updatedAt=Date.now();
     saveDb();
-    console.error("⏸️ 自动同步异常，已暂停并保留断点:",state.lastError);
+    console.warn("⚠️ 自动同步异常，保留断点并准备自动恢复:",state.lastError);
+    if(state.enabled && !state.manualPaused && state.sourceId && state.targetId){
+      if(repositoryAutoSyncRecoveryTimer) clearTimeout(repositoryAutoSyncRecoveryTimer);
+      repositoryAutoSyncRecoveryTimer=setTimeout(()=>{
+        repositoryAutoSyncRecoveryTimer=null;
+        const current=repositoryAutoSyncState();
+        if(current.enabled && !current.manualPaused && current.sourceId && current.targetId){
+          current.status="queued";
+          current.updatedAt=Date.now();
+          saveDb();
+          processRepositoryAutoSyncQueue().catch(err=>console.error("❌ AUTO SYNC AUTO-RECOVERY:",String(err?.message||err)));
+        }
+      },5000);
+    }
   }).finally(()=>{repositoryAutoSyncRunning=false;});
 
   return repositoryAutoSyncQueue;
