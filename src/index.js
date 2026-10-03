@@ -3616,23 +3616,26 @@ function removeInvalidResource(item, reason="") {
   return false;
 }
 function resourceInlineKeyboard(items,page=0) {
-  const start=page*10;
-  const pageItems=items.slice(start,start+10);
+  const list=Array.isArray(items)?items:[];
+  const totalPages=Math.max(1,Math.ceil(list.length/10));
+  const current=Math.min(Math.max(0,Number(page)||0),totalPages-1);
+  const start=current*10;
+  const pageItems=list.slice(start,start+10);
   const rows=[];
   for(let i=0;i<pageItems.length;i+=2) {
     const row=[];
     for(let j=i;j<i+2 && j<pageItems.length;j++) {
       const item=pageItems[j];
       row.push({
-        text:(start+j+1)+". "+String(item.title||"未命名资源").slice(0,28),
-        callback_data:"sr:"+page+":"+(j)
+        text:(start+j+1)+". "+String(item?.title||"未命名资源").slice(0,28),
+        callback_data:"sr:"+current+":"+(j)
       });
     }
-    rows.push(row);
+    if(row.length) rows.push(row);
   }
   const nav=[];
-  if(page>0) nav.push({text:"⬅️ 上一页",callback_data:"srp:"+(page-1)});
-  if(start+10<items.length) nav.push({text:"下一页 ➡️",callback_data:"srp:"+(page+1)});
+  if(current>0) nav.push({text:"⬅️ 上一页",callback_data:"srp:"+(current-1)});
+  if(current+1<totalPages) nav.push({text:"下一页 ➡️",callback_data:"srp:"+(current+1)});
   if(nav.length) rows.push(nav);
   rows.push([{text:"❌ 关闭搜索",callback_data:"src"}]);
   return {reply_markup:{inline_keyboard:rows}};
@@ -4138,9 +4141,13 @@ async function mainMessage(msg) {
     const results=search(query);
     saveDb();
     if(!results.length) {
+      states.set(key,{step:"search"});
       return sendHtml(TOKEN,uid,
-        "<b>📭 没有找到相关资源</b>\n\n关键词：<code>"+escapeHtml(query)+"</code>\n\n💡 可以换一个更短的关键词再试。",
-        {reply_markup:userHomeInlineKeyboard().reply_markup});
+        "<b>📭 没有找到相关资源</b>\n\n关键词：<code>"+escapeHtml(query)+"</code>\n\n💡 仓库里没有匹配内容，请换一个关键词重新搜索。",
+        {reply_markup:{inline_keyboard:[
+          [{text:"🔎 重新搜索",callback_data:"user:search"}],
+          [{text:"⬅️ 返回首页",callback_data:"user:home"}]
+        ]}});
     }
     states.set(key,{step:"search_results",query,results,page:0});
     return sendHtml(TOKEN,uid,
@@ -6068,17 +6075,28 @@ async function handleDirectoryCallback(token, q, child=false) {
       return sendHtml(token,uid,"<b>↩️ 已退出搜索</b>\n\n👇 请选择其他功能。",child ? childMenu() : userMenu());
     }
     if(data.startsWith("srp:")) {
-      const page=Math.max(0,Number(data.slice(4))||0);
-      const maxPage=Math.max(0,Math.ceil(s.results.length/10)-1);
-      const next=Math.min(page,maxPage);
-      states.set(key,{step:"search_results",query:s.query,results:s.results,page:next});
+      const rawPage=Number(data.slice(4));
+      const results=Array.isArray(s.results)?s.results:[];
+      const maxPage=Math.max(0,Math.ceil(results.length/10)-1);
+      const next=Math.min(Math.max(0,Number.isFinite(rawPage)?rawPage:0),maxPage);
+      states.set(key,{step:"search_results",query:String(s.query||""),results,page:next});
+      if(!results.length) {
+        void answer("没有找到相关资源",true);
+        return safeEdit(token,{
+          chat_id:chatId,
+          message_id:messageId,
+          text:"📭 <b>没有找到相关资源</b>\n\n关键词：<code>"+escapeHtml(s.query||"")+"</code>\n\n💡 请换一个关键词重新搜索。",
+          parse_mode:"HTML",
+          reply_markup:{inline_keyboard:[[{text:"🔎 重新搜索",callback_data:"user:search"},{text:"⬅️ 返回首页",callback_data:"user:home"}]]}
+        });
+      }
       void answer("已切换到第 "+(next+1)+" 页");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
-        text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(next+1)+" / "+(maxPage+1)+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
+        text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query||"")+"</b>\n📚 找到 <b>"+results.length+"</b> 个资源\n📄 第 <b>"+(next+1)+" / "+(maxPage+1)+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
         parse_mode:"HTML",
-        reply_markup:resourceInlineKeyboard(s.results,next)
+        reply_markup:resourceInlineKeyboard(results,next)
       });
     }
     const parts=data.split(":");
