@@ -5539,18 +5539,42 @@ async function handleDirectoryCallback(token, q, child=false) {
       ]}});
     }
     if(route==="auto_start") {
+      // 先立即响应按钮，再后台启动同步，避免建立队列/检查仓库耗时导致按钮看起来没反应。
       await answer("正在启动自动同步…");
-      try {
-        await startRepositoryAutoSyncNow(uid);
-        return showRepositoryAutoSyncStatus(uid);
-      } catch(e) {
-        const a=repositoryAutoSyncState();
-        a.enabled=false; a.status="error"; a.lastError=String(e?.telegramDescription||e?.message||e||"自动同步启动失败"); a.updatedAt=Date.now(); saveDb();
-        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(a.lastError)+"\n\n请确认旧仓库、新仓库都可访问，并且机器人同时在两个仓库中。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
-          [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],
+      const starting=repositoryAutoSyncState();
+      if(!starting.sourceId||!starting.targetId){
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚠️ 自动同步尚未绑定</b>\n\n请先添加旧仓库和新仓库。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}],
           [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
         ]}});
       }
+      starting.enabled=true;
+      starting.manualPaused=false;
+      starting.status="queued";
+      starting.lastError="";
+      starting.updatedAt=Date.now();
+      saveDb();
+      await safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"<b>⚡ 自动同步正在启动</b>\n━━━━━━━━━━━━━━\n\n📤 旧仓库："+escapeHtml(starting.sourceTitle||starting.sourceId)+"\n📥 新仓库："+escapeHtml(starting.targetTitle||starting.targetId)+"\n\n⏳ 正在建立同步队列，请稍候…",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[
+          [{text:"⏸️ 暂停同步",callback_data:"adm:auto_pause"}],
+          [{text:"🔄 刷新状态",callback_data:"adm:auto_status"}],
+          [{text:"🗑️ 删除任务并解绑仓库",callback_data:"adm:auto_delete"}]
+        ]}});
+      void startRepositoryAutoSyncNow(uid)
+        .then(()=>showRepositoryAutoSyncStatus(uid))
+        .catch(e=>{
+          const a=repositoryAutoSyncState();
+          a.enabled=false; a.status="error";
+          a.lastError=String(e?.telegramDescription||e?.message||e||"自动同步启动失败");
+          a.updatedAt=Date.now(); saveDb();
+          return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 自动同步启动失败</b>\n\n⚠️ "+escapeHtml(a.lastError)+"\n\n请确认旧仓库、新仓库都可访问，并且机器人同时在两个仓库中。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+            [{text:"🔄 重新绑定旧仓库 / 新仓库",callback_data:"adm:auto"}],
+            [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+          ]}});
+        });
+      return;
     }
     if(route==="auto_resume") {
       const a=repositoryAutoSyncState();
