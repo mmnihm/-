@@ -1808,6 +1808,7 @@ function repositoryAutoSyncFolderId(sourceItem,targetId){
   if(!targetDir){targetDir={id:sharedDirectoryId(folderName),name:folderName,createdAt:Date.now(),sourceMigration:"auto:"+String(targetId)};db.directories.push(targetDir);queueBaserowDirectorySync(targetDir);}
   return String(targetDir.id);
 }
+function leftCountSafe(arr,n){ return Math.max(0,Math.min(Number(n)||0,Array.isArray(arr)?arr.length:0)); }
 async function repositoryAutoSyncBatch(batch){
   const state=repositoryAutoSyncState();
   const sourceId=String(state.sourceId||""),targetId=String(state.targetId||"");
@@ -1820,7 +1821,7 @@ async function repositoryAutoSyncBatch(batch){
   if(!jobs.length)return true;
 
   // Telegram Bot API copyMessages：真正一次复制一组消息。
-  // 本项目最多 10 条一组；不足 10 条按实际数量发送。
+  // 普通消息逐条复制；相册按 media_group_id 整组复制，不人为拆成 10 条。
   const messageIds=[...new Set(jobs.map(x=>x.messageId))].sort((a,b)=>a-b);
   console.log("📦 AUTO SYNC 批量复制:",messageIds.length+" 条",sourceId+" -> "+targetId,messageIds.join(","));
 
@@ -1871,10 +1872,24 @@ async function repositoryAutoSyncBatch(batch){
       return true;
     }
 
-    state.status="running";
+    // Telegram 的 4xx 业务错误通常不是临时网络故障。
+    // 如果整组失败，继续拆分定位；单条仍失败则只跳过这一条，不能让队列原地死循环。
+    if(messageIds.length>1){
+      const mid=Math.ceil(jobs.length/2);
+      console.warn("↪️ AUTO SYNC 业务错误，拆分消息组继续:",leftCountSafe(jobs,mid)+"+"+leftCountSafe(jobs,jobs.length-mid));
+      const leftOk=await repositoryAutoSyncBatch(jobs.slice(0,mid));
+      if(!leftOk)return false;
+      return await repositoryAutoSyncBatch(jobs.slice(mid));
+    }
+    const badId=messageIds[0];
+    state.queue=state.queue.filter(x=>Number(x?.messageId||0)!==badId);
+    state.failed=Number(state.failed||0)+1;
+    state.lastMessageId=Math.max(Number(state.lastMessageId||0),badId);
     state.lastError="";
+    state.status="running";
+    state.updatedAt=Date.now();
     saveDb();
-    console.warn("⚠️ AUTO SYNC 跳过当前无法复制的消息组，继续处理剩余队列:",errorText);
+    console.warn("⏭️ AUTO SYNC 跳过无法复制的消息:",sourceId+"#"+badId,errorText);
     return true;
   }
 
@@ -1971,8 +1986,20 @@ async function processRepositoryAutoSyncQueue(){
       state.updatedAt=Date.now();
       saveDb();
 
+      const beforeQueueLength=state.queue.length;
       const ok=await repositoryAutoSyncBatch(batch);
       if(!ok)break;
+
+      if(state.queue.length>=beforeQueueLength && state.queue.length){
+        const stuckId=Number(state.queue[0]?.messageId||0);
+        state.queue.shift();
+        state.failed=Number(state.failed||0)+1;
+        state.lastError="";
+        state.status="running";
+        state.updatedAt=Date.now();
+        saveDb();
+        console.warn("⏭️ AUTO SYNC 防止队列卡死，跳过未消费消息:",sourceId+"#"+stuckId);
+      }
 
       if(state.queue.length)await sleep(300);
     }
@@ -2021,14 +2048,6 @@ function queueRepositoryAutoSyncMessage(msg){
 
   const queueTimerKey="autosync:"+tokenFingerprint(TOKEN);
   if(state.status==="paused") return;
-  if(state.queue.length>=10){
-    if(repositoryAutoSyncDebounceTimers.has(queueTimerKey)){
-      clearTimeout(repositoryAutoSyncDebounceTimers.get(queueTimerKey));
-      repositoryAutoSyncDebounceTimers.delete(queueTimerKey);
-    }
-    processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
-    return;
-  }
   if(repositoryAutoSyncDebounceTimers.has(queueTimerKey)) clearTimeout(repositoryAutoSyncDebounceTimers.get(queueTimerKey));
   repositoryAutoSyncDebounceTimers.set(queueTimerKey,setTimeout(()=>{
     repositoryAutoSyncDebounceTimers.delete(queueTimerKey);
