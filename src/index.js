@@ -1869,7 +1869,9 @@ async function repositoryAutoSyncBatch(batch){
 
   if(!jobs.length)return true;
 
-  // Telegram Bot API 批量转发/复制：原生相册必须整组进入同一次请求。\n  // 有 media_group_id 时绝不拆组；普通历史消息才按连续队列批量处理。\n  const sourceItems=jobs.map(job=>{ const found=db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(job.messageId)); return found || {messageId:Number(job.messageId),mediaGroupId:String(batch.find(q=>Number(q?.messageId||0)===Number(job.messageId))?.mediaGroupId||""),textOnly:false,fileType:"Document"}; });
+  // Telegram Bot API 批量转发/复制：原生相册必须整组进入同一次请求。
+  // 有 media_group_id 时绝不拆组；普通历史消息才按连续队列批量处理。
+  const sourceItems=jobs.map(job=>{ const found=db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(job.messageId)); return found || {messageId:Number(job.messageId),mediaGroupId:String(batch.find(q=>Number(q?.messageId||0)===Number(job.messageId))?.mediaGroupId||""),textOnly:false,fileType:"Document"}; });
   if(!repositoryAutoSyncBatchAllowed(sourceItems,state)){
     for(const job of jobs){
       const idx=state.queue.findIndex(x=>Number(x?.messageId||0)===Number(job.messageId));
