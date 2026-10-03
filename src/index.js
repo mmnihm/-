@@ -2038,27 +2038,16 @@ async function processRepositoryAutoSyncQueue(){
       const first=state.queue[0];
       if(!first)break;
 
-      let batch=[];
-      const firstGroupId=String(first?.mediaGroupId||"");
+      // 统一按旧仓库 message_id 连续批量提交，不再因为数据库里的分组字段缺失
+      // 把历史相册错误拆成“一条一条”。Telegram Bot API 的 copyMessages 会自动保留
+      // 原生 media_group_id 对应的相册分组；因此只要把连续消息一起提交即可。
+      // 单次最多 100 条，仍严格保持旧仓库顺序。
+      let batch=state.queue
+        .slice(0,100)
+        .filter(x=>Number(x?.messageId||0)>0)
+        .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
 
-      if(firstGroupId){
-        // 已知相册：整组一次提交，绝不拆组。
-        batch=state.queue
-          .filter(x=>String(x?.mediaGroupId||"")===firstGroupId)
-          .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
-      }else{
-        // 普通消息按旧仓库原始 message_id 顺序连续取。
-        // 最多 100 条只是 Telegram API 单次请求上限，不代表改变仓库排序。
-        // 如果下一项已经明确属于相册，则先结束当前普通批次，让相册下一轮完整复制。
-        for(const item of state.queue){
-          if(!item || Number(item?.messageId||0)<=0)continue;
-          if(String(item?.mediaGroupId||""))break;
-          batch.push(item);
-          if(batch.length>=100)break;
-        }
-      }
-
-      if(!batch.length)batch=[first];
+      if(!batch.length) batch=[first];
 
       state.status="running";
       state.updatedAt=Date.now();
@@ -2066,7 +2055,7 @@ async function processRepositoryAutoSyncQueue(){
 
       const beforeQueueLength=state.queue.length;
       const messageOrder=batch.map(x=>Number(x.messageId)).filter(Number.isFinite).sort((a,b)=>a-b);
-      console.log("📦 AUTO SYNC 按旧仓库顺序复制:",messageOrder.length+" 条",String(state.sourceId)+" -> "+String(state.targetId),messageOrder.join(","));
+      console.log("📦 AUTO SYNC 按旧仓库顺序批量复制:",messageOrder.length+" 条",String(state.sourceId)+" -> "+String(state.targetId),messageOrder.join(","));
 
       const ok=await repositoryAutoSyncBatch(batch);
       if(!ok)break;
@@ -4135,6 +4124,29 @@ async function mainMessage(msg) {
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
   let s=states.get(key);
+
+  // 搜索输入必须优先于会员检查、共享刷新和其他状态机处理。
+  // 避免搜索页面已经打开，但用户发送关键词后被其他流程拦截而“没有反馈”。
+  if(s?.step==="search" && msg.chat?.type==="private" && !admin) {
+    if(t==="/cancel") {
+      states.delete(key);
+      return sendHtml(TOKEN,uid,"<b>↩️ 已退出搜索</b>\n\n👇 请选择其他功能。",userMenu());
+    }
+    const query=String(t||"").trim();
+    if(!query) return sendHtml(TOKEN,uid,"<b>🔎 搜索资源</b>\n\n请输入要搜索的关键词。");
+    recordStat(uid,"search",1);
+    const results=search(query);
+    saveDb();
+    if(!results.length) {
+      return sendHtml(TOKEN,uid,
+        "<b>📭 没有找到相关资源</b>\n\n关键词：<code>"+escapeHtml(query)+"</code>\n\n💡 可以换一个更短的关键词再试。",
+        {reply_markup:userHomeInlineKeyboard().reply_markup});
+    }
+    states.set(key,{step:"search_results",query,results,page:0});
+    return sendHtml(TOKEN,uid,
+      "🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(query)+"</b>\n📚 共找到 <b>"+results.length+"</b> 个结果\n📄 第 <b>1 / "+Math.max(1,Math.ceil(results.length/10))+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
+      resourceInlineKeyboard(results,0));
+  }
   // 主机器人重启后恢复未完成的上传会话，避免文件消息因内存状态丢失而被静默忽略。
   if(!s && db.settings?.uploadSessions?.[key]){
     const saved=db.settings.uploadSessions[key];
