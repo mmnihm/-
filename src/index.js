@@ -4730,28 +4730,71 @@ async function mainMessage(msg) {
   if(s?.step==="search") {
     if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
       states.delete(key);
-      if(t==="🏠 开始") return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n🤖 <b>平台功能</b>："+(admin ? "管理后台 · 广播 · 克隆机器人" : "克隆机器人")+"\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
-      return send(TOKEN,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",admin?adminMenu():userMenu());    }
-    const query=t.trim();
-    recordStat(uid,"search",1);
-    saveDb();
-    const results=search(query);
-    if(!results.length) return sendHtml(TOKEN,uid,
-      "<b>📭 没有找到相关资源</b>\\n\\n关键词：<code>"+escapeHtml(query)+"</code>\\n\\n💡 可以换一个更短的关键词再试。",
-      userMenu()
-    );
-    states.set(key,{step:"search_results",query,results,page:0});
-    return sendHtml(TOKEN,uid,
-      "🔎 <b>搜索结果</b>\\n"+
-      "━━━━━━━━━━━━━━\\n\\n"+
-      "🔍 关键词：<code>"+escapeHtml(query)+"</code>\\n"+
-      "📚 共找到：<b>"+results.length+"</b> 个资源\\n"+
-      "📄 当前页面：<b>1 / "+Math.max(1,Math.ceil(results.length/10))+"</b>\\n\\n"+
-      "━━━━━━━━━━━━━━\\n"+
-      "👇 <i>点击资源名称获取</i>",
-      resourceInlineKeyboard(results,0)
-    );
+      if(t==="🏠 开始") {
+        return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu());
+      }
+      return send(TOKEN,uid,"↩️ <b>已退出搜索</b>\\n\\n👇 请选择其他功能。",admin?adminMenu():userMenu());
+    }
+
+    const query=String(t||"").trim();
+    if(!query) {
+      return sendHtml(TOKEN,uid,"<b>🔎 搜索资源</b>\\n\\n⚠️ 请输入要搜索的关键词。\\n\\n例如：<code>教程</code>、<code>视频</code>、<code>作者名</code>");
+    }
+
+    try {
+      const q=query.toLowerCase();
+      const allResources=Array.isArray(db.resources)?db.resources:[];
+      const results=allResources.filter(item=>{
+        const folder=db.directories.find(d=>String(d?.id||"")===String(item?.directoryId||""));
+        const haystack=[
+          item?.title,
+          item?.name,
+          item?.caption,
+          item?.fileName,
+          item?.fileType,
+          item?.tags,
+          folder?.name
+        ].map(v=>String(v??"").toLowerCase()).join(" ");
+        return haystack.includes(q);
+      });
+
+      recordStat(uid,"search",1);
+      saveDb();
+
+      if(!results.length) {
+        return sendHtml(TOKEN,uid,
+          "<b>📭 没有找到相关资源</b>\\n\\n"+
+          "关键词：<code>"+escapeHtml(query)+"</code>\\n"+
+          "📚 当前资源库：<b>"+allResources.length+"</b> 条\\n\\n"+
+          "💡 可以换一个更短的关键词再试。",
+          userMenu()
+        );
+      }
+
+      states.set(key,{step:"search_results",query,results,page:0});
+      console.log("🔎 用户搜索完成:",String(uid),"query="+query,"results="+results.length);
+
+      return sendHtml(TOKEN,uid,
+        "🔎 <b>搜索结果</b>\\n"+
+        "━━━━━━━━━━━━━━\\n\\n"+
+        "🔍 关键词：<code>"+escapeHtml(query)+"</code>\\n"+
+        "📚 共找到：<b>"+results.length+"</b> 个资源\\n"+
+        "📄 当前页面：<b>1 / "+Math.max(1,Math.ceil(results.length/10))+"</b>\\n\\n"+
+        "━━━━━━━━━━━━━━\\n"+
+        "👇 <i>点击资源名称获取</i>",
+        resourceInlineKeyboard(results,0)
+      );
+    } catch(e) {
+      console.error("❌ 用户搜索异常:",String(e?.message||e));
+      return sendHtml(TOKEN,uid,
+        "<b>❌ 搜索暂时失败</b>\\n\\n"+
+        "请稍后再试。\\n\\n"+
+        "⚠️ "+escapeHtml(String(e?.message||e).slice(0,300)),
+        userMenu()
+      );
+    }
   }
+
   if(s?.step==="search_results") {
     if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
       states.delete(key);
