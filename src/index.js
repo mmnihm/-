@@ -1413,6 +1413,12 @@ function indexHistoryMessage(message, chatId) {
     title:String(fileName || text || ("历史资源 #" + id)).slice(0,200),
     caption:text.slice(0,500),
     date:message?.date ? Math.floor(new Date(message.date).getTime()/1000) : Math.floor(Date.now()/1000),
+    mediaGroupId:message?.groupedId ? String(message.groupedId) : String(message?.mediaGroupId||""),
+    fileType:message?.file ? (
+      String(message.file.mimeType||"").toLowerCase().startsWith("video") ? "Video" :
+      String(message.file.mimeType||"").toLowerCase().startsWith("audio") ? "Audio" : "Document"
+    ) : (message?.photo ? "Photo" : null),
+    textOnly:!hasMedia,
     directoryId:null
   };
   autoAssignResourceTagFolder(item);
@@ -1791,7 +1797,7 @@ let repositoryAutoSyncQueue = Promise.resolve();
 let repositoryAutoSyncRecoveryTimer = null;
 const repositoryAutoSyncDebounceTimers=new Map();
 function repositoryAutoSyncState() {
-  const base={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",manualPaused:false,updatedAt:0};
+  const base={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,skipped:0,lastError:"",manualPaused:false,syncText:true,syncPhoto:true,syncVideo:true,syncFiles:true,updatedAt:0};
   const current=db.settings.repositoryAutoSync;
   const state=current&&typeof current==="object"?current:{};
   db.settings.repositoryAutoSync={...base,...state};
@@ -1809,6 +1815,50 @@ function repositoryAutoSyncFolderId(sourceItem,targetId){
   return String(targetDir.id);
 }
 function leftCountSafe(arr,n){ return Math.max(0,Math.min(Number(n)||0,Array.isArray(arr)?arr.length:0)); }
+function repositoryAutoSyncItemType(item){
+  if(item?.textOnly) return "text";
+  const t=String(item?.fileType||"").toLowerCase();
+  if(t==="photo") return "photo";
+  if(t==="video" || t==="animation" || t==="videonote") return "video";
+  return "file";
+}
+function repositoryAutoSyncItemAllowed(item,state){
+  const type=repositoryAutoSyncItemType(item);
+  if(type==="text") return state.syncText!==false;
+  if(type==="photo") return state.syncPhoto!==false;
+  if(type==="video") return state.syncVideo!==false;
+  return state.syncFiles!==false;
+}
+function repositoryAutoSyncBatchAllowed(batch,state){
+  if(!Array.isArray(batch)||!batch.length)return false;
+  // 相册永远整组处理：只要组内有一种媒体被关闭，就整组跳过，绝不拆相册。
+  const groupIds=new Set(batch.map(x=>String(x?.mediaGroupId||"")).filter(Boolean));
+  if(groupIds.size){
+    return batch.every(item=>repositoryAutoSyncItemAllowed(item,state));
+  }
+  return repositoryAutoSyncItemAllowed(batch[0],state);
+}
+function repositoryAutoSyncContentText(state){
+  const on=v=>v!==false?"✅":"❌";
+  return "<b>⚙️ 自动同步内容</b>\n━━━━━━━━━━━━━━\n\n"+
+    "📝 文字：<b>"+on(state.syncText)+"</b>\n"+
+    "🖼️ 图片/相册：<b>"+on(state.syncPhoto)+"</b>\n"+
+    "🎬 视频：<b>"+on(state.syncVideo)+"</b>\n"+
+    "📦 文件/音频：<b>"+on(state.syncFiles)+"</b>\n\n"+
+    "📌 <i>相册始终整组复制，不会拆开。若相册内有关闭的媒体类型，则整组跳过。</i>";
+}
+function repositoryAutoSyncContentMenu(){
+  const state=repositoryAutoSyncState();
+  const mark=v=>v!==false?"✅":"❌";
+  return {inline_keyboard:[
+    [{text:mark(state.syncText)+" 文字",callback_data:"adm:auto_content_toggle:text"}],
+    [{text:mark(state.syncPhoto)+" 图片/相册",callback_data:"adm:auto_content_toggle:photo"}],
+    [{text:mark(state.syncVideo)+" 视频",callback_data:"adm:auto_content_toggle:video"}],
+    [{text:mark(state.syncFiles)+" 文件/音频",callback_data:"adm:auto_content_toggle:file"}],
+    [{text:"⬅️ 返回自动同步",callback_data:"adm:auto_status"}]
+  ]};
+}
+
 async function repositoryAutoSyncBatch(batch){
   const state=repositoryAutoSyncState();
   const sourceId=String(state.sourceId||""),targetId=String(state.targetId||"");
@@ -1822,6 +1872,20 @@ async function repositoryAutoSyncBatch(batch){
 
   // Telegram Bot API copyMessages：真正一次复制一组消息。
   // 普通消息逐条复制；相册按 media_group_id 整组复制，不人为拆成 10 条。
+  const sourceItems=jobs.map(x=>db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(x.messageId))).filter(Boolean);
+  if(!repositoryAutoSyncBatchAllowed(sourceItems,state)){
+    for(const job of jobs){
+      const idx=state.queue.findIndex(x=>Number(x?.messageId||0)===Number(job.messageId));
+      if(idx>=0) state.queue.splice(idx,1);
+    }
+    state.skipped=Number(state.skipped||0)+jobs.length;
+    state.lastError="";
+    state.status="running";
+    state.updatedAt=Date.now();
+    saveDb();
+    console.log("⏭️ AUTO SYNC 按内容设置跳过:",jobs.length+" 条");
+    return true;
+  }
   const messageIds=[...new Set(jobs.map(x=>x.messageId))].sort((a,b)=>a-b);
   console.log("📦 AUTO SYNC 批量复制:",messageIds.length+" 条",sourceId+" -> "+targetId,messageIds.join(","));
 
@@ -2055,7 +2119,7 @@ function queueRepositoryAutoSyncMessage(msg){
     if(current.enabled&&current.status!=="paused"&&current.queue.length){
       processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
     }
-  },1000));
+  },2500));
 }
 async function startRepositoryAutoSyncNow(uid){
   const state=repositoryAutoSyncState();
@@ -2097,7 +2161,7 @@ async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,target
   state.enabled=false; state.status="bound"; state.manualPaused=false; state.ownerId=String(uid);
   state.sourceId=String(sourceId); state.targetId=String(targetId);
   state.sourceTitle=String(sourceTitle||sourceId); state.targetTitle=String(targetTitle||targetId);
-  state.lastMessageId=Number(lastMessageId||0); state.queue=[]; state.lastError="";
+  state.lastMessageId=Number(lastMessageId||0); state.queue=[]; state.lastError=""; state.skipped=0;
   state.updatedAt=Date.now(); saveDb(); return state;
 }
 async function testRepositoryAutoSync(uid){
@@ -2166,12 +2230,13 @@ async function showRepositoryAutoSyncStatus(uid){
     "\n📥 新仓库："+escapeHtml(state.targetTitle||"-")+
     "\n📌 最后消息："+Number(state.lastMessageId||0)+
     "\n📦 已同步："+Number(state.copied||0)+
+    "\n⏭️ 已跳过："+Number(state.skipped||0)+
     "\n⏳ 待处理："+state.queue.length+
     (state.lastError?"\n\n❌ "+escapeHtml(state.lastError):"");
   const rows=[];
   if(running) rows.push([{text:"⏸️ 暂停同步",callback_data:"adm:auto_pause"}]);
   else if(bound) rows.push([{text:"▶️ 开始同步",callback_data:"adm:auto_start"}]);
-  rows.push([{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}]);
+  rows.push([{text:"⚙️ 同步内容",callback_data:"adm:auto_content"},{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}]);
   if(bound) rows.push([{text:"🗑️ 删除任务并解绑仓库",callback_data:"adm:auto_delete"}]);
   rows.push([{text:"🔄 重新绑定",callback_data:"adm:auto_reset"}]);
   rows.push([{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]);
@@ -2182,7 +2247,7 @@ async function resetRepositoryAutoSyncBinding(){
   const state=repositoryAutoSyncState();
   state.enabled=false; state.status="stopped"; state.ownerId="";
   state.sourceId=""; state.targetId=""; state.sourceTitle=""; state.targetTitle="";
-  state.lastMessageId=0; state.queue=[]; state.copied=0; state.failed=0; state.lastError="";
+  state.lastMessageId=0; state.queue=[]; state.copied=0; state.failed=0; state.skipped=0; state.lastError="";
   state.updatedAt=Date.now(); saveDb(); return state;
 }
 async function repositoryMigration(uid, sourceValue, targetValue) {
@@ -5474,6 +5539,21 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔄 旧仓库 → 新仓库</b>\\n━━━━━━━━━━━━━━\\n\\n📤 第一步：发送旧仓库 Chat ID 或 @用户名。\\n\\n例如：<code>-1001234567890</code>\\n\\n⚠️ 机器人必须同时在旧仓库和新仓库里。\\n📌 旧仓库不会删除。\\n📁 文件夹归属会保留。\\n\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"❌ 取消","callback_data":"admin:resource"}]]}});
     }
     if(route==="auto_status") return showRepositoryAutoSyncStatus(uid);
+    if(route==="auto_content"){
+      const a=repositoryAutoSyncState();
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:repositoryAutoSyncContentText(a),parse_mode:"HTML",reply_markup:repositoryAutoSyncContentMenu()});
+    }
+    if(route==="auto_content_toggle"){
+      const type=data.split(":")[2]||"";
+      const a=repositoryAutoSyncState();
+      if(type==="text") a.syncText=a.syncText===false;
+      else if(type==="photo") a.syncPhoto=a.syncPhoto===false;
+      else if(type==="video") a.syncVideo=a.syncVideo===false;
+      else if(type==="file") a.syncFiles=a.syncFiles===false;
+      a.updatedAt=Date.now(); saveDb();
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:repositoryAutoSyncContentText(a),parse_mode:"HTML",reply_markup:repositoryAutoSyncContentMenu()});
+    }
+
     if(route==="auto_add") {
       await resetRepositoryAutoSyncBinding();
       states.delete(key);
