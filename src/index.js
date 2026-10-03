@@ -1871,7 +1871,19 @@ async function repositoryAutoSyncBatch(batch){
 
   // Telegram Bot API 批量转发/复制：原生相册必须整组进入同一次请求。
   // 有 media_group_id 时绝不拆组；普通历史消息才按连续队列批量处理。
-  const sourceItems=jobs.map(job=>{ const found=db.resources.find(r=>String(r.chatId)===sourceId&&Number(r.messageId)===Number(job.messageId)); return found || {messageId:Number(job.messageId),mediaGroupId:String(batch.find(q=>Number(q?.messageId||0)===Number(job.messageId))?.mediaGroupId||""),textOnly:false,fileType:"Document"}; });
+  const sourceItems = jobs.map(job => {
+    const found = db.resources.find(r =>
+      String(r?.chatId||"")===sourceId &&
+      Number(r?.messageId||0)===Number(job.messageId)
+    );
+    return found || {
+      chatId:sourceId,
+      messageId:Number(job.messageId),
+      mediaGroupId:String(batch.find(q=>Number(q?.messageId||0)===Number(job.messageId))?.mediaGroupId||""),
+      textOnly:false,
+      fileType:"Document"
+    };
+  });
   if(!repositoryAutoSyncBatchAllowed(sourceItems,state)){
     for(const job of jobs){
       const idx=state.queue.findIndex(x=>Number(x?.messageId||0)===Number(job.messageId));
@@ -3329,10 +3341,34 @@ function sendDirectoryBatch(token, chatId, items) {
   return (async () => {
     for (const item of items) {
       try {
+        // 解绑资源仓库后，旧资源对象可能仍被当前页面/旧状态暂时持有。
+        // 这里再次校验当前绑定，避免后台继续访问已经解绑的 Chat。
+        const currentRepo=repo();
+        if(!currentRepo || String(currentRepo.chatId||"")!==String(item?.chatId||"")) {
+          console.warn("⏭️ 文件夹批量发送：资源仓库已解绑/已切换，跳过旧资源 chat=",String(item?.chatId||""),"resource=",String(item?.messageId||""));
+          continue;
+        }
         await sendIndexedResource(token, chatId, item);
         sent++;
       } catch(e) {
-        console.error("DIRECTORY SEND:",e.message,"chat=",item.chatId,"message=",item.messageId);
+        const desc=String(e?.telegramDescription||e?.message||e||"");
+        console.error("DIRECTORY SEND:",desc,"chat=",item?.chatId,"message=",item?.messageId);
+        // 机器人被踢出/禁止访问时，立即清理该仓库，避免同一批任务反复重试。
+        if(/bot was kicked|kicked from the supergroup|bot is not a member|forbidden:.*(?:chat|group|channel)|机器人被踢|禁止访问/i.test(desc)) {
+          const badChat=String(item?.chatId||"").trim();
+          const currentRepo=repo();
+          if(currentRepo && String(currentRepo.chatId||"")===badChat) {
+            const oldResources=Array.isArray(db.resources)?db.resources:[];
+            const removed=oldResources.filter(x=>String(x?.chatId||"")===badChat);
+            db.resources=oldResources.filter(x=>String(x?.chatId||"")!==badChat);
+            db.settings.repository=null;
+            db.settings.resourceSources=Array.isArray(db.settings.resourceSources)
+              ? db.settings.resourceSources.filter(x=>String(x?.chatId||"")!==badChat)
+              : [];
+            saveDb();
+            console.warn("🧹 文件夹批量发送：仓库访问失效，已自动解绑并清理资源 chat=",badChat,"removed=",removed.length);
+          }
+        }
       }
       await sleep(80);
     }
