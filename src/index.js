@@ -2043,7 +2043,7 @@ async function startRepositoryAutoSyncNow(uid){
 }
 async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,targetTitle,lastMessageId=0){
   const state=repositoryAutoSyncState();
-  state.enabled=false; state.status="bound"; state.ownerId=String(uid);
+  state.enabled=false; state.status="bound"; state.manualPaused=false; state.ownerId=String(uid);
   state.sourceId=String(sourceId); state.targetId=String(targetId);
   state.sourceTitle=String(sourceTitle||sourceId); state.targetTitle=String(targetTitle||targetId);
   state.lastMessageId=Number(lastMessageId||0); state.queue=[]; state.lastError="";
@@ -6335,7 +6335,13 @@ async function boot(){
       const autoSyncState=repositoryAutoSyncState();
       if(autoSyncState.enabled && autoSyncState.sourceId && autoSyncState.targetId){
         const accessOk=await checkRepositoryAutoSyncAccess();
-        if(accessOk) processRepositoryAutoSyncQueue().catch(e=>console.error("❌ 自动同步恢复失败:",String(e?.message||e)));
+        if(accessOk && !autoSyncState.manualPaused){
+          autoSyncState.status=autoSyncState.queue.length?"queued":"running";
+          autoSyncState.lastError="";
+          autoSyncState.updatedAt=Date.now();
+          saveDb();
+          processRepositoryAutoSyncQueue().catch(e=>console.error("❌ 自动同步恢复失败:",String(e?.message||e)));
+        }
       }
       const migrationState=db.settings.repositoryMigration||{};
       if(["running","paused"].includes(String(migrationState.status||"")) && migrationState.sourceId && migrationState.targetId && migrationState.ownerId) {
