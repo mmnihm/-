@@ -1811,20 +1811,25 @@ async function repositoryAutoSyncOne(job){
   if(!state.enabled||!sourceId||!targetId||!messageId)return false;
   const already=db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(already)return true;
-  // 自动同步不能依赖 Baserow/本地资源索引；只要 Telegram 源消息真实存在，就直接复制。
-  // 这样即使索引暂时没写入，也不会因为“找不到源消息索引”导致整个自动同步暂停。
-  const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId)||null;
 
+  // 自动同步直接复制 Telegram 原消息，保持原消息中的文件、图片、视频、文字、说明等内容。
+  const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId)||null;
   let copied=null,lastError=null;
+
   for(let attempt=1;attempt<=3;attempt++){
     try{
-      copied=await main("copyMessage",{chat_id:targetId,from_chat_id:sourceId,message_id:messageId,...(contentProtectionEnabled()?{protect_content:true}:{})});
+      copied=await main("copyMessage",{
+        chat_id:targetId,
+        from_chat_id:sourceId,
+        message_id:messageId,
+        ...(contentProtectionEnabled()?{protect_content:true}:{})
+      });
       if(!copied?.message_id)throw new Error("Telegram 未返回目标消息ID");
       break;
     }catch(e){
       lastError=e;
       const desc=String(e?.telegramDescription||e?.message||e||"");
-      console.warn("⚠️ AUTO SYNC 单条发送失败:",sourceId+"#"+messageId,"attempt="+attempt,desc);
+      console.warn("⚠️ AUTO SYNC 复制失败:",sourceId+"#"+messageId,"attempt="+attempt,desc);
       if(attempt<3) await sleep(3000*attempt);
     }
   }
@@ -1835,16 +1840,15 @@ async function repositoryAutoSyncOne(job){
     state.failed=Number(state.failed||0)+1;
     state.updatedAt=Date.now();
 
-    // Telegram 对已经失效/不可复制的媒体会返回 MEDIA_FILE_INVALID。
-    // 这类消息继续重试没有意义，不能让整个自动同步任务停在这一条。
+    // 无效媒体不阻塞后面的同步任务，只跳过当前消息。
     if(/MEDIA_FILE_INVALID|media file is invalid/i.test(errorText)){
       state.status="running";
       saveDb();
-      console.warn("⏭️ AUTO SYNC 跳过无效媒体，继续下一条:",sourceId+"#"+messageId,errorText);
+      console.warn("⏭️ AUTO SYNC 跳过无效媒体:",sourceId+"#"+messageId,errorText);
       return true;
     }
 
-    // 其他错误仍然保留断点并暂停，避免真正的权限/仓库/网络问题被静默跳过。
+    // 权限、仓库不存在、网络等真正错误保留断点并暂停。
     state.status="paused";
     saveDb();
     console.error("⏸️ AUTO SYNC 已暂停，保留断点:",sourceId+"#"+messageId,errorText);
@@ -1862,11 +1866,13 @@ async function repositoryAutoSyncOne(job){
     title:String(sourceItem?.title||sourceItem?.name||("资源 "+messageId)),
     migratedFrom:{chatId:sourceId,messageId,at:Date.now()}
   };
+
   if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId)){
     db.resources.unshift(targetItem);
     db.resources=db.resources.slice(0,MAX_RESOURCES);
     queueBaserowResourceSync(targetItem);
   }
+
   state.copied=Number(state.copied||0)+1;
   state.lastError="";
   state.updatedAt=Date.now();
@@ -1875,38 +1881,58 @@ async function repositoryAutoSyncOne(job){
   console.log("⚡ AUTO MIGRATION:",sourceId+"#"+messageId,"->",targetId+"#"+Number(copied.message_id));
   return true;
 }
+
+async function repositoryAutoSyncBatch(batch){
+  const state=repositoryAutoSyncState();
+  if(!state.enabled||!Array.isArray(batch)||!batch.length)return true;
+
+  console.log("📦 AUTO SYNC 批次开始:",batch.length+" 条","source="+String(state.sourceId||""),"target="+String(state.targetId||""));
+
+  for(const job of batch){
+    const ok=await repositoryAutoSyncOne(job);
+    if(!ok){
+      // 当前消息失败时不删除它，也不动后面的任务，确保可以从断点继续。
+      return false;
+    }
+
+    const messageId=Number(job?.messageId||0);
+    const index=state.queue.findIndex(x=>Number(x?.messageId||0)===messageId);
+    if(index>=0) state.queue.splice(index,1);
+
+    state.updatedAt=Date.now();
+    saveDb();
+  }
+
+  console.log("✅ AUTO SYNC 批次完成:",batch.length+" 条","剩余="+state.queue.length);
+  return true;
+}
+
 async function processRepositoryAutoSyncQueue(){
   if(repositoryAutoSyncRunning)return repositoryAutoSyncQueue;
   repositoryAutoSyncRunning=true;
+
   repositoryAutoSyncQueue=repositoryAutoSyncQueue.then(async()=>{
     const state=repositoryAutoSyncState();
     if(!state.enabled)return;
 
     const batchSize=10;
-    const perMessageDelay=2000;
-    const batchDelay=10000;
-    let processedInBatch=0;
 
     while(state.queue.length){
-      const ok=await repositoryAutoSyncOne(state.queue[0]);
-      if(!ok)break;
-
-      state.queue.shift();
-      processedInBatch++;
+      // 每次最多取10条；不足10条就按实际数量处理。
+      const batch=state.queue.slice(0,batchSize);
+      state.status="running";
       state.updatedAt=Date.now();
       saveDb();
 
-      // 每条发送之间留出间隔，避免新频道短时间连续写入大量消息。
-      if(state.queue.length) await sleep(perMessageDelay);
+      const ok=await repositoryAutoSyncBatch(batch);
+      if(!ok)break;
 
-      // 每 10 条再停一下，并保存断点。
-      if(processedInBatch>=batchSize){
-        processedInBatch=0;
-        state.status="running";
-        state.updatedAt=Date.now();
-        saveDb();
-        if(state.queue.length) await sleep(batchDelay);
-      }
+      // 一组完成后再保存一次断点，不要求凑够10条才继续。
+      state.updatedAt=Date.now();
+      saveDb();
+
+      // 控制组与组之间的节奏，避免连续大量写入触发 Telegram 限流。
+      if(state.queue.length) await sleep(3000);
     }
 
     if(state.enabled){
@@ -1922,6 +1948,7 @@ async function processRepositoryAutoSyncQueue(){
     saveDb();
     console.error("⏸️ 自动同步异常，已暂停并保留断点:",state.lastError);
   }).finally(()=>{repositoryAutoSyncRunning=false;});
+
   return repositoryAutoSyncQueue;
 }
 function queueRepositoryAutoSyncMessage(msg){
