@@ -1852,7 +1852,7 @@ async function repositoryAutoSyncBatch(batch){
   if(!state.enabled||!sourceId||!targetId||!Array.isArray(batch)||!batch.length)return true;
 
   const jobs=batch
-    .map(x=>({messageId:Number(x?.messageId||0),queuedAt:x?.queuedAt||Date.now()}))
+    .map(x=>({messageId:Number(x?.messageId||0),queuedAt:x?.queuedAt||Date.now(),mediaGroupId:String(x?.mediaGroupId||"")}))
     .filter(x=>x.messageId>0);
 
   if(!jobs.length)return true;
@@ -2038,12 +2038,12 @@ async function processRepositoryAutoSyncQueue(){
         batch=state.queue
           .filter(x=>String(x?.mediaGroupId||"")===firstGroupId)
           .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
-      }else if(first?.historical){
-        // 历史仓库严格按旧仓库消息顺序取连续队列，最多 100 条一次交给 copyMessages。
-        // 不再按文件类型把消息拆开；Telegram 原生相册仍由 mediaGroupId 整组处理。
+      }else if(first?.historical || !Object.prototype.hasOwnProperty.call(first,"historical")){
+        // 旧版本队列没有 historical 标记时也按旧仓库队列恢复。
+        // 连续历史消息一次最多 100 条；有 mediaGroupId 的相册优先整组处理。
         batch=[];
         for(const item of state.queue){
-          if(!item?.historical || String(item?.mediaGroupId||"")) break;
+          if(!item || item?.historical===false || String(item?.mediaGroupId||"")) break;
           batch.push(item);
           if(batch.length>=100) break;
         }
@@ -6598,10 +6598,24 @@ async function boot(){
       await ensureStartCommand(TOKEN);
       const autoSyncState=repositoryAutoSyncState();
       if(autoSyncState.enabled && autoSyncState.sourceId && autoSyncState.targetId){
-        await hydrateRepositoryAutoSyncMediaGroups(autoSyncState.ownerId||0,autoSyncState.sourceId);
+        // MTProto 相册补全不能阻塞主机器人轮询；GetMessages 可能触发 30 秒 FloodWait。
+        // 先恢复自动同步和 Telegram 轮询，再后台补全分组信息。
+        const autoSyncSourceId=String(autoSyncState.sourceId);
+        const autoSyncOwnerId=Number(autoSyncState.ownerId||0);
+        void hydrateRepositoryAutoSyncMediaGroups(autoSyncOwnerId,autoSyncSourceId).then(()=>{
+          const current=repositoryAutoSyncState();
+          if(!current.enabled || String(current.sourceId)!==autoSyncSourceId) return;
+          for(const queued of current.queue){
+            const saved=db.resources.find(x=>String(x.chatId)===autoSyncSourceId&&Number(x.messageId)===Number(queued?.messageId));
+            if(saved?.mediaGroupId) queued.mediaGroupId=String(saved.mediaGroupId);
+          }
+          saveDb();
+        }).catch(e=>console.warn("⚠️ AUTO SYNC 后台补全相册信息失败：",String(e?.message||e)));
         for(const queued of autoSyncState.queue){
-          const saved=db.resources.find(x=>String(x.chatId)===String(autoSyncState.sourceId)&&Number(x.messageId)===Number(queued?.messageId));
+          const saved=db.resources.find(x=>String(x.chatId)===autoSyncSourceId&&Number(x.messageId)===Number(queued?.messageId));
           if(saved?.mediaGroupId) queued.mediaGroupId=String(saved.mediaGroupId);
+          // 旧版本队列没有 historical 字段时，按启动时已有资源处理，避免退化成逐条同步。
+          if(!Object.prototype.hasOwnProperty.call(queued,"historical")) queued.historical=true;
         }
         saveDb();
         const accessOk=await checkRepositoryAutoSyncAccess();
