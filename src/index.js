@@ -3815,7 +3815,7 @@ async function binding(msg) {
   // 上传期间管理员转发/发送的文件属于待上传资源，绝不能被当成绑定仓库消息。
   if(msg.chat?.type==="private") {
     const uploadState=states.get("m:"+String(msg.from?.id||""));
-    if(uploadState?.step==="upload_folder" || uploadState?.step==="upload_file") return false;
+    if(["upload_folder","upload_file","folder_create"].includes(String(uploadState?.step||""))) return false;
   }
 
   const bindCommands=["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"];
@@ -3947,7 +3947,7 @@ async function backupRecoveryMerge(uid) {
 async function mainMessage(msg) {
   // 上传中的文件只进入当前批次，不要为每个文件触发跨机器人 Baserow 刷新。
   const preUploadState=msg?.chat?.type==="private" ? states.get("m:"+String(msg.from?.id||"")) : null;
-  if(!(preUploadState?.step==="upload_file" || preUploadState?.step==="upload_folder")) {
+  if(!(preUploadState?.step==="upload_file" || preUploadState?.step==="upload_folder" || preUploadState?.step==="folder_create")) {
     // 共享数据刷新放到后台，绝不能阻塞 Telegram 菜单和普通消息响应。
     refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
   }
@@ -3966,16 +3966,16 @@ async function mainMessage(msg) {
   // 主机器人重启后恢复未完成的上传会话，避免文件消息因内存状态丢失而被静默忽略。
   if(!s && db.settings?.uploadSessions?.[key]){
     const saved=db.settings.uploadSessions[key];
-    if(saved.step==="upload_file"){
+    if(saved.step==="upload_file" || saved.step==="upload_folder" || saved.step==="folder_create"){
       s={
-        step:"upload_file",
+        step:String(saved.step),
         directoryId:String(saved.directoryId||""),
         directoryName:String(saved.directoryName||""),
         pendingUploads:(Array.isArray(saved.pendingMessageIds)?saved.pendingMessageIds:[]).map(id=>({messageId:Number(id)})).filter(x=>Number.isFinite(x.messageId)),
         controlMessageId:Number(saved.controlMessageId||0)
       };
       states.set(key,s);
-      console.log("♻️ UPLOAD SESSION RESTORED:",{uid:String(uid),pending:s.pendingUploads.length,folder:s.directoryName});
+      console.log("♻️ UPLOAD SESSION RESTORED:",{uid:String(uid),step:s.step,pending:s.pendingUploads.length,folder:s.directoryName});
     }
   }
 
@@ -4857,6 +4857,7 @@ async function mainMessage(msg) {
   if(s?.step==="folder_create"&&admin) {
     if(t==="/cancel" || t==="❌ 取消") {
       states.delete(key);
+      if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
       return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
     }
     const folderName=String(t||"").trim().replace(/^📁\\s*/,"").slice(0,80);
@@ -4872,6 +4873,7 @@ async function mainMessage(msg) {
     queueBaserowDirectorySync(d);
     saveDb();
     states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; }
     logAdmin(uid,"新建文件夹",d.name);
     return sendHtml(TOKEN,uid,"✅ <b>文件夹创建成功</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n\\n现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
   }
@@ -5935,8 +5937,14 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
     }
     if(data==="upload_new") {
-      // 单独使用 folder_create 状态，避免“新建文件夹”与上传文件状态机互相抢处理。
-      states.set(uploadStateKey(uid,child,token),{step:"folder_create"});
+      // 使用独立状态，并立即持久化，避免状态机/重启导致“点击后发送名称没反应”。
+      const folderKey=uploadStateKey(uid,child,token);
+      states.set(folderKey,{step:"folder_create",pendingUploads:[],controlMessageId:Number(messageId)});
+      if(!child){
+        if(!db.settings.uploadSessions || typeof db.settings.uploadSessions!=="object") db.settings.uploadSessions={};
+        db.settings.uploadSessions[folderKey]={step:"folder_create",pendingMessageIds:[],controlMessageId:Number(messageId),updatedAt:Date.now()};
+        saveDb();
+      }
       void answer("请输入新文件夹名称");
       return safeEdit(token,{
         chat_id:chatId,
