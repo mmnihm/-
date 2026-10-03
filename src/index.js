@@ -1848,8 +1848,10 @@ async function repositoryAutoSyncBatch(batch){
     state.lastError=errorText;
     state.updatedAt=Date.now();
 
-    if(/MEDIA_FILE_INVALID|media file is invalid/i.test(errorText)){
-      // 整组无法判断是哪一条媒体失效，拆成两半继续批量检查。
+    if(/MEDIA_FILE_INVALID|media file is invalid|there are no messages to forward|message to forward not found|message.*not found/i.test(errorText)){
+      // Telegram 对已删除/不可转发的源消息会返回“there are no messages to forward”。
+      // 不要让整个自动同步暂停：拆分定位失效消息，正常消息继续同步。
+      // 如果当前是相册，只有异常消息被剔除后，其余同组媒体仍按实际数量复制。
       if(messageIds.length>1){
         const mid=Math.ceil(jobs.length/2);
         const left=jobs.slice(0,mid),right=jobs.slice(mid);
@@ -1869,11 +1871,11 @@ async function repositoryAutoSyncBatch(batch){
       return true;
     }
 
-    state.status="paused";
-    state.lastError=errorText;
+    state.status="running";
+    state.lastError="";
     saveDb();
-    console.error("⏸️ AUTO SYNC 批量复制已暂停:",errorText);
-    return false;
+    console.warn("⚠️ AUTO SYNC 跳过当前无法复制的消息组，继续处理剩余队列:",errorText);
+    return true;
   }
 
   // copyMessages 成功时返回目标消息 ID 数组。
