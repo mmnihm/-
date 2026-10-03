@@ -4854,6 +4854,28 @@ async function mainMessage(msg) {
     logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
     return sendHtml(TOKEN,uid,"✅ <b>文件夹名称已修改</b>\\n\\n📁 原名称："+escapeHtml(oldName)+"\\n📁 新名称："+escapeHtml(newName),{reply_markup:uploadFolderInlineMenu()});
   }
+  if(s?.step==="folder_create"&&admin) {
+    if(t==="/cancel" || t==="❌ 取消") {
+      states.delete(key);
+      return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
+    }
+    const folderName=String(t||"").trim().replace(/^📁\\s*/,"").slice(0,80);
+    if(!folderName) return sendHtml(TOKEN,uid,"⚠️ <b>文件夹名称不能为空</b>\\n\\n请重新发送名称。");
+    const same=db.directories.find(x=>String(x.name||"").trim().toLowerCase()===folderName.toLowerCase());
+    if(same) {
+      states.set(key,{step:"upload_file",directoryId:same.id,directoryName:same.name,pendingUploads:[]});
+      return sendHtml(TOKEN,uid,"⚠️ <b>这个文件夹已经存在</b>\\n\\n📁 "+escapeHtml(same.name)+"\\n\\n已切换到这个文件夹，现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
+    }
+    const d=ensureDirectory(folderName);
+    if(!d) return sendHtml(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请换一个名称再试。");
+    touchSharedData(uid);
+    queueBaserowDirectorySync(d);
+    saveDb();
+    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
+    logAdmin(uid,"新建文件夹",d.name);
+    return sendHtml(TOKEN,uid,"✅ <b>文件夹创建成功</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n\\n现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
+  }
+
   if(s?.step==="upload_folder"&&admin) {
     if(t==="❌ 取消") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
     if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
@@ -5913,14 +5935,15 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
     }
     if(data==="upload_new") {
-      states.set(uploadStateKey(uid,child,token),{step:"upload_folder"});
+      // 单独使用 folder_create 状态，避免“新建文件夹”与上传文件状态机互相抢处理。
+      states.set(uploadStateKey(uid,child,token),{step:"folder_create"});
       void answer("请输入新文件夹名称");
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
         text:"📁 <b>新建文件夹</b>\\n\\n请直接发送新的文件夹名称。\\n\\n发送 /cancel 可取消。",
         parse_mode:"HTML",
-        reply_markup:{inline_keyboard:[]}
+        reply_markup:{inline_keyboard:[[{text:"❌ 取消",callback_data:"upload_cancel"}]]}
       });
     }
     const directoryId=data.slice("upload_dir:".length);
