@@ -932,11 +932,23 @@ async function pullBaserowSharedData() {
     }
     db.directories=Array.from(dirsById.values());
     if((chatField && messageField) || urlField) {
-      // 关键保护：Baserow 结构异常、旧表缺少定位字段、或当前只解析出少量无效网址时，
-      // 绝不能用空的 merged 覆盖本地资源，否则机器人启动后目录会“全部消失”。
+      // Baserow 不是实时事件流。新文件可能已经被 Telegram channel_post
+      // 索引到本地，但对应 Baserow 行仍在写入队列中。不能用远端快照直接覆盖本地，
+      // 否则刚上传/刚收到的新文件会在下一次刷新后从搜索、目录、随机中瞬间消失。
       if(merged.length>0 || (db.resources||[]).length===0) {
-        db.resources=merged.slice(0,MAX_RESOURCES);
-        if(!chatField || !messageField) console.log("🔗 已从 Baserow 网址恢复 Telegram 资源："+db.resources.length);
+        const remoteKeys=new Set(merged.map(x=>resourceKey(x)));
+        const localOnly=(db.resources||[]).filter(x=>{
+          const k=resourceKey(x);
+          return k!==":" && !remoteKeys.has(k) &&
+            String(x?.chatId||"").trim() &&
+            Number(x?.messageId||0)>0;
+        });
+        if(localOnly.length) {
+          console.log("🔗 Baserow 刷新保留本地待同步资源："+localOnly.length+" 条");
+          for(const item of localOnly) queueBaserowResourceSync(item);
+        }
+        db.resources=[...merged,...localOnly].slice(0,MAX_RESOURCES);
+        if(!chatField || !messageField) console.log("🔗 已从 Baserow 网址恢复 Telegram 资源："+merged.length+" 条，合并本地："+localOnly.length+" 条");
         if(!chatField || !messageField) await backfillBaserowFolderAssignments(rows,fields,folderField,titleField);
       } else {
         console.warn("⚠️ Baserow 本次未恢复到有效资源，保留本地资源："+String((db.resources||[]).length));
@@ -3437,6 +3449,7 @@ function indexResource(msg) {
     title:(msg.document?.file_name || msg.audio?.file_name || msg.video?.file_name || msg.caption || msg.text || "未命名资源").slice(0,200),
     caption:(msg.caption || msg.text || "").slice(0,500),
     date:msg.date || Math.floor(Date.now()/1000),
+    indexedAt:Date.now(),
     mediaGroupId:msg.media_group_id ? String(msg.media_group_id) : "",
     directoryId:null,
     fileType,
@@ -4804,6 +4817,10 @@ async function mainMessage(msg) {
     }
 
     try {
+      // 用户主动搜索时强制刷新共享索引，确保新文件立即可见。
+      if(BASEROW_TOKEN && BASEROW_TABLE_ID) {
+        await refreshSharedData(true).catch(e=>console.warn("⚠️ 搜索前共享资源刷新失败，继续使用本地索引：",String(e?.message||e)));
+      }
       const q=query.toLowerCase();
       const allResources=Array.isArray(db.resources)?db.resources:[];
       const results=allResources.filter(item=>{
@@ -6145,9 +6162,24 @@ async function handleDirectoryCallback(token, q, child=false) {
     const page=Math.max(0,Number(parts[1])||0);
     const idx=Math.max(0,Number(parts[2])||0);
     const pageItems=s.results.slice(page*10,page*10+10);
-    const item=pageItems[idx];
-    if(!item) {
+    const selected=pageItems[idx];
+    if(!selected) {
       void answer("这个搜索结果不存在或已更新",true);
+      return;
+    }
+    // 搜索结果对象可能在共享刷新后已经被替换，按唯一键重新取当前记录。
+    const selectedKey=resourceKey(selected);
+    let item=resourceByKey(selectedKey);
+    if(!item && BASEROW_TOKEN && BASEROW_TABLE_ID) {
+      try {
+        await refreshSharedData(true);
+        item=resourceByKey(selectedKey);
+      } catch(e) {
+        console.warn("⚠️ 点击搜索结果时刷新共享资源失败：",String(e?.message||e));
+      }
+    }
+    if(!item) {
+      void answer("资源已更新，请重新搜索",true);
       return;
     }
     const member=await allowed(TOKEN,uid);
