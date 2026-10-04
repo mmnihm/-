@@ -920,7 +920,7 @@ async function pullBaserowSharedData() {
         title:v.title || old.title || ("资源 #"+v.message),
         caption:captionField ? String(v.row?.[captionField.name]??old.caption??"") : String(old.caption||""),
         date:dateField ? (Number(v.row?.[dateField.name]) || (new Date(v.row?.[dateField.name]||0).getTime()/1000) || old.date || Math.floor(Date.now()/1000)) : (old.date||Math.floor(Date.now()/1000)),
-        directoryId,
+        directoryId: v.folderName ? sharedDirectoryId(v.folderName) : (old.directoryId || null),
         fileType:typeField ? String(v.row?.[typeField.name]??old.fileType??"") : old.fileType,
         fileId:fileIdField ? String(v.row?.[fileIdField.name]??old.fileId??"") : old.fileId,
         downloads:downloadField ? Number(v.row?.[downloadField.name]??old.downloads??0) : Number(old.downloads||0),
