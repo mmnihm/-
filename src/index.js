@@ -28,6 +28,9 @@ try {
   }
 }
 const BACKUP_FILE = process.env.DATA_BACKUP_FILE || (DATA_FILE + ".bak");
+const LOCAL_TABLE_DIR = process.env.LOCAL_TABLE_DIR || path.dirname(DATA_FILE);
+const LOCAL_RESOURCES_TABLE = path.join(LOCAL_TABLE_DIR, "resources.csv");
+const LOCAL_DIRECTORIES_TABLE = path.join(LOCAL_TABLE_DIR, "directories.csv");
 const SECRET = process.env.STORAGE_KEY || "telegram-clone-platform-v2";
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 20000);
 const UPLOAD_IDLE_SECONDS = Math.max(15, Number(process.env.UPLOAD_IDLE_SECONDS || 180));
@@ -908,70 +911,32 @@ async function pullBaserowSharedData() {
     }
 
     console.log("🧪 Baserow 资源恢复诊断：网址非空="+urlNonEmpty+" 私有链接匹配="+telegramPrivateMatches+" 公开链接匹配="+telegramUrlMatches+" 可恢复="+byKey.size+" 总行="+rows.length);
-    const oldByKey=new Map((db.resources||[]).map(x=>[String(x.chatId)+":"+String(x.messageId),x]));
-    const merged=[];
-    for(const [key,v] of byKey) {
-      const old=oldByKey.get(key)||{};
-      const directoryId=v.folderName ? sharedDirectoryId(v.folderName) : null;
-      merged.push({
-        ...old,
-        chatId:v.chat,
-        messageId:v.message,
-        title:v.title || old.title || ("资源 #"+v.message),
-        caption:captionField ? String(v.row?.[captionField.name]??old.caption??"") : String(old.caption||""),
-        date:dateField ? (Number(v.row?.[dateField.name]) || (new Date(v.row?.[dateField.name]||0).getTime()/1000) || old.date || Math.floor(Date.now()/1000)) : (old.date||Math.floor(Date.now()/1000)),
-        directoryId: v.folderName ? sharedDirectoryId(v.folderName) : (old.directoryId || null),
-        fileType:typeField ? String(v.row?.[typeField.name]??old.fileType??"") : old.fileType,
-        fileId:fileIdField ? String(v.row?.[fileIdField.name]??old.fileId??"") : old.fileId,
-        downloads:downloadField ? Number(v.row?.[downloadField.name]??old.downloads??0) : Number(old.downloads||0),
-        baserowRowId:v.row.id
-      });
-    }
-
-    const dirsById=new Map();
-    for(const d of db.directories||[]) {
-      const id=sharedDirectoryId(d.name);
-      dirsById.set(id,{...d,id});
-    }
-    for(const [id,info] of folderNames) {
-      const name=String(info?.name||"").trim();
-      if(!name) continue;
-      const createdAt=Number(info?.createdAt||0);
-      if(!dirsById.has(id)) dirsById.set(id,{id,name,createdAt:createdAt>0?createdAt:Date.now()});
-      else if(createdAt>0 && !Number(dirsById.get(id)?.createdAt||0)) dirsById.get(id).createdAt=createdAt;
-    }
-    db.directories=Array.from(dirsById.values()).sort((a,b)=>{
-      const at=Number(a?.createdAt||0),bt=Number(b?.createdAt||0);
-      return bt!==at ? bt-at : String(b?.name||"").localeCompare(String(a?.name||""),"zh-Hans");
-    });
-    if((chatField && messageField) || urlField) {
-      // Baserow 不是实时事件流。新文件可能已经被 Telegram channel_post
-      // 索引到本地，但对应 Baserow 行仍在写入队列中。不能用远端快照直接覆盖本地，
-      // 否则刚上传/刚收到的新文件会在下一次刷新后从搜索、目录、随机中瞬间消失。
-      if(merged.length>0 || (db.resources||[]).length===0) {
-        const remoteKeys=new Set(merged.map(x=>resourceKey(x)));
-        const localOnly=(db.resources||[]).filter(x=>{
-          const k=resourceKey(x);
-          return k!==":" && !remoteKeys.has(k) &&
-            String(x?.chatId||"").trim() &&
-            Number(x?.messageId||0)>0;
-        });
-        if(localOnly.length) {
-          console.log("🔗 Baserow 刷新保留本地待同步资源："+localOnly.length+" 条");
-          for(const item of localOnly) queueBaserowResourceSync(item);
-        }
-        db.resources=[...merged,...localOnly].slice(0,MAX_RESOURCES);
-        if(!chatField || !messageField) console.log("🔗 已从 Baserow 网址恢复 Telegram 资源："+merged.length+" 条，合并本地："+localOnly.length+" 条");
-        if(!chatField || !messageField) await backfillBaserowFolderAssignments(rows,fields,folderField,titleField);
-      } else {
-        console.warn("⚠️ Baserow 本次未恢复到有效资源，保留本地资源："+String((db.resources||[]).length));
+    // 本地数据为唯一权威来源：Baserow 刷新只更新远端缓存/缺失同步信息，
+    // 绝不使用 Baserow 快照覆盖本地资源、文件夹或文件夹归属。
+    const localResources=Array.isArray(db.resources)?db.resources:[];
+    const localDirectories=Array.isArray(db.directories)?db.directories:[];
+    const remoteByKey=new Map(byKey);
+    let matched=0, missing=0;
+    for(const item of localResources) {
+      const key=resourceKey(item);
+      const remote=remoteByKey.get(key);
+      if(remote?.row?.id) {
+        item.baserowRowId=remote.row.id;
+        matched++;
+      } else if(key!==":") {
+        missing++;
+        queueBaserowResourceSync(item);
       }
-    } else {
-      console.warn("⚠️ Baserow 缺少聊天ID/消息ID/网址字段，无法恢复 Telegram 资源；保留本地资源："+String((db.resources||[]).length));
     }
+    for(const directory of localDirectories) {
+      queueBaserowDirectorySync(directory);
+    }
+    if(missing) console.log("🔗 本地为准：Baserow 缺少 "+missing+" 条资源，已加入同步队列");
+    console.log("🔗 Baserow 刷新采用本地表格/本地数据库为准：保留本地资源="+localResources.length+" 文件夹="+localDirectories.length+"，远端匹配="+matched);
+
     db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
     saveDb();
-    console.log("🔄 Baserow 共享数据已刷新：资源="+db.resources.length+"，文件夹="+db.directories.length);
+    console.log("🔄 Baserow 共享数据已刷新（本地为准）：资源="+db.resources.length+"，文件夹="+db.directories.length);
     return true;
   } catch(e) {
     baserow.connected=false;
@@ -1188,6 +1153,37 @@ function loadDb() {
   return emptyDb();
 }
 let lastSavedJson = "";
+function csvCell(value) {
+  const s=String(value ?? "");
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+function writeLocalTables() {
+  try {
+    fs.mkdirSync(LOCAL_TABLE_DIR,{recursive:true});
+    const dirsHeader=["id","name","createdAt"];
+    const dirsRows=(db.directories||[]).map(d=>[
+      d?.id,d?.name,d?.createdAt
+    ].map(csvCell).join(","));
+    const resHeader=["chatId","messageId","title","caption","directoryId","folderName","date","fileType","fileId","downloads","baserowRowId"];
+    const resRows=(db.resources||[]).map(r=>{
+      const dir=(db.directories||[]).find(d=>String(d?.id)===String(r?.directoryId));
+      return [
+        r?.chatId,r?.messageId,r?.title,r?.caption,r?.directoryId,dir?.name||"",
+        r?.date,r?.fileType,r?.fileId,r?.downloads,r?.baserowRowId
+      ].map(csvCell).join(",");
+    });
+    const atomic=(file,content)=>{
+      const tmp=file+".tmp";
+      fs.writeFileSync(tmp,content);
+      fs.renameSync(tmp,file);
+    };
+    atomic(LOCAL_DIRECTORIES_TABLE,[dirsHeader.join(","),...dirsRows].join("\n")+"\n");
+    atomic(LOCAL_RESOURCES_TABLE,[resHeader.join(","),...resRows].join("\n")+"\n");
+  } catch(e) {
+    console.error("⚠️ 本地表格备份失败:",String(e?.message||e));
+  }
+}
+
 function saveDb() {
   try {
     fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
@@ -1204,6 +1200,7 @@ function saveDb() {
       fs.writeFileSync(backupTmp, json);
       fs.renameSync(backupTmp, BACKUP_FILE);
     }
+    writeLocalTables();
     lastSavedJson = json;
   } catch (e) {
     console.error("❌ SAVE:", e.message);
