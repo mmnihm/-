@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import dns from "node:dns";
+import { initializeMySQL, persistMySQL, flushMySQL, isMySQLReady } from "../mysql-store.js";
 
 try { dns.setDefaultResultOrder("ipv4first"); } catch {}
 
@@ -58,6 +59,7 @@ function runtimeStatus() {
     lastError: runtime.lastError || null,
     dataFile: DATA_FILE,
     backupFile: BACKUP_FILE,
+    mysql: { enabled: Boolean(process.env.DB_HOST || process.env.DATABASE_URL), connected: isMySQLReady() },
     dataFileExists: fs.existsSync(DATA_FILE),
     backupFileExists: fs.existsSync(BACKUP_FILE),
     baserow: {
@@ -911,8 +913,8 @@ async function pullBaserowSharedData() {
     }
 
     console.log("🧪 Baserow 资源恢复诊断：网址非空="+urlNonEmpty+" 私有链接匹配="+telegramPrivateMatches+" 公开链接匹配="+telegramUrlMatches+" 可恢复="+byKey.size+" 总行="+rows.length);
-    // 本地数据为唯一权威来源：Baserow 刷新只更新远端缓存/缺失同步信息，
-    // 绝不使用 Baserow 快照覆盖本地资源、文件夹或文件夹归属。
+    // MySQL 为正式数据层，Baserow 是手机管理界面：
+    // Baserow 修改名称/描述/文件夹/类型等字段后，立即同步回内存并由 saveDb() 写入 MySQL。
     const localResources=Array.isArray(db.resources)?db.resources:[];
     const localDirectories=Array.isArray(db.directories)?db.directories:[];
     const remoteByKey=new Map(byKey);
@@ -922,6 +924,24 @@ async function pullBaserowSharedData() {
       const remote=remoteByKey.get(key);
       if(remote?.row?.id) {
         item.baserowRowId=remote.row.id;
+        // Baserow 是手机端管理层：把人工修改写回本地内存，随后 saveDb() -> MySQL。
+        const row=remote.row;
+        const remoteTitle=String(row?.[titleField?.name]??"").trim();
+        const remoteCaption=captionField ? String(row?.[captionField.name]??"") : "";
+        const remoteType=typeField ? String(row?.[typeField.name]??"") : "";
+        const remoteFolder=folderField ? sharedFolderName(row?.[folderField.name]) : "";
+        if(remoteTitle && !remoteTitle.startsWith("__FOLDER__:")) item.title=remoteTitle.slice(0,200);
+        if(captionField && remoteCaption!==undefined) item.caption=remoteCaption.slice(0,500);
+        if(typeField && remoteType) item.fileType=remoteType.slice(0,64);
+        if(remoteFolder) {
+          let d=(db.directories||[]).find(x=>String(x.name||"").trim()===remoteFolder);
+          if(!d) d=ensureDirectory(remoteFolder);
+          item.directoryId=d?.id||item.directoryId||null;
+        }
+        if(downloadField) {
+          const n=Number(row?.[downloadField.name]);
+          if(Number.isFinite(n) && n>=0) item.downloads=n;
+        }
         matched++;
       } else if(key!==":") {
         missing++;
@@ -936,7 +956,7 @@ async function pullBaserowSharedData() {
 
     db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
     saveDb();
-    console.log("🔄 Baserow 共享数据已刷新（本地为准）：资源="+db.resources.length+"，文件夹="+db.directories.length);
+    console.log("🔄 Baserow 共享数据已刷新（MySQL 主库）：资源="+db.resources.length+"，文件夹="+db.directories.length);
     return true;
   } catch(e) {
     baserow.connected=false;
@@ -1202,6 +1222,8 @@ function saveDb() {
     }
     writeLocalTables();
     lastSavedJson = json;
+    // MySQL 是正式数据层；JSON 仅保留为本地兼容/应急快照。
+    persistMySQL(db);
   } catch (e) {
     console.error("❌ SAVE:", e.message);
     console.error("❌ 当前数据文件:", DATA_FILE);
@@ -1209,6 +1231,7 @@ function saveDb() {
   }
 }
 const db = loadDb();
+await initializeMySQL(db);
 if (!db.settings) db.settings = emptyDb().settings;
 if (!Array.isArray(db.settings.admins)) db.settings.admins = [];
 if (!Array.isArray(db.settings.logs)) db.settings.logs = [];
