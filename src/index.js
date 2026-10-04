@@ -3692,7 +3692,7 @@ function resourceInlineKeyboard(items,page=0) {
   if(current>0) nav.push({text:"⬅️ 上一页",callback_data:"srp:"+(current-1)});
   if(current+1<totalPages) nav.push({text:"下一页 ➡️",callback_data:"srp:"+(current+1)});
   if(nav.length) rows.push(nav);
-  rows.push([{text:"❌ 关闭搜索",callback_data:"src"}]);
+  rows.push([{text:"🔎 重新搜索",callback_data:"user:search"},{text:"❌ 关闭搜索",callback_data:"src"}]);
   return {reply_markup:{inline_keyboard:rows}};
 }
 function escapeHtml(value) {
@@ -4185,7 +4185,7 @@ async function mainMessage(msg) {
 
   // 搜索输入必须优先于会员检查、共享刷新和其他状态机处理。
   // 避免搜索页面已经打开，但用户发送关键词后被其他流程拦截而“没有反馈”。
-  if(s?.step==="search" && msg.chat?.type==="private" && !admin) {
+  if((s?.step==="search" || s?.step==="search_results") && msg.chat?.type==="private" && !admin) {
     if(t==="/cancel") {
       states.delete(key);
       return sendHtml(TOKEN,uid,"<b>↩️ 已退出搜索</b>\n\n👇 请选择其他功能。",userMenu());
