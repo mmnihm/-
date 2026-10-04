@@ -6150,13 +6150,12 @@ async function handleDirectoryCallback(token, q, child=false) {
         });
       }
       void answer("已切换到第 "+(next+1)+" 页");
-      return safeEdit(token,{
-        chat_id:chatId,
-        message_id:messageId,
-        text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query||"")+"</b>\n📚 找到 <b>"+results.length+"</b> 个资源\n📄 第 <b>"+(next+1)+" / "+(maxPage+1)+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
-        parse_mode:"HTML",
-        reply_markup:resourceInlineKeyboard(results,next)
-      });
+      // 搜索分页不再依赖编辑原消息。Telegram 某些情况下会拒绝编辑旧消息，
+      // 导致用户点击“下一页”后看起来像完全没有内容；这里直接发送新页面，确保翻页必定有结果。
+      return sendHtml(token,chatId,
+        "🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query||"")+"</b>\n📚 找到 <b>"+results.length+"</b> 个资源\n📄 第 <b>"+(next+1)+" / "+(maxPage+1)+"</b> 页\n\n👇 <b>点击下方资源名称获取</b>",
+        resourceInlineKeyboard(results,next)
+      );
     }
     const parts=data.split(":");
     const page=Math.max(0,Number(parts[1])||0);
