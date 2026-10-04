@@ -2124,20 +2124,15 @@ function queueRepositoryAutoSyncMessage(msg){
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(!exists&&!already)state.queue.push({messageId,mediaGroupId:String(msg.media_group_id||""),historical:false,syncType:repositoryAutoSyncItemType(db.resources.find(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)===messageId)||{}),queuedAt:Date.now()});
   state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
-  if(state.status!=="paused") state.status="queued";
+  // 新文件一进入旧仓库，立即唤醒同步队列；不再等待 2.5 秒防抖。
+  // 如果只是临时异常导致 paused，只要不是人工暂停，就自动恢复继续发送。
+  if(state.enabled && !state.manualPaused) state.status="queued";
   state.updatedAt=Date.now();
   saveDb();
 
-  const queueTimerKey="autosync:"+tokenFingerprint(TOKEN);
-  if(state.status==="paused") return;
-  if(repositoryAutoSyncDebounceTimers.has(queueTimerKey)) clearTimeout(repositoryAutoSyncDebounceTimers.get(queueTimerKey));
-  repositoryAutoSyncDebounceTimers.set(queueTimerKey,setTimeout(()=>{
-    repositoryAutoSyncDebounceTimers.delete(queueTimerKey);
-    const current=repositoryAutoSyncState();
-    if(current.enabled&&current.status!=="paused"&&current.queue.length){
-      processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
-    }
-  },2500));
+  if(state.enabled && !state.manualPaused && state.queue.length){
+    processRepositoryAutoSyncQueue().catch(e=>console.error("❌ AUTO SYNC QUEUE:",String(e?.message||e)));
+  }
 }
 async function hydrateRepositoryAutoSyncMediaGroups(uid,sourceId){
   const sid=String(sourceId||"");
@@ -2911,8 +2906,15 @@ function adminResourceMenu(){return{reply_markup:adminResourceInline()};}
 function adminSettingsMenu(){return{reply_markup:adminSettingsInline()};}
 function adminOpsMenu(){return{reply_markup:adminOpsInline()};}
 function adminBotMenu(){return{reply_markup:adminBotInline()};}
+function sortedDirectories(list=db.directories) {
+  return (Array.isArray(list)?list:[]).slice().sort((a,b)=>{
+    const at=Number(a?.createdAt||0), bt=Number(b?.createdAt||0);
+    if(bt!==at) return bt-at;
+    return String(b?.name||"").localeCompare(String(a?.name||""),"zh-Hans");
+  });
+}
 function uploadFolderInlineMenu(page=0) {
-  const all=db.directories;
+  const all=sortedDirectories();
   const pageSize=10;
   const currentPage=Math.max(0,Number(page)||0);
   const start=currentPage*pageSize;
@@ -3118,7 +3120,7 @@ async function makeShareLink(item) {
 }
 function moveFolderMenu(excludeId=null) {
   const rows=[];
-  for(const d of db.directories) {
+  for(const d of sortedDirectories()) {
     if(excludeId && String(d.id)===String(excludeId)) continue;
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
     rows.push([{text:"📁 "+String(d.name||"未命名").slice(0,28)+" · "+count,callback_data:"move_to:"+d.id}]);
@@ -3157,7 +3159,7 @@ function folderManageText(directoryId) {
 }
 function folderMoveTargetMenu(sourceId) {
   const rows=[];
-  for(const d of db.directories) {
+  for(const d of sortedDirectories()) {
     if(String(d.id)===String(sourceId)) continue;
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
     rows.push([{text:"📁 "+String(d.name||"未命名").slice(0,24)+" · "+count,callback_data:"folder_move_to:"+d.id}]);
@@ -3322,7 +3324,7 @@ function directoryKeyboard() {
 }
 
 function directoryInlineKeyboard(page=0) {
-  const all=db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id)));
+  const all=sortedDirectories(db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id))));
   const pageSize=10;
   const start=Math.max(0,Number(page)||0)*pageSize;
   const current=all.slice(start,start+pageSize);
