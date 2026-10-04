@@ -878,7 +878,10 @@ async function pullBaserowSharedData() {
           const encoded=title.split(":")[2] || "";
           try { folderValue=Buffer.from(encoded,"base64url").toString("utf8").trim(); } catch {}
         }
-        if(folderValue) folderNames.set(sharedDirectoryId(folderValue),folderValue);
+        if(folderValue) {
+          const created=Date.parse(String(row?.created_on||row?.createdAt||""));
+          folderNames.set(sharedDirectoryId(folderValue),{name:folderValue,createdAt:Number.isFinite(created)&&created>0?created:Date.now()});
+        }
         continue;
       }
       let chat=chatField ? String(row?.[chatField.name]??"").trim() : "";
@@ -897,7 +900,10 @@ async function pullBaserowSharedData() {
       if(!chat || !Number.isFinite(message) || message<=0) continue;
       const key=chat+":"+message;
       const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
-      if(folderName) folderNames.set(sharedDirectoryId(folderName),folderName);
+      if(folderName && !folderNames.has(sharedDirectoryId(folderName))) {
+        const created=Date.parse(String(row?.created_on||row?.createdAt||""));
+        folderNames.set(sharedDirectoryId(folderName),{name:folderName,createdAt:Number.isFinite(created)&&created>0?created:Date.now()});
+      }
       byKey.set(key,{row,title,chat,message,folderName});
     }
 
@@ -927,10 +933,17 @@ async function pullBaserowSharedData() {
       const id=sharedDirectoryId(d.name);
       dirsById.set(id,{...d,id});
     }
-    for(const [id,name] of folderNames) {
-      if(!dirsById.has(id)) dirsById.set(id,{id,name,createdAt:Date.now()});
+    for(const [id,info] of folderNames) {
+      const name=String(info?.name||"").trim();
+      if(!name) continue;
+      const createdAt=Number(info?.createdAt||0);
+      if(!dirsById.has(id)) dirsById.set(id,{id,name,createdAt:createdAt>0?createdAt:Date.now()});
+      else if(createdAt>0 && !Number(dirsById.get(id)?.createdAt||0)) dirsById.get(id).createdAt=createdAt;
     }
-    db.directories=Array.from(dirsById.values());
+    db.directories=Array.from(dirsById.values()).sort((a,b)=>{
+      const at=Number(a?.createdAt||0),bt=Number(b?.createdAt||0);
+      return bt!==at ? bt-at : String(b?.name||"").localeCompare(String(a?.name||""),"zh-Hans");
+    });
     if((chatField && messageField) || urlField) {
       // Baserow 不是实时事件流。新文件可能已经被 Telegram channel_post
       // 索引到本地，但对应 Baserow 行仍在写入队列中。不能用远端快照直接覆盖本地，
