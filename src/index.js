@@ -3155,10 +3155,10 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
   // 上传过程中不频繁落盘；收到文件后立即反馈。
   // 一条状态消息实时显示“本批已收到 N 个资源”，底部固定键盘始终可见。
   if(pending.length===1) {
-    const statusText="📤 <b>文件已收到</b>\n━━━━━━━━━━━━━━\n\n"+
+    const statusText="📤 <b>正在接收本批资源</b>\n━━━━━━━━━━━━━━\n\n"+
       "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
       "📥 本批已收到：<b>"+pending.length+"</b> 个资源\n\n"+
-      "还要继续上传，还是现在结束上传？";
+      "继续发送文件即可；全部发送完成后点击「✅ 结束上传」。";
     const statusMarkup={inline_keyboard:[
       [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
       [{text:"❌ 取消上传",callback_data:"upload_cancel"}]
@@ -3630,11 +3630,27 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
     saveDb();
   }
 
+  // Telegram 仓库转存完成后，再等待 Google Sheets 同步队列；临时上传会话最后才清理。
+  // 正式资源记录和 Telegram 仓库消息不会被这里删除。
+  let sheetSync="未配置";
+  if(GOOGLE_SHEETS_CREDENTIAL && GOOGLE_SHEETS_ID) {
+    try {
+      await waitBaserowSyncQueue();
+      sheetSync=baserow.lastError ? "⚠️ 待重试" : "✅ 已同步";
+    } catch(e) {
+      sheetSync="⚠️ 待重试";
+      console.warn("⚠️ 上传完成后 Google Sheets 同步等待失败：",String(e?.message||e));
+    }
+  }
   recordStat(uid,"upload",1);
   recordStat(uid,"uploadedResource",stored);
   touchSharedData(uid);
   saveDb();
-  logAdmin(uid,"结束上传",d.name+" / 收到"+items.length+" / 入库"+stored+" / 失败"+failed);
+  logAdmin(uid,"结束上传",d.name+" / 收到"+items.length+" / 入库"+stored+" / 表格"+sheetSync+" / 失败"+failed);
+  if(db.settings?.uploadSessions?.[stateKey]) {
+    delete db.settings.uploadSessions[stateKey];
+    saveDb();
+  }
   states.delete(stateKey);
 
   return sendHtml(token,uid,
