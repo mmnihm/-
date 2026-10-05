@@ -2155,7 +2155,7 @@ function repositoryAutoSyncContentMenu(){
 async function repositoryAutoSyncBatch(batch){
   const state=repositoryAutoSyncState();
   const sourceId=String(state.sourceId||""),targetId=String(state.targetId||"");
-  if(!state.enabled||!sourceId||!targetId||!Array.isArray(batch)||!batch.length)return true;
+  if(!state.enabled||!sourceId||!targetId||!Array.isArray(batch)||!batch.length)return false;
 
   const jobs=batch
     .map(x=>({messageId:Number(x?.messageId||0),queuedAt:x?.queuedAt||Date.now(),mediaGroupId:String(x?.mediaGroupId||"")}))
@@ -2366,6 +2366,10 @@ async function processRepositoryAutoSyncQueue(){
       const ok=await repositoryAutoSyncBatch(batch);
       if(!ok)break;
 
+      // 用户点击暂停/解绑可能发生在复制请求等待期间。
+      // 此时绝不能用“防卡死”逻辑删除队列第一条，必须原样保留断点。
+      if(!state.enabled || state.manualPaused)break;
+
       if(state.queue.length>=beforeQueueLength && state.queue.length){
         const stuckId=Number(state.queue[0]?.messageId||0);
         state.queue.shift();
@@ -2380,7 +2384,7 @@ async function processRepositoryAutoSyncQueue(){
       if(state.queue.length)await sleep(300);
     }
 
-    if(state.enabled){
+    if(state.enabled && !state.manualPaused){
       state.status=state.queue.length?"queued":"running";
       state.updatedAt=Date.now();
       saveDb();
@@ -2417,7 +2421,9 @@ function queueRepositoryAutoSyncMessage(msg){
   const exists=state.queue.some(x=>Number(x.messageId)===messageId);
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(!exists&&!already)state.queue.push({messageId,mediaGroupId:String(msg.media_group_id||""),historical:false,syncType:repositoryAutoSyncItemType(db.resources.find(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)===messageId)||{}),queuedAt:Date.now()});
-  state.lastMessageId=Math.max(Number(state.lastMessageId||0),messageId);
+  // 注意：这里只记录“已进入队列”，不能提前推进 lastMessageId。
+  // lastMessageId 必须只在目标仓库实际复制成功（或明确跳过无效消息）后推进，
+  // 否则机器人重启/失败恢复时会把尚未同步的消息误认为已经完成。
   // 新文件一进入旧仓库，立即唤醒同步队列；不再等待 2.5 秒防抖。
   // 如果只是临时异常导致 paused，只要不是人工暂停，就自动恢复继续发送。
   if(state.enabled && !state.manualPaused) state.status="queued";
