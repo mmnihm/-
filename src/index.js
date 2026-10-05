@@ -2216,6 +2216,25 @@ async function repositoryAutoSyncBatch(batch){
     }
   }
 
+  // 批量接口失败时，单条消息必须有兜底，避免“队列有数据但目标仓库没有消息”。
+  if(!Array.isArray(copiedIds) && messageIds.length===1){
+    try{
+      const single=await main("copyMessage",{
+        chat_id:targetId,
+        from_chat_id:sourceId,
+        message_id:messageIds[0],
+        ...(contentProtectionEnabled()?{protect_content:true}:{})
+      });
+      if(single?.message_id){
+        copiedIds=[single];
+        console.log("✅ AUTO SYNC 单条兜底复制成功:",sourceId+"#"+messageIds[0]+" -> "+targetId+"#"+single.message_id);
+      }
+    }catch(fallbackErr){
+      lastError=fallbackErr;
+      console.warn("❌ AUTO SYNC 单条兜底也失败:",sourceId+"#"+messageIds[0],String(fallbackErr?.telegramDescription||fallbackErr?.message||fallbackErr));
+    }
+  }
+
   if(!Array.isArray(copiedIds)){
     const errorText=String(lastError?.telegramDescription||lastError?.message||lastError||"批量复制失败");
     state.lastError=errorText;
@@ -2420,7 +2439,10 @@ function queueRepositoryAutoSyncMessage(msg){
   const messageId=Number(msg.message_id);if(!messageId)return;
   const exists=state.queue.some(x=>Number(x.messageId)===messageId);
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
-  if(!exists&&!already)state.queue.push({messageId,mediaGroupId:String(msg.media_group_id||""),historical:false,syncType:repositoryAutoSyncItemType(db.resources.find(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)===messageId)||{}),queuedAt:Date.now()});
+  if(!exists&&!already){
+    state.queue.push({messageId,mediaGroupId:String(msg.media_group_id||""),historical:false,syncType:repositoryAutoSyncItemType(db.resources.find(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)===messageId)||{}),queuedAt:Date.now()});
+    console.log("⚡ AUTO SYNC 实时消息入队:",String(state.sourceId)+"#"+messageId,"->",String(state.targetId),"queue="+state.queue.length);
+  }
   // 注意：这里只记录“已进入队列”，不能提前推进 lastMessageId。
   // lastMessageId 必须只在目标仓库实际复制成功（或明确跳过无效消息）后推进，
   // 否则机器人重启/失败恢复时会把尚未同步的消息误认为已经完成。
