@@ -6777,6 +6777,11 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   void answer();
 
+  if(data==="adm:shared_refresh"){
+    await refreshSharedData(true);
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✅ 共享数据同步完成",reply_markup:adminResourceInline()});
+  }
+
   console.log("🔘 DIRECTORY CALLBACK:", {
     bot: child ? "child" : "main",
     user: uid,
