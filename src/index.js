@@ -65,9 +65,9 @@ function runtimeStatus() {
     baserow: {
       enabled: baserow.enabled,
       connected: baserow.connected,
-      tableId: BASEROW_TABLE_ID || null,
-      tokenConfigured: Boolean(BASEROW_TOKEN),
-      permissionHint: baserow.lastError && /TABLE_PERMISSION_DENIED|没有表 .*权限/.test(baserow.lastError) ? "请检查 Baserow 数据库令牌的表权限" : null,
+      tableId: GOOGLE_SHEETS_ID || null,
+      tokenConfigured: Boolean(GOOGLE_SHEETS_CREDENTIAL),
+      permissionHint: baserow.lastError && /TABLE_PERMISSION_DENIED|没有表 .*权限/.test(baserow.lastError) ? "请检查 Google Sheets 数据库令牌的表权限" : null,
       lastOkAt: baserow.lastOkAt ? new Date(baserow.lastOkAt).toISOString() : null,
       lastError: baserow.lastError || null
     }
@@ -87,8 +87,8 @@ console.log("🧩 PROCESS:", "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
 console.log("📦 Node:", process.version);
 console.log("🔐 BOT_TOKEN:", TOKEN ? "已配置" : "❌ 未配置");
 console.log("👑 ADMIN_IDS:", ADMIN_IDS.size ? "已配置" : "❌ 未配置");
-// Baserow 连接检查仅在机器人启动完成后异步执行，不阻塞主进程启动。
-Promise.resolve().then(() => checkBaserowConnection()).catch(e => console.error("BASEROW CHECK:", e.message));
+// Google Sheets 连接检查仅在机器人启动完成后异步执行，不阻塞主进程启动。
+Promise.resolve().then(() => checkGoogleSheetsConnection()).catch(e => console.error("GOOGLE SHEETS CHECK:", e.message));
 
 process.on("uncaughtException", e => console.error("UNCAUGHT:", e));
 process.on("unhandledRejection", e => console.error("UNHANDLED:", e));
@@ -242,120 +242,236 @@ async function tg(token, method, body = {}) {
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
 
-function normalizeBaserowApiUrl(value) {
-  let raw=String(value||"https://api.baserow.io").trim();
-  // 防止部署平台把多个环境变量错误拼到 BASEROW_API_URL 中。
-  raw=raw.replace(/^BASEROW_API_URL\s*=\s*/i,"").trim();
-  raw=raw.replace(/\s+BASEROW_TABLE_ID\s*=.*$/i,"").trim();
-  raw=raw.replace(/[？?].*$/,"").replace(/\/$/,"");
-  if(!/^https?:\/\//i.test(raw)) raw="https://"+raw;
-  try {
-    const u=new URL(raw);
-    return u.origin;
-  } catch {
-    return "https://api.baserow.io";
-  }
-}
-function normalizeBaserowTableId(value) {
-  const raw=String(value||"").trim();
-  const m=raw.match(/(?:BASEROW_TABLE_ID\s*=\s*)?(\d+)/i);
-  return m ? m[1] : "";
-}
-
-const BASEROW_API_URL = normalizeBaserowApiUrl(process.env.BASEROW_API_URL);
-const BASEROW_TOKEN = String(process.env.BASEROW_TOKEN || process.env.BASEROW_API_TOKEN || "").trim();
-const BASEROW_TABLE_ID = normalizeBaserowTableId(process.env.BASEROW_TABLE_ID);
-
-console.log("🧪 BASEROW ENV:",
-  "token=" + (BASEROW_TOKEN ? "已读取" : "❌未读取"),
-  "tokenLength=" + BASEROW_TOKEN.length,
-  "table=" + (BASEROW_TABLE_ID || "❌未配置"),
-  "api=" + BASEROW_API_URL
-);
+// ===== Google Sheets 共享资源中心（替代旧 Google Sheets） =====
+const GOOGLE_SHEETS_ID = String(process.env.GOOGLE_SHEETS_ID || "1-7f_dKaSU66sbftuT2RM1ctf5-VY6KLxU1AJhGmI8D8").trim();
+const GOOGLE_SHEETS_TAB = String(process.env.GOOGLE_SHEETS_TAB || "Sheet1").trim() || "Sheet1";
+const GOOGLE_SERVICE_ACCOUNT_JSON = String(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim();
+const GOOGLE_SERVICE_ACCOUNT_B64 = String(process.env.GOOGLE_SERVICE_ACCOUNT_B64 || "").trim();
+const GOOGLE_ACCESS_TOKEN = String(process.env.GOOGLE_ACCESS_TOKEN || "").trim();
 
 const baserow = {
-  enabled: Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID),
+  enabled: Boolean(GOOGLE_SHEETS_ID && (GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64 || GOOGLE_ACCESS_TOKEN)),
   connected: false,
   lastError: "",
   lastOkAt: 0
 };
 
-async function baserowRequest(method, pathName, body) {
-  if (!BASEROW_TOKEN) {
-    const e=new Error("Baserow 未配置 BASEROW_TOKEN");
-    e.baserowCode="CONFIG_MISSING";
-    throw e;
+function parseGoogleServiceAccount() {
+  let raw=GOOGLE_SERVICE_ACCOUNT_JSON;
+  if(!raw && GOOGLE_SERVICE_ACCOUNT_B64){
+    try { raw=Buffer.from(GOOGLE_SERVICE_ACCOUNT_B64,"base64").toString("utf8"); } catch {}
   }
-  if (!BASEROW_TABLE_ID && /\/table\//.test(pathName)) {
-    const e=new Error("Baserow 未配置 BASEROW_TABLE_ID");
-    e.baserowCode="TABLE_ID_MISSING";
-    throw e;
+  if(!raw) return null;
+  try {
+    const x=JSON.parse(raw);
+    if(!x.client_email || !x.private_key) throw new Error("服务账号缺少 client_email/private_key");
+    return x;
+  } catch(e) {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON 无效："+String(e?.message||e));
   }
+}
+let googleAccessTokenCache={token:"",expiresAt:0};
 
-  const options = {
-    method,
-    headers: {
-      "Authorization": "Token " + BASEROW_TOKEN,
-      "Accept": "application/json"
-    }
-  };
-  if (body !== undefined) {
-    options.headers["Content-Type"] = "application/json";
-    options.body = JSON.stringify(body);
-  }
+function base64url(value){
+  return Buffer.from(String(value)).toString("base64").replace(/=+$/,"").replace(/\\+/g,"-").replace(/\\//g,"_");
+}
+async function getGoogleAccessToken(){
+  if(GOOGLE_ACCESS_TOKEN) return GOOGLE_ACCESS_TOKEN;
+  if(googleAccessTokenCache.token && googleAccessTokenCache.expiresAt>Date.now()+60000) return googleAccessTokenCache.token;
+  const sa=parseGoogleServiceAccount();
+  if(!sa) throw new Error("未配置 GOOGLE_SERVICE_ACCOUNT_JSON/B64 或 GOOGLE_ACCESS_TOKEN");
+  const now=Math.floor(Date.now()/1000);
+  const header=base64url(JSON.stringify({alg:"RS256",typ:"JWT"}));
+  const claim=base64url(JSON.stringify({
+    iss:sa.client_email,
+    scope:"https://www.googleapis.com/auth/spreadsheets",
+    aud:"https://oauth2.googleapis.com/token",
+    iat:now,
+    exp:now+3600
+  }));
+  const signer=crypto.createSign("RSA-SHA256");
+  signer.update(header+"."+claim);
+  signer.end();
+  const signature=signer.sign(sa.private_key);
+  const assertion=header+"."+claim+"."+base64url(signature);
+  const r=await fetch("https://oauth2.googleapis.com/token",{
+    method:"POST",
+    headers:{"content-type":"application/x-www-form-urlencoded"},
+    body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion}).toString()
+  });
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok || !data.access_token) throw new Error("Google 授权失败："+String(data.error_description||data.error||"unknown"));
+  googleAccessTokenCache={token:data.access_token,expiresAt:Date.now()+Number(data.expires_in||3600)*1000};
+  return data.access_token;
+}
 
-  const url=BASEROW_API_URL + pathName;
-  const r = await fetch(url, options);
-  const text = await r.text();
-  let data = {};
-  try { data = JSON.parse(text || "{}"); } catch {}
+function sheetsRange(){
+  return encodeURIComponent("'"+GOOGLE_SHEETS_TAB.replace(/'/g,"''")+"'");
+}
+const GOOGLE_SHEETS_API="https://sheets.googleapis.com/v4/spreadsheets/";
 
-  if (!r.ok) {
-    const detail=String(data?.description || data?.detail || data?.error || text || "请求失败").slice(0, 500);
-    const err=new Error("Baserow " + r.status + ": " + detail);
-    err.baserowStatus=r.status;
-    err.baserowCode=String(data?.error || "");
-    err.baserowTableId=BASEROW_TABLE_ID;
-    if(r.status===401 && /NO_PERMISSION_TO_TABLE|does not have permissions to the table|permission/i.test(detail+" "+String(data?.error||""))) {
-      err.baserowCode="TABLE_PERMISSION_DENIED";
-      err.message="Baserow 401：当前 Token 没有表 "+BASEROW_TABLE_ID+" 的权限。请在 Baserow「数据库令牌」中给该表开启至少 Read；恢复/同步写入还需要 Create、Update，删除资源需要 Delete。";
-    }
-    throw err;
-  }
+async function googleSheetsRequest(method, pathName, body){
+  const token=await getGoogleAccessToken();
+  const url=GOOGLE_SHEETS_API+encodeURIComponent(GOOGLE_SHEETS_ID)+pathName;
+  const headers={"Authorization":"Bearer "+token,"Accept":"application/json"};
+  if(body!==undefined){headers["Content-Type"]="application/json";}
+  const r=await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+  const text=await r.text();
+  let data={}; try{data=JSON.parse(text||"{}");}catch{}
+  if(!r.ok) throw new Error("Google Sheets "+r.status+": "+String(data?.error?.message||text||"请求失败").slice(0,500));
   return data;
 }
 
-async function checkBaserowConnection() {
-  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID) {
+const DEFAULT_SHEET_FIELDS=[
+  "名称","文件夹","类型","网址","标签","上传日期","所有者","聊天ID","消息ID","描述","文件ID","下载"
+];
+
+async function ensureGoogleSheetHeaders(){
+  const range=sheetsRange()+"!1:1";
+  const data=await googleSheetsRequest("GET","/values/"+range+"?majorDimension=ROWS");
+  const headers=Array.isArray(data.values?.[0])?data.values[0].map(x=>String(x??"").trim()):[];
+  if(headers.length) return headers;
+  await googleSheetsRequest("PUT","/values/"+range+"?valueInputOption=USER_ENTERED",{range:"'"+GOOGLE_SHEETS_TAB+"'!1:1",majorDimension:"ROWS",values:[DEFAULT_SHEET_FIELDS]});
+  return [...DEFAULT_SHEET_FIELDS];
+}
+
+async function getGoogleSheetHeaders(force=false){
+  if(baserowFieldsCache && !force) return baserowFieldsCache;
+  const headers=await ensureGoogleSheetHeaders();
+  baserowFieldsCache=headers.map((name,i)=>({id:i+1,name,type:["消息ID","聊天ID","文件ID","下载"].includes(name)?"text":"text",read_only:false,index:i}));
+  return baserowFieldsCache;
+}
+
+async function ensureGoogleSheetField(name){
+  const fields=await getGoogleSheetHeaders(true);
+  if(fields.some(f=>baserowNormName(f.name)===baserowNormName(name))) return fields;
+  const headers=fields.map(f=>f.name);
+  headers.push(name);
+  const lastColumn=String.fromCharCode(65+Math.min(headers.length-1,25));
+  await googleSheetsRequest("PUT","/values/"+encodeURIComponent("'"+GOOGLE_SHEETS_TAB+"'!A1:"+lastColumn+"1")+"?valueInputOption=USER_ENTERED",{
+    range:"'"+GOOGLE_SHEETS_TAB+"'!A1:"+lastColumn+"1",majorDimension:"ROWS",values:[headers]
+  });
+  return getGoogleSheetHeaders(true);
+}
+
+async function checkGoogleSheetsConnection(){
+  if(!GOOGLE_SHEETS_ID || !(GOOGLE_SERVICE_ACCOUNT_JSON||GOOGLE_SERVICE_ACCOUNT_B64||GOOGLE_ACCESS_TOKEN)){
+    baserow.enabled=false; baserow.connected=false; baserow.lastError="未配置 Google Sheets 凭据";
+    return false;
+  }
+  try{
+    await ensureGoogleSheetHeaders();
+    baserow.enabled=true; baserow.connected=true; baserow.lastError=""; baserow.lastOkAt=Date.now();
+    console.log("📊 Google Sheets: 已连接，sheet="+GOOGLE_SHEETS_ID+" tab="+GOOGLE_SHEETS_TAB);
+    return true;
+  }catch(e){
+    baserow.enabled=true; baserow.connected=false; baserow.lastError=String(e?.message||e);
+    console.error("❌ Google Sheets 连接失败:",baserow.lastError);
+    return false;
+  }
+}
+
+// 保留旧函数名以减少现有业务代码改动；内部已经全部走 Google Sheets。
+const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
+const GOOGLE_SHEETS_ID = GOOGLE_SHEETS_ID;
+
+async function baserowRequest(method,pathName,body){
+  if(!GOOGLE_SHEETS_ID) throw new Error("Google Sheets 未配置 GOOGLE_SHEETS_ID");
+  if(!GOOGLE_SHEETS_CREDENTIAL) throw new Error("Google Sheets 未配置服务账号凭据");
+
+  if(pathName.includes("/fields/table/")){
+    if(method==="GET") return (await getGoogleSheetHeaders()).map(f=>({...f}));
+    if(method==="POST"){
+      const name=String(body?.name||"").trim();
+      if(!name) throw new Error("Google Sheets 字段名称为空");
+      await ensureGoogleSheetField(name);
+      return {name,type:"text",read_only:false};
+    }
+  }
+
+  const valueRange=encodeURIComponent("'"+GOOGLE_SHEETS_TAB.replace(/'/g,"''")+"'");
+  if(method==="GET" && pathName.includes("/rows/table/")){
+    const data=await googleSheetsRequest("GET","/values/"+valueRange+"?majorDimension=ROWS");
+    const values=Array.isArray(data.values)?data.values:[];
+    const headers=values[0]||[];
+    const results=[];
+    for(let i=1;i<values.length;i++){
+      const row=values[i]||[];
+      const obj={id:i+1};
+      headers.forEach((h,j)=>{if(String(h||"").trim()) obj[h]=row[j]??"";});
+      results.push(obj);
+    }
+    return {results,next:null};
+  }
+
+  const rowMatch=pathName.match(/\/rows\/table\/[^/]+\/(\d+)/);
+  const rowNumber=rowMatch?Number(rowMatch[1]):0;
+  if(method==="POST" && pathName.includes("/rows/table/")){
+    const fields=await getGoogleSheetHeaders();
+    const row=fields.map(f=>body?.[f.name]===undefined?"":String(body[f.name]));
+    const append=await googleSheetsRequest("POST","/values/"+valueRange+"!A:Z:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS",{
+      majorDimension:"ROWS",values:[row]
+    });
+    const updatedRange=String(append?.updates?.updatedRange||"");
+    const m=updatedRange.match(/!.*?(\\d+):/);
+    const id=m?Number(m[1]):0;
+    return {...body,id:id||null};
+  }
+  if(method==="PATCH" && rowNumber>1){
+    const fields=await getGoogleSheetHeaders();
+    const row=fields.map(f=>body?.[f.name]===undefined?"":String(body[f.name]));
+    const endCol=String.fromCharCode(65+Math.min(fields.length-1,25));
+    await googleSheetsRequest("PUT","/values/"+encodeURIComponent("'"+GOOGLE_SHEETS_TAB+"'!A"+rowNumber+":"+endCol+rowNumber)+"?valueInputOption=USER_ENTERED",{
+      range:"'"+GOOGLE_SHEETS_TAB+"'!A"+rowNumber+":"+endCol+rowNumber,majorDimension:"ROWS",values:[row]
+    });
+    return {...body,id:rowNumber};
+  }
+  if(method==="DELETE" && rowNumber>1){
+    const fields=await getGoogleSheetHeaders();
+    const endCol=String.fromCharCode(65+Math.min(fields.length-1,25));
+    await googleSheetsRequest("POST",":batchUpdate",{
+      requests:[{updateCells:{range:{sheetId:0,startRowIndex:rowNumber-1,endRowIndex:rowNumber,startColumnIndex:0,endColumnIndex:fields.length},rows:[{values:fields.map(()=>({userEnteredValue:{stringValue:""}}))}],fields:"userEnteredValue"}}]
+    });
+    return {};
+  }
+  throw new Error("Google Sheets 未支持的共享数据操作: "+method+" "+pathName);
+}
+
+async function checkGoogle SheetsConnection(){
+  return checkGoogleSheetsConnection();
+}
+
+{
+  if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) {
     baserow.enabled = false;
     baserow.connected = false;
-    baserow.lastError = "未配置 BASEROW_TOKEN / BASEROW_TABLE_ID";
+    baserow.lastError = "未配置 GOOGLE_SHEETS_CREDENTIAL / GOOGLE_SHEETS_ID";
     return false;
   }
   try {
     await baserowRequest(
       "GET",
-      "/api/database/rows/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/?user_field_names=true&size=1"
+      "/api/database/rows/table/" + encodeURIComponent(GOOGLE_SHEETS_ID) + "/?user_field_names=true&size=1"
     );
     baserow.enabled = true;
     baserow.connected = true;
     baserow.lastError = "";
     baserow.lastOkAt = Date.now();
-    console.log("🗄️ Baserow: 已连接，table=" + BASEROW_TABLE_ID);
+    console.log("📊 Google Sheets: 已连接，table=" + GOOGLE_SHEETS_ID);
     return true;
   } catch (e) {
     baserow.enabled = true;
     baserow.connected = false;
     baserow.lastError = String(e?.message || e);
     if(e?.baserowCode==="TABLE_PERMISSION_DENIED") {
-      baserow.lastError += " | 请检查 BASEROW_TABLE_ID 是否属于当前 Token 所在 workspace，以及 Token 是否勾选该表的 Read 权限";
+      baserow.lastError += " | 请检查 GOOGLE_SHEETS_ID 是否属于当前 Token 所在 workspace，以及 Token 是否勾选该表的 Read 权限";
     }
-    console.error("❌ Baserow 连接失败:", baserow.lastError);
+    console.error("❌ Google Sheets 连接失败:", baserow.lastError);
     return false;
   }
 }
 
-// Baserow 资源同步：扫描/监听到资源后自动写入资源表。
+// Google Sheets 资源同步：扫描/监听到资源后自动写入资源表。
 // 兼容不同模板字段名称；不会覆盖用户已有的其他字段。
 let baserowFieldsCache = null;
 let baserowSyncQueue = Promise.resolve();
@@ -366,24 +482,24 @@ function baserowNormName(v) {
   return String(v || "").trim().toLowerCase().replace(/[\\s_\-\/（）()：:]+/g, "");
 }
 
-async function getBaserowFields(force=false) {
+async function getGoogle SheetsFields(force=false) {
   if (baserowFieldsCache && !force) return baserowFieldsCache;
   const fields = await baserowRequest(
     "GET",
-    "/api/database/fields/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/"
+    "/api/database/fields/table/" + encodeURIComponent(GOOGLE_SHEETS_ID) + "/"
   );
   baserowFieldsCache = Array.isArray(fields) ? fields : [];
-  console.log("🗄️ Baserow 字段:", baserowFieldsCache.map(x => x.name).join(" | "));
+  console.log("📊 Google Sheets 字段:", baserowFieldsCache.map(x => x.name).join(" | "));
   return baserowFieldsCache;
 }
 
-async function ensureBaserowRecoveryFields() {
-  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return [];
+async function ensureGoogle SheetsRecoveryFields() {
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return [];
   const required=[
     {name:"文件夹",type:"text"},
     {name:"消息ID",type:"text"}
   ];
-  let fields=await getBaserowFields(true);
+  let fields=await getGoogle SheetsFields(true);
   const created=[];
 
   for(const spec of required){
@@ -394,16 +510,16 @@ async function ensureBaserowRecoveryFields() {
     try{
       const field=await baserowRequest(
         "POST",
-        "/api/database/fields/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/",
+        "/api/database/fields/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/",
         {name:spec.name,type:spec.type}
       );
       created.push(field);
-      console.log("🛠️ Baserow 自动创建字段:",spec.name);
-      fields=await getBaserowFields(true);
+      console.log("🛠️ Google Sheets 自动创建字段:",spec.name);
+      fields=await getGoogle SheetsFields(true);
     }catch(e){
-      console.warn("⚠️ Baserow 无法自动创建字段「"+spec.name+"」：",String(e?.message||e));
+      console.warn("⚠️ Google Sheets 无法自动创建字段「"+spec.name+"」：",String(e?.message||e));
       try {
-        fields=await getBaserowFields(true);
+        fields=await getGoogle SheetsFields(true);
       } catch(refreshError) {
         // 如果连字段读取都无权限，交给上层统一处理 401。
         throw refreshError;
@@ -415,8 +531,8 @@ async function ensureBaserowRecoveryFields() {
   }
 
   if(created.length){
-    baserowFieldsCache=await getBaserowFields(true);
-    console.log("✅ Baserow 恢复字段检查完成：",created.map(x=>x?.name).filter(Boolean).join("、"));
+    baserowFieldsCache=await getGoogle SheetsFields(true);
+    console.log("✅ Google Sheets 恢复字段检查完成：",created.map(x=>x?.name).filter(Boolean).join("、"));
   }
   return created;
 }
@@ -435,7 +551,7 @@ function baserowValueForField(field, value, fallbackType="text") {
     return Number.isFinite(n) ? n : 0;
   }
   if (type === "boolean") return Boolean(value);
-  // Baserow 单选/多选字段必须使用表格中已经存在的选项，不能直接写入任意字符串。
+  // Google Sheets 单选/多选字段必须使用表格中已经存在的选项，不能直接写入任意字符串。
   if (type === "single_select" || type === "multiple_select") {
     const options = Array.isArray(field.select_options) ? field.select_options
       : Array.isArray(field.options) ? field.options : [];
@@ -457,10 +573,10 @@ function baserowValueForField(field, value, fallbackType="text") {
 }
 
 async function baserowSyncResource(item) {
-  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID || !item) return;
+  if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !item) return;
   try {
-    const fields = await getBaserowFields();
-    if (!fields.length) throw new Error("Baserow 表没有可用字段");
+    const fields = await getGoogle SheetsFields();
+    if (!fields.length) throw new Error("Google Sheets 表没有可用字段");
 
     const titleField = baserowPickField(fields, ["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
     const chatField = baserowPickField(fields, ["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
@@ -475,7 +591,7 @@ async function baserowSyncResource(item) {
 
     // 如果模板没有匹配名称字段，使用第一个可写文本字段作为主字段，确保扫描结果至少能落一行。
     const primary = titleField || fields.find(f => !f.read_only && ["text","long_text","url"].includes(String(f.type||"")));
-    if (!primary) throw new Error("Baserow 没有可写的文本字段，请在表格增加“资源名称”字段");
+    if (!primary) throw new Error("Google Sheets 没有可写的文本字段，请在表格增加“资源名称”字段");
 
     const payload = {};
     payload[primary.name] = baserowValueForField(primary, item.title || "未命名资源");
@@ -503,7 +619,7 @@ async function baserowSyncResource(item) {
     if (fileIdField) payload[fileIdField.name] = baserowValueForField(fileIdField, item.fileId || "");
     if (downloadField) payload[downloadField.name] = baserowValueForField(downloadField, Number(item.downloads || 0));
 
-    // 优先使用本地保存的 Baserow 行 ID；如果本地没有，使用共享缓存按 chatId+messageId 查找。
+    // 优先使用本地保存的 Google Sheets 行 ID；如果本地没有，使用共享缓存按 chatId+messageId 查找。
     if (!item.baserowRowId) {
       const key=String(item.chatId)+":"+String(item.messageId);
       const cached=baserowRowsCache.get(key);
@@ -513,7 +629,7 @@ async function baserowSyncResource(item) {
       try {
         const updated = await baserowRequest(
           "PATCH",
-          "/api/database/rows/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/" + encodeURIComponent(item.baserowRowId) + "/?user_field_names=true",
+          "/api/database/rows/table/" + encodeURIComponent(GOOGLE_SHEETS_ID) + "/" + encodeURIComponent(item.baserowRowId) + "/?user_field_names=true",
           payload
         );
         baserow.connected = true;
@@ -528,7 +644,7 @@ async function baserowSyncResource(item) {
     // 新资源创建一行，并把行 ID 保存回本地资源。
     const created = await baserowRequest(
       "POST",
-      "/api/database/rows/table/" + encodeURIComponent(BASEROW_TABLE_ID) + "/?user_field_names=true",
+      "/api/database/rows/table/" + encodeURIComponent(GOOGLE_SHEETS_ID) + "/?user_field_names=true",
       payload
     );
     item.baserowRowId = created?.id || null;
@@ -540,13 +656,13 @@ async function baserowSyncResource(item) {
   } catch (e) {
     baserow.connected = false;
     baserow.lastError = String(e?.message || e);
-    console.error("❌ Baserow 资源同步失败:", baserow.lastError);
+    console.error("❌ Google Sheets 资源同步失败:", baserow.lastError);
     return null;
   }
 }
 
 function requestSharedDataRefresh() {
-  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
   if (sharedImmediateRefreshTimer) clearTimeout(sharedImmediateRefreshTimer);
   sharedImmediateRefreshTimer = setTimeout(() => {
     sharedImmediateRefreshTimer = null;
@@ -554,19 +670,19 @@ function requestSharedDataRefresh() {
   }, 1200);
 }
 
-function queueBaserowResourceSync(item) {
-  if (!BASEROW_TOKEN || !BASEROW_TABLE_ID || !item) return;
+function queueGoogle SheetsResourceSync(item) {
+  if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !item) return;
   baserowSyncQueue = baserowSyncQueue
     .then(() => baserowSyncResource(item))
-    .catch(e => console.error("❌ Baserow 同步队列:", e.message));
+    .catch(e => console.error("❌ Google Sheets 同步队列:", e.message));
   requestSharedDataRefresh();
 }
 
-async function waitBaserowSyncQueue() {
+async function waitGoogle SheetsSyncQueue() {
   await baserowSyncQueue;
 }
 
-/* ===== 共享资源中心：Baserow 作为唯一共享数据源 ===== */
+/* ===== 共享资源中心：Google Sheets 作为唯一共享数据源 ===== */
 let baserowRowsCache = new Map();
 let sharedRefreshAt = 0;
 let sharedRefreshPromise = null;
@@ -600,12 +716,12 @@ function normalizeSharedDirectories() {
   }
 }
 
-async function listAllBaserowRows() {
+async function listAllGoogle SheetsRows() {
   const rows=[];
   for(let page=1; page<=1000; page++) {
     const data=await baserowRequest(
       "GET",
-      "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/?user_field_names=true&size=200&page="+page
+      "/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/?user_field_names=true&size=200&page="+page
     );
     const part=Array.isArray(data?.results)?data.results:[];
     rows.push(...part);
@@ -616,16 +732,16 @@ async function listAllBaserowRows() {
 
 
 async function baserowSyncDirectory(directory) {
-  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || !directory) return;
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !directory) return;
   try {
-    console.log("📁 Baserow 文件夹同步:", String(directory.name||""), "id="+String(directory.id||""));
-    const fields=await getBaserowFields();
+    console.log("📁 Google Sheets 文件夹同步:", String(directory.name||""), "id="+String(directory.id||""));
+    const fields=await getGoogle SheetsFields();
     const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
     const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
     const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
     const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
     const primary=titleField || fields.find(f=>!f.read_only && ["text","long_text"].includes(String(f.type||"")));
-    if(!primary || !folderField) throw new Error("Baserow 缺少可用于共享文件夹的“资源名称/文件夹”字段");
+    if(!primary || !folderField) throw new Error("Google Sheets 缺少可用于共享文件夹的“资源名称/文件夹”字段");
 
     const markerTitle="__FOLDER__:"+directory.id+":"+Buffer.from(String(directory.name)).toString("base64url");
     const existing=Array.from(baserowRowsCache.values()).find(row=>{
@@ -638,55 +754,55 @@ async function baserowSyncDirectory(directory) {
     if(messageField) payload[messageField.name]=baserowValueForField(messageField,0);
     if(chatField) payload[chatField.name]=baserowValueForField(chatField,repo()?.chatId||"");
     if(existing?.id) {
-      await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+existing.id+"/?user_field_names=true",payload);
+      await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/"+existing.id+"/?user_field_names=true",payload);
       baserowRowsCache.set("folder:"+directory.id,{...existing,...payload});
     } else {
-      const created=await baserowRequest("POST","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/?user_field_names=true",payload);
+      const created=await baserowRequest("POST","/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/?user_field_names=true",payload);
       baserowRowsCache.set("folder:"+directory.id,created);
     }
     baserow.connected=true; baserow.lastOkAt=Date.now(); baserow.lastError="";
   } catch(e) {
     baserow.lastError=String(e?.message||e);
-    console.error("❌ Baserow 文件夹同步失败:",baserow.lastError);
+    console.error("❌ Google Sheets 文件夹同步失败:",baserow.lastError);
   }
 }
 
-function queueBaserowDirectorySync(directory) {
-  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || !directory) return;
+function queueGoogle SheetsDirectorySync(directory) {
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !directory) return;
   // 文件夹必须优先于资源批量写入，否则历史扫描/迁移后的大量资源会把目录同步堵住。
   baserowDirectorySyncQueue=baserowDirectorySyncQueue
     .then(()=>baserowSyncDirectory(directory))
-    .catch(e=>console.error("❌ Baserow 文件夹队列:",e.message));
+    .catch(e=>console.error("❌ Google Sheets 文件夹队列:",e.message));
   requestSharedDataRefresh();
 }
 
-async function waitBaserowDirectorySyncQueue() {
+async function waitGoogle SheetsDirectorySyncQueue() {
   await baserowDirectorySyncQueue;
 }
 
 async function baserowDeleteRow(rowId) {
-  if(!rowId || !BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  if(!rowId || !GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
   try {
-    await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(rowId)+"/");
+    await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/"+encodeURIComponent(rowId)+"/");
     baserowRowsCache.delete(String(rowId));
   } catch(e) {
-    console.warn("⚠️ Baserow 删除行失败:",String(e?.message||e));
+    console.warn("⚠️ Google Sheets 删除行失败:",String(e?.message||e));
   }
 }
 
-function queueBaserowDeleteResource(item) {
-  if(!item || !BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+function queueGoogle SheetsDeleteResource(item) {
+  if(!item || !GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
   const rowId=item.baserowRowId;
   if(!rowId) return;
-  baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(rowId)).catch(e=>console.error("❌ Baserow 删除队列:",e.message));
+  baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(rowId)).catch(e=>console.error("❌ Google Sheets 删除队列:",e.message));
   requestSharedDataRefresh();
 }
 
 async function repairLostFolderAssignments(uid) {
   const started=Date.now();
   try {
-    await ensureBaserowRecoveryFields();
-    const fields=await getBaserowFields(true);
+    await ensureGoogle SheetsRecoveryFields();
+    const fields=await getGoogle SheetsFields(true);
     const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
     const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
     const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
@@ -696,14 +812,14 @@ async function repairLostFolderAssignments(uid) {
     // 新表优先使用“聊天ID + 消息ID”；旧表没有这两个字段时，
     // 直接从“网址/链接”里的 Telegram 消息链接恢复，避免强制改表结构。
     if(!folderField) {
-      throw new Error("Baserow 恢复需要字段：文件夹。请在表中保留“文件夹”字段。");
+      throw new Error("Google Sheets 恢复需要字段：文件夹。请在表中保留“文件夹”字段。");
     }
     if((!chatField || !messageField) && !urlField) {
       const missing=[!chatField?"聊天ID":"",!messageField?"消息ID":""].filter(Boolean).join("、");
-      throw new Error("Baserow 恢复需要字段："+missing+"。当前表也没有“网址/链接”字段可用于兼容恢复。");
+      throw new Error("Google Sheets 恢复需要字段："+missing+"。当前表也没有“网址/链接”字段可用于兼容恢复。");
     }
 
-    const rows=await listAllBaserowRows();
+    const rows=await listAllGoogle SheetsRows();
     const backup=readJsonFile(BACKUP_FILE);
     const dirs=[...(db.directories||[]),...((backup&&Array.isArray(backup.directories))?backup.directories:[])];
     const dirNameById=new Map();
@@ -781,7 +897,7 @@ async function repairLostFolderAssignments(uid) {
         try{
           await baserowRequest(
             "PATCH",
-            "/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",
+            "/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",
             u.payload
           );
           written++;
@@ -798,11 +914,11 @@ async function repairLostFolderAssignments(uid) {
       TOKEN,
       uid,
       "<b>🛠️ 文件夹资源恢复完成</b>\n━━━━━━━━━━━━━━\n"+
-      "📦 Baserow 资源行：<b>"+rows.length+"</b>\n"+
+      "📦 Google Sheets 资源行：<b>"+rows.length+"</b>\n"+
       "📁 当前文件夹：<b>"+db.directories.length+"</b>\n"+
       "♻️ 找回文件夹关联：<b>"+found+"</b>\n"+
       "🔗 网址兼容恢复：<b>"+urlRecovered+"</b>\n"+
-      "💾 已写回 Baserow：<b>"+written+"</b>\n"+
+      "💾 已写回 Google Sheets：<b>"+written+"</b>\n"+
       "🧩 本地索引修复：<b>"+localFixed+"</b>\n"+
       "🗃️ 备份："+(backup?"<b>已读取</b>":"<b>未找到</b>")+"\n"+
       "⏱️ 用时："+Math.round((Date.now()-started)/1000)+" 秒",
@@ -814,7 +930,7 @@ async function repairLostFolderAssignments(uid) {
   }
 }
 
-async function backfillBaserowFolderAssignments(rows, fields, folderField, titleField) {
+async function backfillGoogle SheetsFolderAssignments(rows, fields, folderField, titleField) {
   if(!folderField || !titleField || !Array.isArray(rows)) return 0;
   const localByTitle=new Map();
   for(const item of (db.resources||[])) {
@@ -841,23 +957,23 @@ async function backfillBaserowFolderAssignments(rows, fields, folderField, title
     const batch=updates.slice(i,i+20);
     await Promise.all(batch.map(async u=>{
       try {
-        await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",u.payload);
+        await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/"+encodeURIComponent(u.id)+"/?user_field_names=true",u.payload);
         done++;
       } catch(e) {
-        console.warn("⚠️ Baserow 文件夹回填失败 row="+u.id+":",String(e?.message||e));
+        console.warn("⚠️ Google Sheets 文件夹回填失败 row="+u.id+":",String(e?.message||e));
       }
     }));
   }
-  if(done) console.log("📁 Baserow 文件夹关联回填完成："+done+" 条");
+  if(done) console.log("📁 Google Sheets 文件夹关联回填完成："+done+" 条");
   return done;
 }
 
-async function pullBaserowSharedData() {
-  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID || sharedSyncLock) return false;
+async function pullGoogle SheetsSharedData() {
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || sharedSyncLock) return false;
   sharedSyncLock=true;
   try {
-    const fields=await getBaserowFields();
-    const rows=await listAllBaserowRows();
+    const fields=await getGoogle SheetsFields();
+    const rows=await listAllGoogle SheetsRows();
     const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
     const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
     const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
@@ -912,9 +1028,9 @@ async function pullBaserowSharedData() {
       byKey.set(key,{row,title,chat,message,folderName});
     }
 
-    console.log("🧪 Baserow 资源恢复诊断：网址非空="+urlNonEmpty+" 私有链接匹配="+telegramPrivateMatches+" 公开链接匹配="+telegramUrlMatches+" 可恢复="+byKey.size+" 总行="+rows.length);
-    // MySQL 为正式数据层，Baserow 是手机管理界面：
-    // Baserow 修改名称/描述/文件夹/类型等字段后，立即同步回内存并由 saveDb() 写入 MySQL。
+    console.log("🧪 Google Sheets 资源恢复诊断：网址非空="+urlNonEmpty+" 私有链接匹配="+telegramPrivateMatches+" 公开链接匹配="+telegramUrlMatches+" 可恢复="+byKey.size+" 总行="+rows.length);
+    // MySQL 为正式数据层，Google Sheets 是手机管理界面：
+    // Google Sheets 修改名称/描述/文件夹/类型等字段后，立即同步回内存并由 saveDb() 写入 MySQL。
     const localResources=Array.isArray(db.resources)?db.resources:[];
     const localDirectories=Array.isArray(db.directories)?db.directories:[];
     const remoteByKey=new Map(byKey);
@@ -924,7 +1040,7 @@ async function pullBaserowSharedData() {
       const remote=remoteByKey.get(key);
       if(remote?.row?.id) {
         item.baserowRowId=remote.row.id;
-        // Baserow 是手机端管理层：把人工修改写回本地内存，随后 saveDb() -> MySQL。
+        // Google Sheets 是手机端管理层：把人工修改写回本地内存，随后 saveDb() -> MySQL。
         const row=remote.row;
         const remoteTitle=String(row?.[titleField?.name]??"").trim();
         const remoteCaption=captionField ? String(row?.[captionField.name]??"") : "";
@@ -945,55 +1061,55 @@ async function pullBaserowSharedData() {
         matched++;
       } else if(key!==":") {
         missing++;
-        queueBaserowResourceSync(item);
+        queueGoogle SheetsResourceSync(item);
       }
     }
     for(const directory of localDirectories) {
-      queueBaserowDirectorySync(directory);
+      queueGoogle SheetsDirectorySync(directory);
     }
-    if(missing) console.log("🔗 本地为准：Baserow 缺少 "+missing+" 条资源，已加入同步队列");
-    console.log("🔗 Baserow 刷新采用本地表格/本地数据库为准：保留本地资源="+localResources.length+" 文件夹="+localDirectories.length+"，远端匹配="+matched);
+    if(missing) console.log("🔗 本地为准：Google Sheets 缺少 "+missing+" 条资源，已加入同步队列");
+    console.log("🔗 Google Sheets 刷新采用本地表格/本地数据库为准：保留本地资源="+localResources.length+" 文件夹="+localDirectories.length+"，远端匹配="+matched);
 
     db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
     saveDb();
-    console.log("🔄 Baserow 共享数据已刷新（MySQL 主库）：资源="+db.resources.length+"，文件夹="+db.directories.length);
+    console.log("🔄 Google Sheets 共享数据已刷新（MySQL 主库）：资源="+db.resources.length+"，文件夹="+db.directories.length);
     return true;
   } catch(e) {
     baserow.connected=false;
     baserow.lastError=String(e?.message||e);
-    console.error("❌ Baserow 共享数据刷新失败:",baserow.lastError);
+    console.error("❌ Google Sheets 共享数据刷新失败:",baserow.lastError);
     return false;
   } finally {
     sharedSyncLock=false;
   }
 }
 
-async function initializeSharedBaserow() {
-  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+async function initializeSharedGoogle Sheets() {
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
   try {
     // 先完成一次真实连接检查，再进入共享初始化。
-    // 避免启动初期 checkBaserowConnection() 仍在异步执行时，
+    // 避免启动初期 checkGoogle SheetsConnection() 仍在异步执行时，
     // 日志暂时显示 enabled=false，导致误判为没有启用共享。
-    const connected = await checkBaserowConnection();
+    const connected = await checkGoogle SheetsConnection();
     if(!connected) {
-      console.error("❌ Baserow 共享初始化终止：连接检查未通过", baserow.lastError || "");
+      console.error("❌ Google Sheets 共享初始化终止：连接检查未通过", baserow.lastError || "");
       return;
     }
-    console.log("🔗 Baserow 共享连接确认：enabled="+String(baserow.enabled)+" connected="+String(baserow.connected)+" table="+BASEROW_TABLE_ID);
+    console.log("🔗 Google Sheets 共享连接确认：enabled="+String(baserow.enabled)+" connected="+String(baserow.connected)+" table="+GOOGLE_SHEETS_ID);
 
-    await ensureBaserowRecoveryFields();
+    await ensureGoogle SheetsRecoveryFields();
     normalizeSharedDirectories();
-    // 首次切换共享模式时，先保留本地快照，再与 Baserow 做并集合并，绝不因为远端为空而丢失本地资源。
+    // 首次切换共享模式时，先保留本地快照，再与 Google Sheets 做并集合并，绝不因为远端为空而丢失本地资源。
     const localResources=(db.resources||[]).map(x=>({...x}));
     const localDirectories=(db.directories||[]).map(x=>({...x}));
-    await pullBaserowSharedData();
+    await pullGoogle SheetsSharedData();
 
     const remoteKeys=new Set(db.resources.map(x=>String(x.chatId)+":"+String(x.messageId)));
     for(const item of localResources) {
       const key=String(item.chatId)+":"+String(item.messageId);
       if(!remoteKeys.has(key)) {
         db.resources.push(item);
-        queueBaserowResourceSync(item);
+        queueGoogle SheetsResourceSync(item);
       }
     }
 
@@ -1005,23 +1121,23 @@ async function initializeSharedBaserow() {
         db.directories.push(nd);
         dirMap.set(id,nd);
       }
-      queueBaserowDirectorySync(dirMap.get(id));
+      queueGoogle SheetsDirectorySync(dirMap.get(id));
     }
 
     db.resources=db.resources.slice(0,MAX_RESOURCES);
     saveDb();
-    await waitBaserowSyncQueue();
-    await waitBaserowDirectorySyncQueue();
+    await waitGoogle SheetsSyncQueue();
+    await waitGoogle SheetsDirectorySyncQueue();
 
     // 清理后重新拉取，确保内存中的目录也同步为最终状态。
-    await pullBaserowSharedData();
+    await pullGoogle SheetsSharedData();
   } catch(e) {
     console.error("❌ 共享数据初始化失败:",String(e?.message||e));  }
 }
 
 
 async function refreshSharedData(force=false) {
-  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return;
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
   const now=Date.now();
   if(!force && now-sharedRefreshAt<300000) return;
   if(sharedRefreshPromise) return sharedRefreshPromise;
@@ -1029,17 +1145,17 @@ async function refreshSharedData(force=false) {
     const started=Date.now();
     try {
       // 共享目录读取不能等待资源写入队列；否则历史扫描/批量同步时，
-      // 前面的几千条 Baserow 写入会把目录刷新一直排队，导致其他机器人看不到新目录。
+      // 前面的几千条 Google Sheets 写入会把目录刷新一直排队，导致其他机器人看不到新目录。
       if(db.settings.historyScan?.status==="running" || db.settings.baserowRecovery?.status==="running") {
-        console.log("⏸️ Baserow 共享刷新：后台历史任务进行中，跳过本轮");
+        console.log("⏸️ Google Sheets 共享刷新：后台历史任务进行中，跳过本轮");
         return;
       }
-      console.log("🔄 Baserow 共享刷新开始");
-      await pullBaserowSharedData();
+      console.log("🔄 Google Sheets 共享刷新开始");
+      await pullGoogle SheetsSharedData();
       sharedRefreshAt=Date.now();
-      console.log("✅ Baserow 共享刷新完成：耗时="+(Date.now()-started)+"ms 文件夹="+db.directories.length+" 资源="+db.resources.length);
+      console.log("✅ Google Sheets 共享刷新完成：耗时="+(Date.now()-started)+"ms 文件夹="+db.directories.length+" 资源="+db.resources.length);
     } catch(e) {
-      console.error("❌ Baserow 共享刷新异常:",String(e?.message||e));
+      console.error("❌ Google Sheets 共享刷新异常:",String(e?.message||e));
     } finally {
       sharedRefreshPromise=null;
     }
@@ -1461,12 +1577,12 @@ function indexHistoryMessage(message, chatId) {
   } else {
     db.resources.unshift(item);
   }
-  queueBaserowResourceSync(db.resources.find(x=>x.chatId===item.chatId&&x.messageId===item.messageId) || item);
+  queueGoogle SheetsResourceSync(db.resources.find(x=>x.chatId===item.chatId&&x.messageId===item.messageId) || item);
   return true;
 }
 
-async function recoverBaserowHistory(uid, targetRepo=null) {
-  if(!BASEROW_TOKEN || !BASEROW_TABLE_ID) return sendHtml(TOKEN,uid,"❌ <b>Baserow 共享未配置</b>\\n\\n请先配置 BASEROW_TOKEN 和 BASEROW_TABLE_ID。",adminMenu());
+async function recoverGoogle SheetsHistory(uid, targetRepo=null) {
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return sendHtml(TOKEN,uid,"❌ <b>Google Sheets 共享未配置</b>\\n\\n请先配置 GOOGLE_SHEETS_CREDENTIAL 和 GOOGLE_SHEETS_ID。",adminMenu());
   const r=targetRepo || repo();
   if(!r) return sendHtml(TOKEN,uid,"❌ <b>没有可恢复的资源仓库</b>\\n\\n请先绑定原来的 Telegram 资源仓库。",adminMenu());
   const current=db.settings.baserowRecovery||{};
@@ -1474,8 +1590,8 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
     const started=Number(current.startedAt||0);
     const last=Number(current.lastMessageId||0);
     const stale=started>0 && (Date.now()-started)>2*60*1000;
-    if(!stale) return sendHtml(TOKEN,uid,"🔄 <b>Baserow 历史恢复已经在运行</b>\\n\\n📨 已扫描："+Number(current.scanned||0).toLocaleString()+" 条\\n🔗 已匹配："+Number(current.matched||0).toLocaleString()+" 条\\n🆔 当前进度："+last+"\\n\\n请等待任务继续。",adminMenu());
-    console.warn("⚠️ Baserow 历史恢复检测到旧任务卡住，自动从断点继续：", {scanned:Number(current.scanned||0),matched:Number(current.matched||0),lastMessageId:last});
+    if(!stale) return sendHtml(TOKEN,uid,"🔄 <b>Google Sheets 历史恢复已经在运行</b>\\n\\n📨 已扫描："+Number(current.scanned||0).toLocaleString()+" 条\\n🔗 已匹配："+Number(current.matched||0).toLocaleString()+" 条\\n🆔 当前进度："+last+"\\n\\n请等待任务继续。",adminMenu());
+    console.warn("⚠️ Google Sheets 历史恢复检测到旧任务卡住，自动从断点继续：", {scanned:Number(current.scanned||0),matched:Number(current.matched||0),lastMessageId:last});
     current.status="error";
     current.error="上一次恢复进程疑似中断，自动从断点继续。";
     current.finishedAt=Date.now();
@@ -1485,17 +1601,17 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
 
   let fields, rows;
   try {
-    await ensureBaserowRecoveryFields();
-    fields=await getBaserowFields(true);
-    rows=await listAllBaserowRows();
+    await ensureGoogle SheetsRecoveryFields();
+    fields=await getGoogle SheetsFields(true);
+    rows=await listAllGoogle SheetsRows();
   }
-  catch(e) { return sendHtml(TOKEN,uid,"❌ <b>读取 Baserow 失败</b>\\n\\n"+escapeHtml(e?.message||e),adminMenu()); }
+  catch(e) { return sendHtml(TOKEN,uid,"❌ <b>读取 Google Sheets 失败</b>\\n\\n"+escapeHtml(e?.message||e),adminMenu()); }
 
   const titleField=baserowPickField(fields,["名称","资源名称","资源名","标题","资源标题","文件名","文件名称","资源","Name","Title","Resource","Resource Name","File Name"]);
   const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
   const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
 
-  // 兼容旧 Baserow 表：历史数据可能没有“资源名称”字段。
+  // 兼容旧 Google Sheets 表：历史数据可能没有“资源名称”字段。
   // 恢复时优先使用 Telegram 定位信息（聊天ID+消息ID/网址），只有没有定位信息时才使用名称匹配。
   const normalizeMatchTitle = value => String(value||"").replace(/\u200b/g,"").replace(/[^\p{L}\p{N}]+/gu,"").trim().toLowerCase();
   const parseRowDate = row => {
@@ -1555,7 +1671,7 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
 
   let progressMessage=null;
   const elapsedText=()=>{const sec=Math.max(0,Math.floor((Date.now()-startedAt)/1000));return String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0");};
-  const render=done=>"<b>"+(done?"✅ ":"🔄 ")+"Baserow 历史资源恢复</b>\\n━━━━━━━━━━━━━━\\n📦 仓库：<b>"+escapeHtml(state.repositoryTitle)+"</b>\\n🗃️ Baserow 资源行：<b>"+resourceRowCount.toLocaleString()+"</b>\\n📨 已扫描：<b>"+Number(state.scanned).toLocaleString()+"</b>\\n🔗 已匹配：<b>"+Number(state.matched).toLocaleString()+"</b>\\n📁 已恢复文件夹：<b>"+Number(state.folderMatched).toLocaleString()+"</b>\\n⚠️ 未匹配：<b>"+Number(state.unmatched).toLocaleString()+"</b>\\n♻️ 同名候选：<b>"+Number(state.duplicateTitle).toLocaleString()+"</b>\\n🆔 当前进度：<code>"+Number(state.lastMessageId||0)+"</code>\\n⏱️ 用时：<b>"+elapsedText()+"</b>\\n━━━━━━━━━━━━━━\\n"+(done?"📌 Baserow 原有记录未删除，仅补回 Telegram 定位信息。":"⏳ 正在从 Telegram 历史消息匹配 Baserow 记录…");
+  const render=done=>"<b>"+(done?"✅ ":"🔄 ")+"Google Sheets 历史资源恢复</b>\\n━━━━━━━━━━━━━━\\n📦 仓库：<b>"+escapeHtml(state.repositoryTitle)+"</b>\\n🗃️ Google Sheets 资源行：<b>"+resourceRowCount.toLocaleString()+"</b>\\n📨 已扫描：<b>"+Number(state.scanned).toLocaleString()+"</b>\\n🔗 已匹配：<b>"+Number(state.matched).toLocaleString()+"</b>\\n📁 已恢复文件夹：<b>"+Number(state.folderMatched).toLocaleString()+"</b>\\n⚠️ 未匹配：<b>"+Number(state.unmatched).toLocaleString()+"</b>\\n♻️ 同名候选：<b>"+Number(state.duplicateTitle).toLocaleString()+"</b>\\n🆔 当前进度：<code>"+Number(state.lastMessageId||0)+"</code>\\n⏱️ 用时：<b>"+elapsedText()+"</b>\\n━━━━━━━━━━━━━━\\n"+(done?"📌 Google Sheets 原有记录未删除，仅补回 Telegram 定位信息。":"⏳ 正在从 Telegram 历史消息匹配 Google Sheets 记录…");
 
   const updateProgress=async force=>{
     saveDb();
@@ -1579,7 +1695,7 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
     const i=db.resources.findIndex(x=>String(x.chatId)===item.chatId&&Number(x.messageId)===item.messageId);
     if(i>=0) db.resources[i]={...db.resources[i],...item}; else db.resources.unshift(item);
     const saved=db.resources.find(x=>String(x.chatId)===item.chatId&&Number(x.messageId)===item.messageId)||item;
-    queueBaserowResourceSync(saved);
+    queueGoogle SheetsResourceSync(saved);
     return true;
   };
 
@@ -1651,7 +1767,7 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
     }
 
     db.resources=db.resources.slice(0,MAX_RESOURCES);
-    await waitBaserowSyncQueue(); await waitBaserowDirectorySyncQueue();
+    await waitGoogle SheetsSyncQueue(); await waitGoogle SheetsDirectorySyncQueue();
     state.status="completed"; state.finishedAt=Date.now(); state.usedRowIds=[...usedRowIds].slice(-30000); saveDb();
     const doneText=render(true)+"\\n\\n📚 当前资源索引：<b>"+db.resources.length.toLocaleString()+"</b> 条";
     if(progressMessage) return safeEdit(TOKEN,{chat_id:uid,message_id:progressMessage.message_id,text:doneText,parse_mode:"HTML",reply_markup:adminMenu().reply_markup});
@@ -1659,7 +1775,7 @@ async function recoverBaserowHistory(uid, targetRepo=null) {
   } catch(e) {
     state.status="error"; state.error=String(e?.message||e); state.finishedAt=Date.now(); state.usedRowIds=[...usedRowIds].slice(-30000); saveDb();
     console.error("❌ BASEROW HISTORY RECOVERY:",e);
-    const errorText="<b>❌ Baserow 历史恢复中断</b>\\n\\n"+render(false)+"\\n\\n⚠️ "+escapeHtml(e?.message||e)+"\\n\\n再次点击“恢复历史资源”会从当前断点继续。";
+    const errorText="<b>❌ Google Sheets 历史恢复中断</b>\\n\\n"+render(false)+"\\n\\n⚠️ "+escapeHtml(e?.message||e)+"\\n\\n再次点击“恢复历史资源”会从当前断点继续。";
     if(progressMessage) return safeEdit(TOKEN,{chat_id:uid,message_id:progressMessage.message_id,text:errorText,parse_mode:"HTML",reply_markup:adminMenu().reply_markup});
     return sendHtml(TOKEN,uid,errorText,adminMenu());
   }
@@ -1738,7 +1854,7 @@ async function scanHistory(uid, targetRepo=null) {
   };
 
   try {
-    console.log("🔎 HISTORY SCAN START:", { uid:String(uid), repoId:String(r.chatId||""), repoTitle:String(r.title||""), repoUsername:String(r.username||""), checkpoint:previousCheckpoint, baserow:Boolean(BASEROW_TOKEN && BASEROW_TABLE_ID) });
+    console.log("🔎 HISTORY SCAN START:", { uid:String(uid), repoId:String(r.chatId||""), repoTitle:String(r.title||""), repoUsername:String(r.username||""), checkpoint:previousCheckpoint, baserow:Boolean(GOOGLE_SHEETS_CREDENTIAL && GOOGLE_SHEETS_ID) });
     await updateProgress(0,0,previousCheckpoint,true);
     try {
       await sendHtml(TOKEN,uid,"<b>🚀 扫描任务已启动</b>\\n\\n📦 仓库："+escapeHtml(r.title||String(r.chatId))+"\\n🔐 正在连接扫描账号，请稍候…");
@@ -1766,7 +1882,7 @@ async function scanHistory(uid, targetRepo=null) {
     }
 
     db.resources=db.resources.slice(0,MAX_RESOURCES);
-    await waitBaserowSyncQueue();
+    await waitGoogle SheetsSyncQueue();
     db.settings.historyScan={status:"completed",scanned,indexed,startedAt,finishedAt:Date.now(),error:"",lastMessageId:boundary};
     saveDb();
 
@@ -1844,7 +1960,7 @@ function repositoryAutoSyncFolderId(sourceItem,targetId){
   if(!folderName)return null;
   const normalized=folderName.replace(/\s+/g," ").trim().toLowerCase();
   let targetDir=db.directories.find(d=>String(d.name||"").replace(/\s+/g," ").trim().toLowerCase()===normalized);
-  if(!targetDir){targetDir={id:sharedDirectoryId(folderName),name:folderName,createdAt:Date.now(),sourceMigration:"auto:"+String(targetId)};db.directories.push(targetDir);queueBaserowDirectorySync(targetDir);}
+  if(!targetDir){targetDir={id:sharedDirectoryId(folderName),name:folderName,createdAt:Date.now(),sourceMigration:"auto:"+String(targetId)};db.directories.push(targetDir);queueGoogle SheetsDirectorySync(targetDir);}
   return String(targetDir.id);
 }
 function leftCountSafe(arr,n){ return Math.max(0,Math.min(Number(n)||0,Array.isArray(arr)?arr.length:0)); }
@@ -2046,7 +2162,7 @@ async function repositoryAutoSyncBatch(batch){
     if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId)){
       db.resources.unshift(targetItem);
       db.resources=db.resources.slice(0,MAX_RESOURCES);
-      queueBaserowResourceSync(targetItem);
+      queueGoogle SheetsResourceSync(targetItem);
     }
 
     const index=state.queue.findIndex(x=>Number(x?.messageId||0)===messageId);
@@ -2427,7 +2543,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
       if(!targetDir){
         targetDir={id:sharedDirectoryId(folderName),name:folderName,createdAt:Date.now(),sourceMigration:taskKey};
         db.directories.push(targetDir);
-        queueBaserowDirectorySync(targetDir);
+        queueGoogle SheetsDirectorySync(targetDir);
       }
       state.folderMap[normalized]=String(targetDir.id);
       return String(targetDir.id);
@@ -2502,7 +2618,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
         const targetItem={...item,chatId:targetId,messageId,directoryId:directoryId||null,fileId:null,baserowRowId:null,migratedFrom:{chatId:sourceId,messageId:Number(item.messageId),at:Date.now()}};
         if(!db.resources.some(x=>String(x.chatId)===targetId&&Number(x.messageId)===messageId)){
           db.resources.unshift(targetItem);
-          queueBaserowResourceSync(targetItem);
+          queueGoogle SheetsResourceSync(targetItem);
         }
         completed.add(key);
         failedKeys.delete(key);
@@ -2614,7 +2730,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
     state.failedKeys=[...failedKeys].slice(-Math.max(MAX_RESOURCES,25000));
     state.queued=Math.max(0,ordered.length-completed.size);
     saveDb();
-    await waitBaserowSyncQueue();
+    await waitGoogle SheetsSyncQueue();
 
     const elapsed=Math.max(0,Math.floor((state.finishedAt-state.startedAt)/1000));
     const mm=String(Math.floor(elapsed/60)).padStart(2,"0"),ss=String(elapsed%60).padStart(2,"0");
@@ -3021,7 +3137,7 @@ function autoAssignResourceTagFolder(item) {
   }
   return folder;
 }
-function isBaserowFolderMarkerRow(row, fields) {
+function isGoogle SheetsFolderMarkerRow(row, fields) {
   if(!row || !Array.isArray(fields)) return false;
   const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
   const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
@@ -3036,20 +3152,20 @@ function isBaserowFolderMarkerRow(row, fields) {
 
 async function deleteAllFoldersKeepResources() {
   let folders=0, resources=0, errors=0;
-  if(BASEROW_TOKEN && BASEROW_TABLE_ID) {
+  if(GOOGLE_SHEETS_CREDENTIAL && GOOGLE_SHEETS_ID) {
     try {
-      const fields=await getBaserowFields(true);
-      const rows=await listAllBaserowRows();
+      const fields=await getGoogle SheetsFields(true);
+      const rows=await listAllGoogle SheetsRows();
       const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
       const markerRows=[];
       const resourceRows=[];
       for(const row of rows) {
         if(!row?.id) continue;
-        if(isBaserowFolderMarkerRow(row,fields)) markerRows.push(row);
+        if(isGoogle SheetsFolderMarkerRow(row,fields)) markerRows.push(row);
         else if(folderField && sharedFolderName(row?.[folderField.name])) resourceRows.push(row);
       }
 
-      // Baserow 文件夹可能有上千条，不能一条一条串行删除，否则 Telegram 看起来会像“没反应”。
+      // Google Sheets 文件夹可能有上千条，不能一条一条串行删除，否则 Telegram 看起来会像“没反应”。
       const worker=async(list, handler)=>{
         let index=0;
         const concurrency=Math.min(12,Math.max(1,list.length));
@@ -3058,25 +3174,25 @@ async function deleteAllFoldersKeepResources() {
             const n=index++;
             if(n>=list.length) return;
             try { await handler(list[n]); }
-            catch(e) { errors++; console.warn("⚠️ Baserow 批量处理失败:",String(e?.message||e)); }
+            catch(e) { errors++; console.warn("⚠️ Google Sheets 批量处理失败:",String(e?.message||e)); }
           }
         }));
       };
 
       await worker(markerRows,async(row)=>{
-        await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/");
+        await baserowRequest("DELETE","/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/"+encodeURIComponent(row.id)+"/");
         baserowRowsCache.delete(String(row.id));
         folders++;
       });
 
       await worker(resourceRows,async(row)=>{
-        await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(BASEROW_TABLE_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",{[folderField.name]:null});
+        await baserowRequest("PATCH","/api/database/rows/table/"+encodeURIComponent(GOOGLE_SHEETS_ID)+"/"+encodeURIComponent(row.id)+"/?user_field_names=true",{[folderField.name]:null});
         baserowRowsCache.delete(String(row.id));
         resources++;
       });
     } catch(e) {
       errors++;
-      console.error("❌ 删除所有 Baserow 文件夹失败:",String(e?.message||e));
+      console.error("❌ 删除所有 Google Sheets 文件夹失败:",String(e?.message||e));
     }
   }
 
@@ -3085,7 +3201,7 @@ async function deleteAllFoldersKeepResources() {
       item.directoryId=null;
       item.autoTagFolder=null;
       resources++;
-      queueBaserowResourceSync(item);
+      queueGoogle SheetsResourceSync(item);
     }
   }
   db.directories=[];
@@ -3105,7 +3221,7 @@ function autoCreateTagFoldersForExistingResources() {
     if(folder) {
       if(!existed) created++;
       if(before!==String(folder.id)) assigned++;
-      queueBaserowResourceSync(item);
+      queueGoogle SheetsResourceSync(item);
     }
   }
   saveDb();
@@ -3121,7 +3237,7 @@ function ensureDirectory(name) {
   db.directories.push(d);
   touchSharedData("system");
   saveDb();
-  queueBaserowDirectorySync(d);
+  queueGoogle SheetsDirectorySync(d);
   return d;
 }
 function getResourceByShareToken(token) {
@@ -3288,7 +3404,7 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
           const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
           if(!item) throw new Error("资源索引写入失败");
           item.directoryId=d.id; item.repositoryMessageId=copiedId; item.sourceUserId=String(uid); item.indexedAt=Date.now();
-          queueBaserowResourceSync(item); stored++;
+          queueGoogle SheetsResourceSync(item); stored++;
         }catch(err){ failed++; console.error("❌ UPLOAD RESOURCE FALLBACK:",err?.message||err,"sourceMessage=",entry?.messageId); }
       }
       saveDb();
@@ -3308,7 +3424,7 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
         const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
         if(!item) throw new Error("资源索引写入失败");
         item.directoryId=d.id; item.repositoryMessageId=copiedId; item.sourceUserId=String(uid); item.indexedAt=Date.now();
-        queueBaserowResourceSync(item); stored++;
+        queueGoogle SheetsResourceSync(item); stored++;
       }catch(e){
         failed++;
         console.error("❌ UPLOAD RESOURCE INDEX:",e?.message||e,"sourceMessage=",batch[n]?.messageId);
@@ -3499,7 +3615,7 @@ function indexResource(msg) {
     db.resources.unshift(item);
   }
   db.resources=db.resources.slice(0,MAX_RESOURCES);
-  queueBaserowResourceSync(db.resources.find(x=>x.chatId===item.chatId&&x.messageId===item.messageId) || item);
+  queueGoogle SheetsResourceSync(db.resources.find(x=>x.chatId===item.chatId&&x.messageId===item.messageId) || item);
   saveDb();
 }
 function contentProtectionEnabled() {
@@ -3698,7 +3814,7 @@ function removeInvalidResource(item, reason="") {
   }
 
   if(before!==db.resources.length) {
-    queueBaserowDeleteResource(item);
+    queueGoogle SheetsDeleteResource(item);
     console.warn("🧹 已清理无效资源：",key,reason ? "| "+String(reason).slice(0,200) : "");
     saveDb();
     return true;
@@ -4199,13 +4315,13 @@ async function backupRecoveryMerge(uid) {
 }
 
 async function mainMessage(msg) {
-  // 上传中的文件只进入当前批次，不要为每个文件触发跨机器人 Baserow 刷新。
+  // 上传中的文件只进入当前批次，不要为每个文件触发跨机器人 Google Sheets 刷新。
   const preUploadState=msg?.chat?.type==="private" ? states.get("m:"+String(msg.from?.id||"")) : null;
   if(!(preUploadState?.step==="upload_file" || preUploadState?.step==="upload_folder" || preUploadState?.step==="folder_create")) {
     // 共享数据刷新放到后台，绝不能阻塞 Telegram 菜单和普通消息响应。
     refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
   }
-  // Telegram 消息处理不能等待 Baserow；共享数据在后台同步。
+  // Telegram 消息处理不能等待 Google Sheets；共享数据在后台同步。
   if(await binding(msg)) return;
   if(msg.chat?.type!=="private") { indexResource(msg); queueRepositoryAutoSyncMessage(msg); return; }
 
@@ -4288,7 +4404,7 @@ async function mainMessage(msg) {
     const d=ensureDirectory(folderName);
     if(!d) return sendHtml(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请换一个名称再试。");
     touchSharedData(uid);
-    queueBaserowDirectorySync(d);
+    queueGoogle SheetsDirectorySync(d);
     saveDb();
     states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
     if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; }
@@ -4661,9 +4777,9 @@ async function mainMessage(msg) {
     }
     saveDb();
 
-    // Baserow 中同步删除该仓库对应的资源行；失败不会阻塞解绑本身。
+    // Google Sheets 中同步删除该仓库对应的资源行；失败不会阻塞解绑本身。
     for(const item of removed) {
-      try { queueBaserowDeleteResource(item); } catch {}
+      try { queueGoogle SheetsDeleteResource(item); } catch {}
     }
 
     logAdmin(uid,"解绑资源仓库","chatId="+cid+" removed="+removed.length);
@@ -4853,7 +4969,7 @@ async function mainMessage(msg) {
 
     try {
       // 用户主动搜索时强制刷新共享索引，确保新文件立即可见。
-      if(BASEROW_TOKEN && BASEROW_TABLE_ID) {
+      if(GOOGLE_SHEETS_CREDENTIAL && GOOGLE_SHEETS_ID) {
         await refreshSharedData(true).catch(e=>console.warn("⚠️ 搜索前共享资源刷新失败，继续使用本地索引：",String(e?.message||e)));
       }
       const q=query.toLowerCase();
@@ -5024,8 +5140,8 @@ async function mainMessage(msg) {
     d.id=sharedDirectoryId(newName);
     for(const item of db.resources) if(String(item.directoryId)===oldDirectoryId) item.directoryId=d.id;
     touchSharedData(uid);
-    queueBaserowDirectorySync(d);
-    for(const item of db.resources.filter(item=>String(item.directoryId)===String(d.id))) queueBaserowResourceSync(item);
+    queueGoogle SheetsDirectorySync(d);
+    for(const item of db.resources.filter(item=>String(item.directoryId)===String(d.id))) queueGoogle SheetsResourceSync(item);
     saveDb();
     logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
     states.delete(key);
@@ -5059,7 +5175,7 @@ async function mainMessage(msg) {
       const items=directoryItems(d.id);
       let deleted=0;
       for(const item of items) { try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); deleted++; } catch(e) {} }
-      for(const item of items) queueBaserowDeleteResource(item);
+      for(const item of items) queueGoogle SheetsDeleteResource(item);
       const marker=Array.from(baserowRowsCache.values()).find(row=>String(row?.[baserowPickField(baserowFieldsCache,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"] )?.name]||"").startsWith("__FOLDER__:"+d.id+":"));
       if(marker?.id) baserowSyncQueue=baserowSyncQueue.then(()=>baserowDeleteRow(marker.id));
       db.resources=db.resources.filter(x=>String(x.directoryId)!==String(d.id));
@@ -5073,7 +5189,7 @@ async function mainMessage(msg) {
     if(idx<0) return send(TOKEN,uid,"⚠️ <b>请选择有效的文件</b>\\n\\n请重新选择要删除的资源。");
     const item=items[idx];
     try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
-    queueBaserowDeleteResource(item);
+    queueGoogle SheetsDeleteResource(item);
     db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
     touchSharedData(uid);
     saveDb(); logAdmin(uid,"删除资源",item.title);
@@ -5201,8 +5317,8 @@ async function mainMessage(msg) {
     if(same) return sendHtml(TOKEN,uid,"⚠️ 已存在同名文件夹，请换一个名称。");
     const oldName=d.name;
     d.name=newName;
-    for(const item of db.resources.filter(r=>String(r.directoryId)===String(d.id))) queueBaserowResourceSync(item);
-    queueBaserowDirectorySync(d);
+    for(const item of db.resources.filter(r=>String(r.directoryId)===String(d.id))) queueGoogle SheetsResourceSync(item);
+    queueGoogle SheetsDirectorySync(d);
     touchSharedData(uid);
     saveDb();
     states.delete(key);
@@ -5382,9 +5498,9 @@ async function mainMessage(msg) {
 }
 
 async function childMessage(child,msg,token) {
-  // 目录/资源以 Baserow 为跨机器人共享源；刷新放后台，不能阻塞 /start 和菜单按钮。
+  // 目录/资源以 Google Sheets 为跨机器人共享源；刷新放后台，不能阻塞 /start 和菜单按钮。
   refreshSharedData(false).catch(e=>console.warn("⚠️ 子机器人共享目录刷新失败:",String(e?.message||e)));
-  // 子机器人消息处理同样不能等待 Baserow，避免 /start 和菜单被共享同步卡住。
+  // 子机器人消息处理同样不能等待 Google Sheets，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id;
   await ensureUserInlineMode(token, uid);
@@ -5534,7 +5650,7 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(!uid || !callbackId || !chatId || !messageId) return;
 
-  // 回调必须独立于 Baserow：先确认点击，再执行按钮逻辑。
+  // 回调必须独立于 Google Sheets：先确认点击，再执行按钮逻辑。
   console.log("🔘 CALLBACK:", data, "uid="+uid, "chat="+chatId);
   let callbackAnswered=false;
   const answer=async(text="",showAlert=false)=>{
@@ -5633,7 +5749,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   void answer();
-  // 按钮回调绝不能等待 Baserow：确认请求后台发送，业务逻辑立即继续。
+  // 按钮回调绝不能等待 Google Sheets：确认请求后台发送，业务逻辑立即继续。
   void refreshSharedData(false);
 
   // 自动同步控制按钮优先处理，避免被其他管理员菜单路由抢先截断。
@@ -5783,7 +5899,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     ]}});
     if(data==="adm:nonmember")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"✏️ 非会员提示"});
     if(data==="adm:post")return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📣 获取后推广"});
-    if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Baserow 历史恢复已启动</b>\\n\\n📚 读取现有 Baserow 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverBaserowHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }
+    if(route==="recover") { sendHtml(TOKEN,uid,"<b>🔄 Google Sheets 历史恢复已启动</b>\\n\\n📚 读取现有 Google Sheets 资源名称\\n🔎 扫描原 Telegram 仓库\\n📁 自动恢复文件夹归属\\n🔗 自动补回聊天ID/消息ID\\n\\n⏳ 任务将在后台继续运行…",adminMenu()).catch(()=>{}); recoverGoogle SheetsHistory(uid).catch(e=>console.error("❌ RECOVERY TASK:",e)); return; }
     if(route==="folder_repair") return repairLostFolderAssignments(uid);
     if(route==="auto") {
       return showRepositoryAutoSyncStatus(uid);
@@ -5951,7 +6067,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(route==="folders_all_do"){
     console.log("🗑️ DELETE ALL FOLDERS CLICK:", "uid="+uid, "chat="+chatId, "message="+messageId);
     void answer("正在删除所有文件夹，请稍候…");
-    const progress=await tg(token,"sendMessage",{chat_id:chatId,text:"<b>🧹 正在删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n⏳ 正在清理 Baserow 文件夹记录…\n📦 所有资源都会保留。",parse_mode:"HTML"});
+    const progress=await tg(token,"sendMessage",{chat_id:chatId,text:"<b>🧹 正在删除所有文件夹</b>\n━━━━━━━━━━━━━━\n\n⏳ 正在清理 Google Sheets 文件夹记录…\n📦 所有资源都会保留。",parse_mode:"HTML"});
     try {
       const result=await deleteAllFoldersKeepResources();
       const progressId=progress?.message_id;
@@ -6048,7 +6164,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const item=db.resources.find(r=>Number(r.messageId)===Number(st.itemId)&&String(r.directoryId)===String(st.sourceId));
     if(!target||!item) { void answer("资源或目标文件夹不存在",true); return; }
     item.directoryId=target.id;
-    queueBaserowResourceSync(item);
+    queueGoogle SheetsResourceSync(item);
     saveDb();
     logAdmin(uid,"移动资源",(item.title||"未命名")+" → "+target.name);
     states.delete(key);
@@ -6107,7 +6223,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       for(const item of targets) {
         try { await tg(TOKEN,"deleteMessage",{chat_id:item.chatId,message_id:Number(item.messageId)}); } catch(e) {}
         const before=db.resources.length;
-        queueBaserowDeleteResource(item);
+        queueGoogle SheetsDeleteResource(item);
         db.resources=db.resources.filter(x=>!(String(x.chatId)===String(item.chatId)&&Number(x.messageId)===Number(item.messageId)));
         if(db.resources.length<before) deleted++;
       }
@@ -6204,7 +6320,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     // 搜索结果对象可能在共享刷新后已经被替换，按唯一键重新取当前记录。
     const selectedKey=resourceKey(selected);
     let item=resourceByKey(selectedKey);
-    if(!item && BASEROW_TOKEN && BASEROW_TABLE_ID) {
+    if(!item && GOOGLE_SHEETS_CREDENTIAL && GOOGLE_SHEETS_ID) {
       try {
         await refreshSharedData(true);
         item=resourceByKey(selectedKey);
@@ -6361,7 +6477,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const source=db.directories.find(x=>String(x.id)===String(st.sourceId));
     if(!target||!source){void answer("文件夹不存在",true);return;}
     const items=db.resources.filter(r=>String(r.directoryId)===String(source.id));
-    for(const item of items){item.directoryId=target.id;queueBaserowResourceSync(item);}
+    for(const item of items){item.directoryId=target.id;queueGoogle SheetsResourceSync(item);}
     touchSharedData(uid);saveDb();states.delete("m:"+uid);
     void answer("已移动 "+items.length+" 个资源");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"✅ <b>移动完成</b>\\n\\n📁 原文件夹："+escapeHtml(source.name)+"\\n📁 目标文件夹："+escapeHtml(target.name)+"\\n📦 已移动："+items.length+" 个资源",parse_mode:"HTML",reply_markup:folderManageMenu(target.id)});
@@ -6384,8 +6500,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     const d=db.directories.find(x=>String(x.id)===String(directoryId));
     if(!d){void answer("文件夹不存在",true);return;}
     const items=db.resources.filter(r=>String(r.directoryId)===String(d.id));
-    if(allDelete){for(const item of items)queueBaserowDeleteResource(item);db.resources=db.resources.filter(r=>String(r.directoryId)!==String(d.id));}
-    else {for(const item of items){item.directoryId=null;queueBaserowResourceSync(item);}}
+    if(allDelete){for(const item of items)queueGoogle SheetsDeleteResource(item);db.resources=db.resources.filter(r=>String(r.directoryId)!==String(d.id));}
+    else {for(const item of items){item.directoryId=null;queueGoogle SheetsResourceSync(item);}}
     db.directories=db.directories.filter(x=>String(x.id)!==String(d.id));
     touchSharedData(uid);saveDb();
     void answer("删除完成");
@@ -6745,8 +6861,8 @@ function startChild(child){
 
 let bootActive = false;
 let backgroundTimersStarted = false;
-let sharedBaserowInitStarted = false;
-let sharedBaserowRefreshTimerStarted = false;
+let sharedGoogle SheetsInitStarted = false;
+let sharedGoogle SheetsRefreshTimerStarted = false;
 
 async function boot(){
   if (bootActive) {
@@ -6772,10 +6888,10 @@ async function boot(){
     }, 30000);
   }
 
-  // Baserow 共享刷新独立于其他后台定时器，避免被后台初始化状态影响。
-  if (!sharedBaserowRefreshTimerStarted) {
-    sharedBaserowRefreshTimerStarted = true;
-    console.log("🔁 Baserow 共享刷新定时器已启动：每 5 分钟检查一次；资源/文件夹操作后立即刷新");
+  // Google Sheets 共享刷新独立于其他后台定时器，避免被后台初始化状态影响。
+  if (!sharedGoogle SheetsRefreshTimerStarted) {
+    sharedGoogle SheetsRefreshTimerStarted = true;
+    console.log("🔁 Google Sheets 共享刷新定时器已启动：每 5 分钟检查一次；资源/文件夹操作后立即刷新");
     setInterval(() => {
       refreshSharedData(false).catch(e => console.warn("⚠️ 跨机器人目录同步异常:", String(e?.message || e)));
     }, 300000);
@@ -6839,19 +6955,19 @@ async function boot(){
         repositoryMigration(Number(migrationState.ownerId),migrationState.sourceId,migrationState.targetId)
           .catch(e=>console.error("❌ 迁移断点恢复失败:",String(e?.message||e)));
       }
-      // Telegram 轮询必须优先启动，Baserow 同步不得阻塞机器人按钮和消息。
-      if (!sharedBaserowInitStarted) {
-        sharedBaserowInitStarted = true;
-        console.log("🔄 Baserow 共享模式：后台初始化，不阻塞 Telegram", "pid=" + PROCESS_ID);
-        initializeSharedBaserow()
+      // Telegram 轮询必须优先启动，Google Sheets 同步不得阻塞机器人按钮和消息。
+      if (!sharedGoogle SheetsInitStarted) {
+        sharedGoogle SheetsInitStarted = true;
+        console.log("🔄 Google Sheets 共享模式：后台初始化，不阻塞 Telegram", "pid=" + PROCESS_ID);
+        initializeSharedGoogle Sheets()
           .then(async()=>{
-            console.log("✅ Baserow 共享初始化完成", "pid=" + PROCESS_ID);
-            console.log("🔎 Baserow 共享配置:", "enabled="+baserow.enabled, "table="+BASEROW_TABLE_ID);
+            console.log("✅ Google Sheets 共享初始化完成", "pid=" + PROCESS_ID);
+            console.log("🔎 Google Sheets 共享配置:", "enabled="+baserow.enabled, "table="+GOOGLE_SHEETS_ID);
             // 初始化完成后立即强制刷新一次，确保刚启动的机器人立刻拿到其他机器人已经写入的目录。
             await refreshSharedData(true);
-            console.log("✅ Baserow 启动后首次强制刷新完成", "pid=" + PROCESS_ID);
+            console.log("✅ Google Sheets 启动后首次强制刷新完成", "pid=" + PROCESS_ID);
           })
-          .catch(e=>console.error("❌ Baserow 后台初始化异常:",String(e?.message||e)));
+          .catch(e=>console.error("❌ Google Sheets 后台初始化异常:",String(e?.message||e)));
       }
       console.log("✅ 主机器人已连接:","@"+(me.username||me.first_name), "pid=" + PROCESS_ID, "token=" + TOKEN_FINGERPRINT);
       console.log("📊 users="+db.users.length+" children="+db.children.length+" resources="+db.resources.length);
