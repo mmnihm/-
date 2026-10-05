@@ -242,15 +242,16 @@ async function tg(token, method, body = {}) {
 }
 const main = (method, body = {}) => tg(TOKEN, method, body);
 
-// ===== Google Sheets 共享资源中心（替代旧 Google Sheets） =====
+// ===== Google Sheets 共享资源中心（替代旧 Baserow） =====
 const GOOGLE_SHEETS_ID = String(process.env.GOOGLE_SHEETS_ID || "1-7f_dKaSU66sbftuT2RM1ctf5-VY6KLxU1AJhGmI8D8").trim();
 const GOOGLE_SHEETS_TAB = String(process.env.GOOGLE_SHEETS_TAB || "Sheet1").trim() || "Sheet1";
 const GOOGLE_SERVICE_ACCOUNT_JSON = String(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim();
 const GOOGLE_SERVICE_ACCOUNT_B64 = String(process.env.GOOGLE_SERVICE_ACCOUNT_B64 || "").trim();
 const GOOGLE_ACCESS_TOKEN = String(process.env.GOOGLE_ACCESS_TOKEN || "").trim();
+const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
 
 const baserow = {
-  enabled: Boolean(GOOGLE_SHEETS_ID && (GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64 || GOOGLE_ACCESS_TOKEN)),
+  enabled: Boolean(GOOGLE_SHEETS_ID && GOOGLE_SHEETS_CREDENTIAL),
   connected: false,
   lastError: "",
   lastOkAt: 0
@@ -273,7 +274,8 @@ function parseGoogleServiceAccount() {
 let googleAccessTokenCache={token:"",expiresAt:0};
 
 function base64url(value){
-  return Buffer.from(String(value)).toString("base64").replace(/=+$/,"").replace(/\\+/g,"-").replace(/\\//g,"_");
+  return Buffer.from(String(value)).toString("base64")
+    .replace(/=+$/,"").replace(/\\+/g,"-").replace(/\\//g,"_");
 }
 async function getGoogleAccessToken(){
   if(GOOGLE_ACCESS_TOKEN) return GOOGLE_ACCESS_TOKEN;
@@ -292,8 +294,7 @@ async function getGoogleAccessToken(){
   const signer=crypto.createSign("RSA-SHA256");
   signer.update(header+"."+claim);
   signer.end();
-  const signature=signer.sign(sa.private_key);
-  const assertion=header+"."+claim+"."+base64url(signature);
+  const assertion=header+"."+claim+"."+base64url(signer.sign(sa.private_key));
   const r=await fetch("https://oauth2.googleapis.com/token",{
     method:"POST",
     headers:{"content-type":"application/x-www-form-urlencoded"},
@@ -305,16 +306,15 @@ async function getGoogleAccessToken(){
   return data.access_token;
 }
 
-function sheetsRange(){
-  return encodeURIComponent("'"+GOOGLE_SHEETS_TAB.replace(/'/g,"''")+"'");
-}
 const GOOGLE_SHEETS_API="https://sheets.googleapis.com/v4/spreadsheets/";
-
-async function googleSheetsRequest(method, pathName, body){
+function sheetNameRange(suffix=""){
+  return encodeURIComponent("'"+GOOGLE_SHEETS_TAB.replace(/'/g,"''")+"'"+suffix);
+}
+async function googleSheetsRequest(method,pathName,body){
   const token=await getGoogleAccessToken();
   const url=GOOGLE_SHEETS_API+encodeURIComponent(GOOGLE_SHEETS_ID)+pathName;
   const headers={"Authorization":"Bearer "+token,"Accept":"application/json"};
-  if(body!==undefined){headers["Content-Type"]="application/json";}
+  if(body!==undefined) headers["Content-Type"]="application/json";
   const r=await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
   const text=await r.text();
   let data={}; try{data=JSON.parse(text||"{}");}catch{}
@@ -322,23 +322,24 @@ async function googleSheetsRequest(method, pathName, body){
   return data;
 }
 
-const DEFAULT_SHEET_FIELDS=[
-  "名称","文件夹","类型","网址","标签","上传日期","所有者","聊天ID","消息ID","描述","文件ID","下载"
-];
+const DEFAULT_SHEET_FIELDS=["名称","文件夹","类型","网址","标签","上传日期","所有者","聊天ID","消息ID","描述","文件ID","下载"];
 
 async function ensureGoogleSheetHeaders(){
-  const range=sheetsRange()+"!1:1";
+  const range=sheetNameRange("!1:1");
   const data=await googleSheetsRequest("GET","/values/"+range+"?majorDimension=ROWS");
   const headers=Array.isArray(data.values?.[0])?data.values[0].map(x=>String(x??"").trim()):[];
   if(headers.length) return headers;
-  await googleSheetsRequest("PUT","/values/"+range+"?valueInputOption=USER_ENTERED",{range:"'"+GOOGLE_SHEETS_TAB+"'!1:1",majorDimension:"ROWS",values:[DEFAULT_SHEET_FIELDS]});
+  const writeRange="'"+GOOGLE_SHEETS_TAB+"'!A1:"+String.fromCharCode(64+DEFAULT_SHEET_FIELDS.length)+"1";
+  await googleSheetsRequest("PUT","/values/"+encodeURIComponent(writeRange)+"?valueInputOption=USER_ENTERED",{
+    range:writeRange,majorDimension:"ROWS",values:[DEFAULT_SHEET_FIELDS]
+  });
   return [...DEFAULT_SHEET_FIELDS];
 }
 
 async function getGoogleSheetHeaders(force=false){
   if(baserowFieldsCache && !force) return baserowFieldsCache;
   const headers=await ensureGoogleSheetHeaders();
-  baserowFieldsCache=headers.map((name,i)=>({id:i+1,name,type:["消息ID","聊天ID","文件ID","下载"].includes(name)?"text":"text",read_only:false,index:i}));
+  baserowFieldsCache=headers.map((name,i)=>({id:i+1,name,type:"text",read_only:false,index:i}));
   return baserowFieldsCache;
 }
 
@@ -347,16 +348,17 @@ async function ensureGoogleSheetField(name){
   if(fields.some(f=>baserowNormName(f.name)===baserowNormName(name))) return fields;
   const headers=fields.map(f=>f.name);
   headers.push(name);
-  const lastColumn=String.fromCharCode(65+Math.min(headers.length-1,25));
-  await googleSheetsRequest("PUT","/values/"+encodeURIComponent("'"+GOOGLE_SHEETS_TAB+"'!A1:"+lastColumn+"1")+"?valueInputOption=USER_ENTERED",{
-    range:"'"+GOOGLE_SHEETS_TAB+"'!A1:"+lastColumn+"1",majorDimension:"ROWS",values:[headers]
+  const endCol=String.fromCharCode(64+headers.length);
+  const writeRange="'"+GOOGLE_SHEETS_TAB+"'!A1:"+endCol+"1";
+  await googleSheetsRequest("PUT","/values/"+encodeURIComponent(writeRange)+"?valueInputOption=USER_ENTERED",{
+    range:writeRange,majorDimension:"ROWS",values:[headers]
   });
   return getGoogleSheetHeaders(true);
 }
 
 async function checkGoogleSheetsConnection(){
-  if(!GOOGLE_SHEETS_ID || !(GOOGLE_SERVICE_ACCOUNT_JSON||GOOGLE_SERVICE_ACCOUNT_B64||GOOGLE_ACCESS_TOKEN)){
-    baserow.enabled=false; baserow.connected=false; baserow.lastError="未配置 Google Sheets 凭据";
+  if(!GOOGLE_SHEETS_ID || !GOOGLE_SHEETS_CREDENTIAL){
+    baserow.enabled=false; baserow.connected=false; baserow.lastError="未配置 GOOGLE_SHEETS_ID / GOOGLE_SERVICE_ACCOUNT_JSON";
     return false;
   }
   try{
@@ -371,9 +373,10 @@ async function checkGoogleSheetsConnection(){
   }
 }
 
-// 保留旧函数名以减少现有业务代码改动；内部已经全部走 Google Sheets。
-const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
-const GOOGLE_SHEETS_ID = GOOGLE_SHEETS_ID;
+// 兼容现有业务函数名；实际数据已经完全改由 Google Sheets 提供。
+const BASEROW_TOKEN = GOOGLE_SHEETS_CREDENTIAL;
+const BASEROW_TABLE_ID = GOOGLE_SHEETS_ID;
+async function checkBaserowConnection(){ return checkGoogleSheetsConnection(); }
 
 async function baserowRequest(method,pathName,body){
   if(!GOOGLE_SHEETS_ID) throw new Error("Google Sheets 未配置 GOOGLE_SHEETS_ID");
@@ -397,6 +400,7 @@ async function baserowRequest(method,pathName,body){
     const results=[];
     for(let i=1;i<values.length;i++){
       const row=values[i]||[];
+      if(!row.some(v=>String(v??"").trim())) continue;
       const obj={id:i+1};
       headers.forEach((h,j)=>{if(String(h||"").trim()) obj[h]=row[j]??"";});
       results.push(obj);
@@ -404,8 +408,9 @@ async function baserowRequest(method,pathName,body){
     return {results,next:null};
   }
 
-  const rowMatch=pathName.match(/\/rows\/table\/[^/]+\/(\d+)/);
+  const rowMatch=pathName.match(/\/rows\/table\/[^/]+\/(\\d+)/);
   const rowNumber=rowMatch?Number(rowMatch[1]):0;
+
   if(method==="POST" && pathName.includes("/rows/table/")){
     const fields=await getGoogleSheetHeaders();
     const row=fields.map(f=>body?.[f.name]===undefined?"":String(body[f.name]));
@@ -414,61 +419,30 @@ async function baserowRequest(method,pathName,body){
     });
     const updatedRange=String(append?.updates?.updatedRange||"");
     const m=updatedRange.match(/!.*?(\\d+):/);
-    const id=m?Number(m[1]):0;
-    return {...body,id:id||null};
+    const id=m?Number(m[1]):null;
+    return {...body,id};
   }
+
   if(method==="PATCH" && rowNumber>1){
     const fields=await getGoogleSheetHeaders();
-    const row=fields.map(f=>body?.[f.name]===undefined?"":String(body[f.name]));
-    const endCol=String.fromCharCode(65+Math.min(fields.length-1,25));
-    await googleSheetsRequest("PUT","/values/"+encodeURIComponent("'"+GOOGLE_SHEETS_TAB+"'!A"+rowNumber+":"+endCol+rowNumber)+"?valueInputOption=USER_ENTERED",{
-      range:"'"+GOOGLE_SHEETS_TAB+"'!A"+rowNumber+":"+endCol+rowNumber,majorDimension:"ROWS",values:[row]
+    const currentData=await googleSheetsRequest("GET","/values/"+encodeURIComponent("'"+GOOGLE_SHEETS_TAB+"'!A"+rowNumber+":Z"+rowNumber)+"?majorDimension=ROWS");
+    const current=currentData.values?.[0]||[];
+    const row=fields.map((f,i)=>body?.[f.name]===undefined?(current[i]??""):String(body[f.name]));
+    const endCol=String.fromCharCode(64+fields.length);
+    const writeRange="'"+GOOGLE_SHEETS_TAB+"'!A"+rowNumber+":"+endCol+rowNumber;
+    await googleSheetsRequest("PUT","/values/"+encodeURIComponent(writeRange)+"?valueInputOption=USER_ENTERED",{
+      range:writeRange,majorDimension:"ROWS",values:[row]
     });
     return {...body,id:rowNumber};
   }
+
   if(method==="DELETE" && rowNumber>1){
-    const fields=await getGoogleSheetHeaders();
-    const endCol=String.fromCharCode(65+Math.min(fields.length-1,25));
-    await googleSheetsRequest("POST",":batchUpdate",{
-      requests:[{updateCells:{range:{sheetId:0,startRowIndex:rowNumber-1,endRowIndex:rowNumber,startColumnIndex:0,endColumnIndex:fields.length},rows:[{values:fields.map(()=>({userEnteredValue:{stringValue:""}}))}],fields:"userEnteredValue"}}]
-    });
+    const clearRange="'"+GOOGLE_SHEETS_TAB+"'!A"+rowNumber+":Z"+rowNumber;
+    await googleSheetsRequest("POST","/values/"+encodeURIComponent(clearRange)+":clear",{});
     return {};
   }
+
   throw new Error("Google Sheets 未支持的共享数据操作: "+method+" "+pathName);
-}
-
-async function checkGoogle SheetsConnection(){
-  return checkGoogleSheetsConnection();
-}
-
-{
-  if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) {
-    baserow.enabled = false;
-    baserow.connected = false;
-    baserow.lastError = "未配置 GOOGLE_SHEETS_CREDENTIAL / GOOGLE_SHEETS_ID";
-    return false;
-  }
-  try {
-    await baserowRequest(
-      "GET",
-      "/api/database/rows/table/" + encodeURIComponent(GOOGLE_SHEETS_ID) + "/?user_field_names=true&size=1"
-    );
-    baserow.enabled = true;
-    baserow.connected = true;
-    baserow.lastError = "";
-    baserow.lastOkAt = Date.now();
-    console.log("📊 Google Sheets: 已连接，table=" + GOOGLE_SHEETS_ID);
-    return true;
-  } catch (e) {
-    baserow.enabled = true;
-    baserow.connected = false;
-    baserow.lastError = String(e?.message || e);
-    if(e?.baserowCode==="TABLE_PERMISSION_DENIED") {
-      baserow.lastError += " | 请检查 GOOGLE_SHEETS_ID 是否属于当前 Token 所在 workspace，以及 Token 是否勾选该表的 Read 权限";
-    }
-    console.error("❌ Google Sheets 连接失败:", baserow.lastError);
-    return false;
-  }
 }
 
 // Google Sheets 资源同步：扫描/监听到资源后自动写入资源表。
