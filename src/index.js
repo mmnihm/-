@@ -306,9 +306,24 @@ const baserow = {
 };
 
 function parseGoogleServiceAccount() {
+  // 优先支持直接拆开的服务账号字段，避免 FadeHost 2000 字符限制导致 Base64 私钥被破坏。
+  const directEmail = readEnvFirst("GOOGLE_CLIENT_EMAIL");
+  const directKey = String(process.env.GOOGLE_PRIVATE_KEY || "").trim();
+  if (directEmail && directKey) {
+    const x = {
+      client_email: directEmail,
+      private_key: directKey.replace(/\\n/g, "\n")
+    };
+    if (!x.private_key.includes("BEGIN PRIVATE KEY")) {
+      throw new Error("GOOGLE_PRIVATE_KEY 格式异常");
+    }
+    return x;
+  }
+
   let raw=GOOGLE_SERVICE_ACCOUNT_JSON;
   if(!raw && GOOGLE_SERVICE_ACCOUNT_B64){
     try {
+      // 所有编号分段必须先按数字顺序拼接，再只解码一次。
       const encoded=GOOGLE_SERVICE_ACCOUNT_B64.replace(/\\s+/g,"");
       raw=Buffer.from(encoded,"base64").toString("utf8");
     } catch(e) {
@@ -320,6 +335,8 @@ function parseGoogleServiceAccount() {
     const x=JSON.parse(raw);
     if(!x.client_email || !x.private_key) throw new Error("服务账号缺少 client_email/private_key");
     if(!String(x.private_key).includes("BEGIN PRIVATE KEY")) throw new Error("private_key 格式异常");
+    // JSON.parse 后再处理转义换行，绝不能在 JSON.parse 前替换。
+    x.private_key=String(x.private_key).replace(/\\n/g, "\n");
     return x;
   } catch(e) {
     throw new Error("Google 服务账号 JSON 无效："+String(e?.message||e));
