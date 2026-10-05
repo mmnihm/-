@@ -3142,70 +3142,7 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
     };
     saveDb();
   }
-  // 上传过程中不频繁落盘；收到文件后立即反馈。
-  // 一条状态消息实时显示“本批已收到 N 个资源”，底部固定键盘始终可见。
-  if(pending.length===1) {
-    const statusText="📤 <b>正在接收本批资源</b>\n━━━━━━━━━━━━━━\n\n"+
-      "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
-      "📥 本批已收到：<b>"+pending.length+"</b> 个资源\n\n"+
-      "继续发送文件即可；全部发送完成后点击「✅ 结束上传」。";
-    const statusMarkup={inline_keyboard:[
-      [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
-      [{text:"❌ 取消上传",callback_data:"upload_cancel"}]
-    ]};
-    if(Number(state.controlMessageId)>0) {
-      void safeEdit(token,{
-        chat_id:uid,
-        message_id:Number(state.controlMessageId),
-        text:statusText,
-        parse_mode:"HTML",
-        reply_markup:statusMarkup
-      }).catch(e=>console.warn("⚠️ 上传状态编辑失败:",String(e?.message||e)));
-    } else {
-      void (async()=>{
-        try {
-          const sent=await sendHtml(token,uid,statusText,{reply_markup:statusMarkup});
-          const current=states.get(key);
-          if(current?.step==="upload_file" && sent?.message_id) {
-            current.controlMessageId=Number(sent.message_id);
-            states.set(key,current);
-            if(db.settings?.uploadSessions?.[key]) {
-              db.settings.uploadSessions[key].controlMessageId=Number(sent.message_id);
-              db.settings.uploadSessions[key].updatedAt=Date.now();
-              saveDb();
-            }
-          }
-          await tg(token,"sendMessage",{
-            chat_id:uid,
-            text:"⬇️ 上传控制已就绪：可继续发送文件，完成后直接点「✅ 结束上传」。",
-            reply_markup:uploadBottomKeyboard().reply_markup
-          });
-        } catch(e) {
-          console.warn("⚠️ 上传首次反馈失败:",String(e?.message||e));
-        }
-      })();
-    }
-  } else if(Number(state.controlMessageId)>0) {
-    // 同一组继续上传时，只更新同一条提醒里的数量，不再新增消息。
-    const statusText="📤 <b>正在上传</b>\n━━━━━━━━━━━━━━\n\n"+
-      "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
-      "📥 本批已收到：<b>"+pending.length+"</b> 个资源\n\n"+
-      "可以继续发送文件；全部发送完成后点击「✅ 结束上传」。";
-    const statusMarkup={inline_keyboard:[
-      [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
-      [{text:"❌ 取消上传",callback_data:"upload_cancel"}]
-    ]};
-    if(Number(state.controlMessageId)>0) {
-      void safeEdit(token,{
-        chat_id:uid,
-        message_id:Number(state.controlMessageId),
-        text:statusText,
-        parse_mode:"HTML",
-        reply_markup:statusMarkup
-      }).catch(()=>{});
-    }
-  }
-  console.log("📥 UPLOAD MEDIA ACCEPTED:",{
+  // 上传过程中始终保留可操作按钮。旧版本只在第一次上传时创建控制消息，\n  // 如果控制消息被删除/失效，后续文件只尝试 edit，按钮就会彻底消失。\n  // 这里统一采用“先编辑，编辑失败就重新发送”的方式，确保每批都有「继续/结束/取消」。\n  const statusText="📤 <b>正在上传</b>\\n━━━━━━━━━━━━━━\\n\\n"+\n    "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\\n"+\n    "📥 本批已收到：<b>"+pending.length+"</b> 个资源\\n\\n"+\n    "可以继续发送文件；全部发送完成后点击「✅ 结束上传」。";\n  const statusMarkup={inline_keyboard:[\n    [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],\n    [{text:"❌ 取消上传",callback_data:"upload_cancel"}]\n  ]};\n  const saveUploadControlMessage=async(sent)=>{\n    const current=states.get(key);\n    if(!current || current.step!=="upload_file" || !sent?.message_id) return;\n    current.controlMessageId=Number(sent.message_id);\n    states.set(key,current);\n    if(db.settings?.uploadSessions?.[key]) {\n      db.settings.uploadSessions[key].controlMessageId=Number(sent.message_id);\n      db.settings.uploadSessions[key].updatedAt=Date.now();\n      saveDb();\n    }\n  };\n  void (async()=>{\n    try {\n      let edited=false;\n      const controlId=Number(state.controlMessageId||0);\n      if(controlId>0) {\n        const result=await safeEdit(token,{\n          chat_id:uid,\n          message_id:controlId,\n          text:statusText,\n          parse_mode:"HTML",\n          reply_markup:statusMarkup\n        });\n        edited=Boolean(result);\n      }\n      if(!edited) {\n        const sent=await sendHtml(token,uid,statusText,{reply_markup:statusMarkup});\n        await saveUploadControlMessage(sent);\n      }\n      // 同时确保 Telegram 底部固定键盘存在；不会再发送提示文字，只恢复操作键盘。\n      await tg(token,"sendMessage",{\n        chat_id:uid,\n        text:"\u2063",\n        reply_markup:uploadBottomKeyboard().reply_markup\n      }).catch(()=>{});\n    } catch(e) {\n      console.warn("⚠️ 上传控制按钮恢复失败:",String(e?.message||e));\n    }\n  })();\n  console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
     uid:String(uid),
     folder:directoryName,
