@@ -3182,12 +3182,7 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
         const sent=await sendHtml(token,uid,statusText,{reply_markup:statusMarkup});
         await saveUploadControlMessage(sent);
       }
-      // 同时确保 Telegram 底部固定键盘存在；不会再发送提示文字，只恢复操作键盘。
-      await tg(token,"sendMessage",{
-        chat_id:uid,
-        text:"\u2063",
-        reply_markup:uploadBottomKeyboard().reply_markup
-      }).catch(()=>{});
+      // 底部固定键盘只在进入上传模式时显示，不再通过空白消息反复撑起键盘。
     } catch(e) {
       console.warn("⚠️ 上传控制按钮恢复失败:",String(e?.message||e));
     }
