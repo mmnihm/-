@@ -1509,6 +1509,16 @@ let StringSessionClass = null;
 const historyInputs = new Map();
 const uploadTimers = new Map();
 const uploadAckTimers = new Map();
+const uploadLocks = new Map();
+async function withUploadLock(key, fn) {
+  const previous = uploadLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise(resolve => { release = resolve; });
+  uploadLocks.set(key, current);
+  await previous.catch(() => {});
+  try { return await fn(); }
+  finally { release(); if(uploadLocks.get(key) === current) uploadLocks.delete(key); }
+}
 const finalizingUploads = new Set();
 const childRunners = new Map();
 const UPLOAD_TIMEOUT_MS = UPLOAD_IDLE_SECONDS * 1000;
@@ -4554,7 +4564,7 @@ async function mainMessage(msg) {
 
   // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
   if(admin && (s?.step==="upload_file" || s?.step==="upload_folder")) {
-    const handled=await receiveUploadMedia(TOKEN,uid,key,s,msg,false);
+    const handled=await withUploadLock(key,()=>receiveUploadMedia(TOKEN,uid,key,states.get(key)||s,msg,false));
     if(handled) return;
   }
 
