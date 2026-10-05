@@ -260,7 +260,7 @@ const GOOGLE_SERVICE_ACCOUNT_JSON = readEnvFirst(
 function readGoogleServiceAccountB64Parts() {
   const parts = [];
   for (const [name, value] of Object.entries(process.env)) {
-    const m = /^GOOGLE_SERVICE_ACCOUNT_B64_(\\d+)$/i.exec(name);
+    const m = /^GOOGLE_SERVICE_ACCOUNT_B64_(\d+)$/i.exec(name);
     if (!m) continue;
     const part = String(value ?? "").trim();
     if (part) parts.push({ index: Number(m[1]), value: part });
@@ -276,8 +276,8 @@ const GOOGLE_SERVICE_ACCOUNT_B64 = readEnvFirst(
   "GOOGLE_SA_B64"
 ) || readGoogleServiceAccountB64Parts();
 const GOOGLE_SERVICE_ACCOUNT_B64_PARTS = Object.keys(process.env)
-  .filter(k => /^GOOGLE_SERVICE_ACCOUNT_B64_\\d+$/i.test(k))
-  .sort((a, b) => Number(a.match(/\\d+$/)?.[0] || 0) - Number(b.match(/\\d+$/)?.[0] || 0));
+  .filter(k => /^GOOGLE_SERVICE_ACCOUNT_B64_\d+$/i.test(k))
+  .sort((a, b) => Number(a.match(/\d+$/)?.[0] || 0) - Number(b.match(/\d+$/)?.[0] || 0));
 const GOOGLE_ACCESS_TOKEN = readEnvFirst("GOOGLE_ACCESS_TOKEN");
 const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
 
@@ -476,7 +476,7 @@ async function baserowRequest(method,pathName,body){
     return {results,next:null};
   }
 
-  const rowMatch=pathName.match(/\/rows\/table\/[^/]+\/(\\d+)/);
+  const rowMatch=pathName.match(/\/rows\/table\/[^/]+\/(\d+)/);
   const rowNumber=rowMatch?Number(rowMatch[1]):0;
 
   if(method==="POST" && pathName.includes("/rows/table/")){
@@ -486,7 +486,7 @@ async function baserowRequest(method,pathName,body){
       majorDimension:"ROWS",values:[row]
     });
     const updatedRange=String(append?.updates?.updatedRange||"");
-    const m=updatedRange.match(/!.*?(\\d+):/);
+    const m=updatedRange.match(/!.*?(\d+):/);
     const id=m?Number(m[1]):null;
     return {...body,id};
   }
@@ -5373,7 +5373,7 @@ async function mainMessage(msg) {
 
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
     let folder=t.trim().slice(0,80);
-    if(folder.startsWith("📁 ")) folder=folder.slice(2).replace(/（\\d+）$/,"").trim();
+    if(folder.startsWith("📁 ")) folder=folder.slice(2).replace(/（\d+）$/,"").trim();
     if(t==="➕ 新建文件夹") folder="";
     
     // 如果管理员没有输入文件夹名称，而是直接发送第一个文件，则自动创建随机文件夹。
@@ -5594,7 +5594,7 @@ async function childMessage(child,msg,token) {
     if(t==="/cancel") { states.delete(key); return sendHtml(token,uid,"<b>❌ 已取消上传</b>\\n\\n本次上传没有入库。",childAdminMenu()); }
     const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
     let folder=t.trim().slice(0,80);
-    if(folder.startsWith("📁 ")) folder=folder.slice(2).replace(/（\\d+）$/,"").trim();
+    if(folder.startsWith("📁 ")) folder=folder.slice(2).replace(/（\d+）$/,"").trim();
     if(t==="➕ 新建文件夹") folder="";
     if(!folder && media) folder="未命名-"+Math.random().toString(36).slice(2,8);
     if(!folder && t==="➕ 新建文件夹") return sendHtml(token,uid,"<b>📁 新建文件夹</b>\\n\\n请发送新的文件夹名称。\\n\\n发送 /cancel 可取消。");
