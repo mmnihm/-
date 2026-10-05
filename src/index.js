@@ -3130,9 +3130,8 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
     };
     saveDb();
   }
-  // 上传过程中不频繁落盘，避免每个文件都阻塞主机器人。
-  // 一组上传只保留一条控制提示：首次收到文件时提示“继续/结束”，
-  // 后续文件只累计到当前批次，不重复发送提醒，避免一组文件刷屏。
+  // 上传过程中不频繁落盘；收到文件后立即反馈。
+  // 一条状态消息实时显示“本批已收到 N 个资源”，底部固定键盘始终可见。
   if(pending.length===1) {
     const statusText="📤 <b>文件已收到</b>\n━━━━━━━━━━━━━━\n\n"+
       "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
@@ -3151,9 +3150,28 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
         reply_markup:statusMarkup
       }).catch(e=>console.warn("⚠️ 上传状态编辑失败:",String(e?.message||e)));
     } else {
-      void sendHtml(token,uid,statusText,{reply_markup:statusMarkup}).catch(e=>
-        console.warn("⚠️ 上传首次反馈失败:",String(e?.message||e))
-      );
+      void (async()=>{
+        try {
+          const sent=await sendHtml(token,uid,statusText,{reply_markup:statusMarkup});
+          const current=states.get(key);
+          if(current?.step==="upload_file" && sent?.message_id) {
+            current.controlMessageId=Number(sent.message_id);
+            states.set(key,current);
+            if(db.settings?.uploadSessions?.[key]) {
+              db.settings.uploadSessions[key].controlMessageId=Number(sent.message_id);
+              db.settings.uploadSessions[key].updatedAt=Date.now();
+              saveDb();
+            }
+          }
+          await tg(token,"sendMessage",{
+            chat_id:uid,
+            text:"⬇️ 上传控制已就绪：可继续发送文件，完成后直接点「✅ 结束上传」。",
+            reply_markup:uploadBottomKeyboard().reply_markup
+          });
+        } catch(e) {
+          console.warn("⚠️ 上传首次反馈失败:",String(e?.message||e));
+        }
+      })();
     }
   } else if(Number(state.controlMessageId)>0) {
     // 同一组继续上传时，只更新同一条提醒里的数量，不再新增消息。
@@ -3165,13 +3183,15 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
       [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
       [{text:"❌ 取消上传",callback_data:"upload_cancel"}]
     ]};
-    void safeEdit(token,{
-      chat_id:uid,
-      message_id:Number(state.controlMessageId),
-      text:statusText,
-      parse_mode:"HTML",
-      reply_markup:statusMarkup
-    }).catch(()=>{});
+    if(Number(state.controlMessageId)>0) {
+      void safeEdit(token,{
+        chat_id:uid,
+        message_id:Number(state.controlMessageId),
+        text:statusText,
+        parse_mode:"HTML",
+        reply_markup:statusMarkup
+      }).catch(()=>{});
+    }
   }
   console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
