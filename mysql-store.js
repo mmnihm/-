@@ -1,4 +1,5 @@
 import mysql from "mysql2/promise";
+import crypto from "node:crypto";
 
 let pool = null;
 let ready = false;
@@ -117,6 +118,13 @@ async function createSchema() {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 }
 
+function stateKey() {
+  const token=String(process.env.BOT_TOKEN||"").trim();
+  return "main:" + (token ? crypto.createHash("sha1").update(token).digest("hex").slice(0,16) : "default");
+}
+function parseJson(value, fallback=null) {
+  try { const x=JSON.parse(String(value||"")); return x && typeof x==="object" ? x : fallback; } catch { return fallback; }
+}
 function resourceKey(item) {
   return String(item?.chatId ?? "") + ":" + String(item?.messageId ?? "");
 }
@@ -134,119 +142,65 @@ async function persistNormalized(db) {
   const conn=await pool.getConnection();
   try {
     await conn.beginTransaction();
-
-    await conn.execute(
-      "INSERT INTO bot_state (state_key,data) VALUES ('main',?) ON DUPLICATE KEY UPDATE data=VALUES(data)",
-      [JSON.stringify(db)]
-    );
-
-    await conn.query("DELETE FROM folders");
+    await conn.execute("INSERT INTO bot_state (state_key,data) VALUES (?,?) ON DUPLICATE KEY UPDATE data=VALUES(data)",[stateKey(),JSON.stringify(db)]);
     for(const d of Array.isArray(db.directories)?db.directories:[]) {
       if(!d?.id || !d?.name) continue;
-      await conn.execute(
-        "INSERT INTO folders (id,name,parent_id,sort_order,status,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
-        [
-          String(d.id), String(d.name).slice(0,500), d.parentId?String(d.parentId):null,
-          Number(d.sortOrder||0), d.status||"active", JSON.stringify(d),
-          Number(d.createdAt||Date.now()), Number(d.updatedAt||Date.now())
-        ]
-      );
+      await conn.execute("INSERT INTO folders (id,name,parent_id,sort_order,status,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),parent_id=VALUES(parent_id),sort_order=VALUES(sort_order),status=VALUES(status),data=VALUES(data),updated_at=VALUES(updated_at)",[String(d.id),String(d.name).slice(0,500),d.parentId?String(d.parentId):null,Number(d.sortOrder||0),d.status||"active",JSON.stringify(d),Number(d.createdAt||Date.now()),Number(d.updatedAt||Date.now())]);
     }
-
-    await conn.query("DELETE FROM resources");
     for(const r of Array.isArray(db.resources)?db.resources:[]) {
       const key=resourceKey(r);
-      if(!key || key===":") continue;
-      await conn.execute(
-        "INSERT INTO resources (resource_key,folder_id,chat_id,message_id,title,caption,file_type,file_id,telegram_url,downloads,status,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-          key, r.directoryId?String(r.directoryId):null, String(r.chatId||""),
-          Number(r.messageId||0), String(r.title||"").slice(0,1000), String(r.caption||""),
-          String(r.fileType||""), String(r.fileId||""), telegramUrl(r),
-          Number(r.downloads||0), r.status||"active", JSON.stringify(r),
-          Number(r.date||r.createdAt||Date.now()), Date.now()
-        ]
-      );
+      if(!key || key===":" || !r?.chatId || !r?.messageId) continue;
+      await conn.execute("INSERT INTO resources (resource_key,folder_id,chat_id,message_id,title,caption,file_type,file_id,telegram_url,downloads,status,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE folder_id=VALUES(folder_id),title=VALUES(title),caption=VALUES(caption),file_type=VALUES(file_type),file_id=VALUES(file_id),telegram_url=VALUES(telegram_url),downloads=VALUES(downloads),status=VALUES(status),data=VALUES(data),updated_at=VALUES(updated_at)",[key,r.directoryId?String(r.directoryId):null,String(r.chatId),Number(r.messageId),String(r.title||"").slice(0,1000),String(r.caption||""),String(r.fileType||""),String(r.fileId||""),telegramUrl(r),Number(r.downloads||0),r.status||"active",JSON.stringify(r),Number(r.date||r.createdAt||Date.now()),Date.now()]);
     }
-
-    await conn.query("DELETE FROM repositories");
     const repos=[];
     if(db.settings?.repository) repos.push(db.settings.repository);
     if(Array.isArray(db.settings?.repositories)) repos.push(...db.settings.repositories);
     for(const r of repos) {
       if(!r?.chatId) continue;
-      await conn.execute(
-        "INSERT INTO repositories (chat_id,title,username,repo_type,status,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
-        [
-          String(r.chatId), String(r.title||"").slice(0,1000), String(r.username||""),
-          String(r.type||r.repoType||""), r.status||"active", JSON.stringify(r),
-          Number(r.createdAt||Date.now()), Date.now()
-        ]
-      );
+      await conn.execute("INSERT INTO repositories (chat_id,title,username,repo_type,status,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE title=VALUES(title),username=VALUES(username),repo_type=VALUES(repo_type),status=VALUES(status),data=VALUES(data),updated_at=VALUES(updated_at)",[String(r.chatId),String(r.title||"").slice(0,1000),String(r.username||""),String(r.type||r.repoType||""),r.status||"active",JSON.stringify(r),Number(r.createdAt||Date.now()),Date.now()]);
     }
-
-    await conn.query("DELETE FROM sync_tasks");
     const task=db.settings?.repositoryAutoSync;
     if(task?.sourceId || task?.targetId) {
       const taskKey=String(task.sourceId||"")+":"+String(task.targetId||"");
-      await conn.execute(
-        "INSERT INTO sync_tasks (task_key,source_chat_id,target_chat_id,status,last_message_id,queued,copied,skipped,failed,last_error,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?)",
-        [
-          taskKey, String(task.sourceId||""), String(task.targetId||""), String(task.status||"idle"),
-          Number(task.lastMessageId||0), Number(task.queue?.length||0), Number(task.copied||0),
-          Number(task.skipped||0), Number(task.failed||0), String(task.lastError||""),
-          JSON.stringify(task), Date.now(), Date.now()
-        ]
-      );
+      await conn.execute("INSERT INTO sync_tasks (task_key,source_chat_id,target_chat_id,status,last_message_id,queued,copied,skipped,failed,last_error,data,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?) ON DUPLICATE KEY UPDATE source_chat_id=VALUES(source_chat_id),target_chat_id=VALUES(target_chat_id),status=VALUES(status),last_message_id=VALUES(last_message_id),queued=VALUES(queued),copied=VALUES(copied),skipped=VALUES(skipped),failed=VALUES(failed),last_error=VALUES(last_error),data=VALUES(data),updated_at=VALUES(updated_at)",[taskKey,String(task.sourceId||""),String(task.targetId||""),String(task.status||"idle"),Number(task.lastMessageId||0),Number(task.queue?.length||0),Number(task.copied||0),Number(task.skipped||0),Number(task.failed||0),String(task.lastError||""),JSON.stringify(task),Date.now(),Date.now()]);
     }
-
     await conn.commit();
-  } catch(e) {
-    try { await conn.rollback(); } catch {}
-    throw e;
-  } finally {
-    conn.release();
-  }
+  } catch(e) { try { await conn.rollback(); } catch {} throw e; } finally { conn.release(); }
 }
 
 export async function initializeMySQL(db) {
   const config=mysqlConfig();
-  if(!config) {
-    console.log("ℹ️ MySQL 未配置：继续使用本地 JSON；配置 DB_HOST/DB_* 后将启用 MySQL。");
-    return false;
-  }
-  if(!config.database) {
-    console.error("❌ MySQL 已配置但缺少 DB_NAME");
-    return false;
-  }
+  if(!config) { console.log("ℹ️ MySQL 未配置：继续使用本地 JSON。"); return false; }
+  if(!config.database) { console.error("❌ MySQL 已配置但缺少 DB_NAME"); return false; }
   try {
     pool=mysql.createPool(config);
     await pool.query("SELECT 1");
     await createSchema();
-
-    const [rows]=await pool.execute("SELECT data FROM bot_state WHERE state_key='main' LIMIT 1");
+    const key=stateKey();
+    const [rows]=await pool.execute("SELECT data FROM bot_state WHERE state_key=? LIMIT 1",[key]);
     if(rows.length && rows[0]?.data) {
-      try {
-        const remote=JSON.parse(rows[0].data);
-        if(remote && typeof remote==="object") {
-          Object.keys(db).forEach(k=>delete db[k]);
-          Object.assign(db,remote);
-          console.log("🗄️ MySQL：已从主数据恢复资源库");
-        }
-      } catch(e) {
-        console.warn("⚠️ MySQL 主数据 JSON 损坏，保留当前数据并重新写入");
-      }
+      const remote=parseJson(rows[0].data);
+      if(remote) { Object.keys(db).forEach(k=>delete db[k]); Object.assign(db,remote); }
     } else {
-      await persistNormalized(db);
-      console.log("🗄️ MySQL：首次初始化完成，已导入现有 JSON 数据");
+      const [legacy]=await pool.execute("SELECT data FROM bot_state WHERE state_key='main' LIMIT 1");
+      const legacyDb=legacy.length ? parseJson(legacy[0]?.data) : null;
+      if(legacyDb) { Object.keys(db).forEach(k=>delete db[k]); Object.assign(db,legacyDb); }
     }
+    const [fr]=await pool.query("SELECT data FROM folders WHERE status <> 'deleted'");
+    const [rr]=await pool.query("SELECT data FROM resources WHERE status <> 'deleted'");
+    const fm=new Map((Array.isArray(db.directories)?db.directories:[]).map(x=>[String(x?.id||""),x]));
+    for(const row of fr) { const x=parseJson(row.data); if(x?.id && !fm.has(String(x.id))) fm.set(String(x.id),x); }
+    db.directories=[...fm.values()];
+    const rm=new Map((Array.isArray(db.resources)?db.resources:[]).map(x=>[resourceKey(x),x]));
+    for(const row of rr) { const x=parseJson(row.data); if(x?.chatId && x?.messageId && !rm.has(resourceKey(x))) rm.set(resourceKey(x),x); }
+    db.resources=[...rm.values()];
+    await persistNormalized(db);
     ready=true;
-    console.log("✅ MySQL：已连接，当前数据由 MySQL 持久化");
+    console.log("✅ MySQL：已连接；文件夹/资源采用增量保存，机器人状态已隔离");
     return true;
   } catch(e) {
     ready=false;
     console.error("❌ MySQL 初始化失败：",String(e?.message||e));
-    console.error("ℹ️ 当前运行会自动回退到现有 JSON/Baserow，不影响机器人启动。");
     try { if(pool) await pool.end(); } catch {}
     pool=null;
     return false;
@@ -259,7 +213,7 @@ export function isMySQLReady() {
 
 export function persistMySQL(db) {
   if(!ready || !pool) return;
-  const snapshot=db;
+  const snapshot=JSON.parse(JSON.stringify(db));
   writeQueue=writeQueue.then(()=>persistNormalized(snapshot)).catch(e=>{
     console.error("❌ MySQL 保存失败：",String(e?.message||e));
   });
