@@ -2381,7 +2381,7 @@ async function processRepositoryAutoSyncQueue(){
         console.warn("⏭️ AUTO SYNC 防止队列卡死，跳过未消费消息:",String(state.sourceId||"")+"#"+stuckId);
       }
 
-      if(state.queue.length)await sleep(300);
+      // 不人为等待；用户要求有多少发多少。Telegram 自身的 429 retry_after 仍由 tg() 自动处理。
     }
 
     if(state.enabled && !state.manualPaused){
@@ -6927,6 +6927,12 @@ async function pollMain() {
         }
         if(u.message) {
           console.log("📨 MAIN MESSAGE RECEIVED:", String(u.message.text||u.message.caption||"").slice(0,80));
+          // 自动同步实时监听必须在普通消息状态机之前执行。
+          // 这样即使 binding/上传/客服等流程提前处理了消息，也不会漏掉源仓库的新消息。
+          if(["group","supergroup","channel"].includes(String(u.message.chat?.type||""))) {
+            indexResource(u.message);
+            queueRepositoryAutoSyncMessage(u.message);
+          }
           try {
             await mainMessage(u.message);
           } catch(e) {
