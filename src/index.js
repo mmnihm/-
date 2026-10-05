@@ -3528,8 +3528,9 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
   const sortedItems=[...items].sort((a,b)=>Number(a.messageId)-Number(b.messageId));
 
   // 批量转存：每批最多100条；批量失败时只对失败批次逐条兜底。
-  for(let offset=0;offset<sortedItems.length;offset+=100){
-    const batch=sortedItems.slice(offset,offset+100);
+  const TELEGRAM_COPY_BATCH_SIZE=100;
+  for(let offset=0;offset<sortedItems.length;offset+=TELEGRAM_COPY_BATCH_SIZE){
+    const batch=sortedItems.slice(offset,offset+TELEGRAM_COPY_BATCH_SIZE);
     const ids=batch.map(x=>Number(x.messageId)).filter(Number.isFinite);
     if(!ids.length) continue;
     let copiedIds=null;
