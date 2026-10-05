@@ -177,23 +177,63 @@ export async function initializeMySQL(db) {
     await pool.query("SELECT 1");
     await createSchema();
     const key=stateKey();
+    // 启动恢复必须是“合并”而不是“远端覆盖本地”。
+    // 如果本地刚刚新增了资源，而 MySQL 里还是旧快照，绝不能因为 MySQL
+    // 启动成功就把本地资源替换掉；否则会出现“刚上传几十个文件，重启后消失”。
+    let remoteState=null;
     const [rows]=await pool.execute("SELECT data FROM bot_state WHERE state_key=? LIMIT 1",[key]);
     if(rows.length && rows[0]?.data) {
-      const remote=parseJson(rows[0].data);
-      if(remote) { Object.keys(db).forEach(k=>delete db[k]); Object.assign(db,remote); }
+      remoteState=parseJson(rows[0].data);
     } else {
       const [legacy]=await pool.execute("SELECT data FROM bot_state WHERE state_key='main' LIMIT 1");
-      const legacyDb=legacy.length ? parseJson(legacy[0]?.data) : null;
-      if(legacyDb) { Object.keys(db).forEach(k=>delete db[k]); Object.assign(db,legacyDb); }
+      remoteState=legacy.length ? parseJson(legacy[0]?.data) : null;
     }
+
+    // 仅在本地数据库明显为空时使用远端完整状态作为启动基线。
+    // 本地已有数据时，保留本地 users/settings 等状态，再把远端缺失数据合并进来。
+    const localHasResources=Array.isArray(db.resources) && db.resources.length>0;
+    const localHasDirectories=Array.isArray(db.directories) && db.directories.length>0;
+    if(remoteState && !localHasResources && !localHasDirectories) {
+      Object.keys(db).forEach(k=>delete db[k]);
+      Object.assign(db,remoteState);
+    } else if(remoteState) {
+      const merged={...remoteState,...db};
+      const dirs=new Map();
+      for(const x of Array.isArray(remoteState.directories)?remoteState.directories:[]) {
+        if(x?.id) dirs.set(String(x.id),x);
+      }
+      for(const x of Array.isArray(db.directories)?db.directories:[]) {
+        if(x?.id) dirs.set(String(x.id),x);
+      }
+      const resources=new Map();
+      for(const x of Array.isArray(remoteState.resources)?remoteState.resources:[]) {
+        if(x?.chatId && x?.messageId) resources.set(resourceKey(x),x);
+      }
+      for(const x of Array.isArray(db.resources)?db.resources:[]) {
+        if(x?.chatId && x?.messageId) resources.set(resourceKey(x),x);
+      }
+      merged.directories=[...dirs.values()];
+      merged.resources=[...resources.values()];
+      Object.keys(db).forEach(k=>delete db[k]);
+      Object.assign(db,merged);
+    }
+
     const [fr]=await pool.query("SELECT data FROM folders WHERE status <> 'deleted'");
     const [rr]=await pool.query("SELECT data FROM resources WHERE status <> 'deleted'");
     const fm=new Map((Array.isArray(db.directories)?db.directories:[]).map(x=>[String(x?.id||""),x]));
-    for(const row of fr) { const x=parseJson(row.data); if(x?.id && !fm.has(String(x.id))) fm.set(String(x.id),x); }
+    for(const row of fr) {
+      const x=parseJson(row.data);
+      if(x?.id && !fm.has(String(x.id))) fm.set(String(x.id),x);
+    }
     db.directories=[...fm.values()];
     const rm=new Map((Array.isArray(db.resources)?db.resources:[]).map(x=>[resourceKey(x),x]));
-    for(const row of rr) { const x=parseJson(row.data); if(x?.chatId && x?.messageId && !rm.has(resourceKey(x))) rm.set(resourceKey(x),x); }
+    for(const row of rr) {
+      const x=parseJson(row.data);
+      if(x?.chatId && x?.messageId && !rm.has(resourceKey(x))) rm.set(resourceKey(x),x);
+    }
     db.resources=[...rm.values()];
+
+    // 只有在数据库连接和读取全部成功后才回写 MySQL；初始化失败不会触碰本地数据。
     await persistNormalized(db);
     ready=true;
     console.log("✅ MySQL：已连接；文件夹/资源采用增量保存，机器人状态已隔离");
