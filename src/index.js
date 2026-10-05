@@ -257,12 +257,27 @@ const GOOGLE_SERVICE_ACCOUNT_JSON = readEnvFirst(
   "GOOGLE_SERVICE_ACCOUNT_JSON",
   "GOOGLE_SERVICE_ACCOUNT"
 );
+function readGoogleServiceAccountB64Parts() {
+  const parts = [];
+  for (const [name, value] of Object.entries(process.env)) {
+    const m = /^GOOGLE_SERVICE_ACCOUNT_B64_(\\d+)$/i.exec(name);
+    if (!m) continue;
+    const part = String(value ?? "").trim();
+    if (part) parts.push({ index: Number(m[1]), value: part });
+  }
+  parts.sort((a, b) => a.index - b.index);
+  return parts.map(x => x.value).join("");
+}
+
 const GOOGLE_SERVICE_ACCOUNT_B64 = readEnvFirst(
   "GOOGLE_SERVICE_ACCOUNT_B64",
   "GOOGLE_SERVICE_ACCOUNT_BASE64",
   "GOOGLE_SERVICE_ACCOUNT_KEY_B64",
   "GOOGLE_SA_B64"
-);
+) || readGoogleServiceAccountB64Parts();
+const GOOGLE_SERVICE_ACCOUNT_B64_PARTS = Object.keys(process.env)
+  .filter(k => /^GOOGLE_SERVICE_ACCOUNT_B64_\\d+$/i.test(k))
+  .sort((a, b) => Number(a.match(/\\d+$/)?.[0] || 0) - Number(b.match(/\\d+$/)?.[0] || 0));
 const GOOGLE_ACCESS_TOKEN = readEnvFirst("GOOGLE_ACCESS_TOKEN");
 const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
 
@@ -274,7 +289,11 @@ console.log("🔐 GOOGLE SHEETS ENV:", {
   sheetId: GOOGLE_SHEETS_ID ? "已配置" : "❌ 未配置",
   tab: GOOGLE_SHEETS_TAB || "Sheet1",
   serviceAccountJson: GOOGLE_SERVICE_ACCOUNT_JSON ? "已配置" : "❌ 未配置",
-  serviceAccountB64: GOOGLE_SERVICE_ACCOUNT_B64 ? "已配置(" + GOOGLE_SERVICE_ACCOUNT_B64.length + " chars)" : "❌ 未配置",
+  serviceAccountB64: GOOGLE_SERVICE_ACCOUNT_B64
+    ? (GOOGLE_SERVICE_ACCOUNT_B64_PARTS.length
+      ? "已配置(" + GOOGLE_SERVICE_ACCOUNT_B64.length + " chars, " + GOOGLE_SERVICE_ACCOUNT_B64_PARTS.length + " 段)"
+      : "已配置(" + GOOGLE_SERVICE_ACCOUNT_B64.length + " chars)")
+    : "❌ 未配置",
   accessToken: GOOGLE_ACCESS_TOKEN ? "已配置" : "未配置",
   detectedGoogleEnvKeys: googleEnvKeys
 });
