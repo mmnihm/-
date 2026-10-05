@@ -243,19 +243,40 @@ async function tg(token, method, body = {}) {
 const main = (method, body = {}) => tg(TOKEN, method, body);
 
 // ===== Google Sheets 共享资源中心（替代旧 Baserow） =====
-const GOOGLE_SHEETS_ID = String(process.env.GOOGLE_SHEETS_ID || "1-7f_dKaSU66sbftuT2RM1ctf5-VY6KLxU1AJhGmI8D8").trim();
-const GOOGLE_SHEETS_TAB = String(process.env.GOOGLE_SHEETS_TAB || "Sheet1").trim() || "Sheet1";
-const GOOGLE_SERVICE_ACCOUNT_JSON = String(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim();
-const GOOGLE_SERVICE_ACCOUNT_B64 = String(process.env.GOOGLE_SERVICE_ACCOUNT_B64 || "").trim();
-const GOOGLE_ACCESS_TOKEN = String(process.env.GOOGLE_ACCESS_TOKEN || "").trim();
+function readEnvFirst(...names) {
+  for (const name of names) {
+    const value = String(process.env[name] ?? "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+const GOOGLE_SHEETS_ID = readEnvFirst("GOOGLE_SHEETS_ID") || "1-7f_dKaSU66sbftuT2RM1ctf5-VY6KLxU1AJhGmI8D8";
+const GOOGLE_SHEETS_TAB = readEnvFirst("GOOGLE_SHEETS_TAB") || "Sheet1";
+const GOOGLE_SERVICE_ACCOUNT_JSON = readEnvFirst(
+  "GOOGLE_SERVICE_ACCOUNT_JSON",
+  "GOOGLE_SERVICE_ACCOUNT"
+);
+const GOOGLE_SERVICE_ACCOUNT_B64 = readEnvFirst(
+  "GOOGLE_SERVICE_ACCOUNT_B64",
+  "GOOGLE_SERVICE_ACCOUNT_BASE64",
+  "GOOGLE_SERVICE_ACCOUNT_KEY_B64",
+  "GOOGLE_SA_B64"
+);
+const GOOGLE_ACCESS_TOKEN = readEnvFirst("GOOGLE_ACCESS_TOKEN");
 const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
+
+const googleEnvKeys = Object.keys(process.env)
+  .filter(k => /^GOOGLE_/i.test(k))
+  .map(k => k + "=" + (String(process.env[k] ?? "").trim() ? ("已配置(" + String(process.env[k]).trim().length + " chars)") : "空值"));
 
 console.log("🔐 GOOGLE SHEETS ENV:", {
   sheetId: GOOGLE_SHEETS_ID ? "已配置" : "❌ 未配置",
   tab: GOOGLE_SHEETS_TAB || "Sheet1",
   serviceAccountJson: GOOGLE_SERVICE_ACCOUNT_JSON ? "已配置" : "❌ 未配置",
   serviceAccountB64: GOOGLE_SERVICE_ACCOUNT_B64 ? "已配置(" + GOOGLE_SERVICE_ACCOUNT_B64.length + " chars)" : "❌ 未配置",
-  accessToken: GOOGLE_ACCESS_TOKEN ? "已配置" : "未配置"
+  accessToken: GOOGLE_ACCESS_TOKEN ? "已配置" : "未配置",
+  detectedGoogleEnvKeys: googleEnvKeys
 });
 
 const baserow = {
