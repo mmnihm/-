@@ -275,7 +275,7 @@ let googleAccessTokenCache={token:"",expiresAt:0};
 
 function base64url(value){
   return Buffer.from(String(value)).toString("base64")
-    .replace(/=+$/,"").replace(/\\+/g,"-").replace(/\\//g,"_");
+    .replace(/=+$/,"").replace(/\+/g,"-").replace(/\//g,"_");
 }
 async function getGoogleAccessToken(){
   if(GOOGLE_ACCESS_TOKEN) return GOOGLE_ACCESS_TOKEN;
