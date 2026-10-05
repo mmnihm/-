@@ -3593,11 +3593,13 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
             chat:{...(entry.msg?.chat||{}),id:r.chatId,title:r.title||entry.msg?.chat?.title||r.chatId,username:r.username||entry.msg?.chat?.username||"",type:r.type||"supergroup"},
             message_id:copiedId
           };
-          indexResource(resourceMsg);
-          const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
-          if(!item) throw new Error("资源索引写入失败");
-          item.directoryId=d.id; item.repositoryMessageId=copiedId; item.sourceUserId=String(uid); item.indexedAt=Date.now();
-          queueBaserowResourceSync(item); stored++;
+          const item={...(entry.msg||{}),chatId:String(r.chatId),messageId:copiedId,title:String(entry.msg?.document?.file_name||entry.msg?.video?.file_name||entry.msg?.audio?.file_name||entry.msg?.caption||entry.msg?.text||"未命名资源").slice(0,200),caption:String(entry.msg?.caption||entry.msg?.text||"").slice(0,500),date:entry.msg?.date||Math.floor(Date.now()/1000),indexedAt:Date.now(),directoryId:d.id,repositoryMessageId:copiedId,sourceUserId:String(uid),mediaGroupId:entry.msg?.media_group_id?String(entry.msg.media_group_id):"",downloads:0};
+          const existingIndex=db.resources.findIndex(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+          if(existingIndex>=0) db.resources[existingIndex]={...db.resources[existingIndex],...item,directoryId:d.id}; else db.resources.unshift(item);
+          db.resources=db.resources.slice(0,MAX_RESOURCES);
+          const savedItem=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+          if(!savedItem||String(savedItem.directoryId)!==String(d.id)) throw new Error("资源文件夹关联写入失败");
+          queueBaserowResourceSync(savedItem); stored++; saveDb();
         }catch(err){ failed++; console.error("❌ UPLOAD RESOURCE FALLBACK:",err?.message||err,"sourceMessage=",entry?.messageId); }
       }
       saveDb();
@@ -3613,11 +3615,13 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
           chat:{...(batch[n].msg?.chat||{}),id:r.chatId,title:r.title||batch[n].msg?.chat?.title||r.chatId,username:r.username||batch[n].msg?.chat?.username||"",type:r.type||"supergroup"},
           message_id:copiedId
         };
-        indexResource(resourceMsg);
-        const item=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
-        if(!item) throw new Error("资源索引写入失败");
-        item.directoryId=d.id; item.repositoryMessageId=copiedId; item.sourceUserId=String(uid); item.indexedAt=Date.now();
-        queueBaserowResourceSync(item); stored++;
+        const item={...(batch[n].msg||{}),chatId:String(r.chatId),messageId:copiedId,title:String(batch[n].msg?.document?.file_name||batch[n].msg?.video?.file_name||batch[n].msg?.audio?.file_name||batch[n].msg?.caption||batch[n].msg?.text||"未命名资源").slice(0,200),caption:String(batch[n].msg?.caption||batch[n].msg?.text||"").slice(0,500),date:batch[n].msg?.date||Math.floor(Date.now()/1000),indexedAt:Date.now(),directoryId:d.id,repositoryMessageId:copiedId,sourceUserId:String(uid),mediaGroupId:batch[n].msg?.media_group_id?String(batch[n].msg.media_group_id):"",downloads:0};
+        const existingIndex=db.resources.findIndex(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+        if(existingIndex>=0) db.resources[existingIndex]={...db.resources[existingIndex],...item,directoryId:d.id}; else db.resources.unshift(item);
+        db.resources=db.resources.slice(0,MAX_RESOURCES);
+        const savedItem=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
+        if(!savedItem||String(savedItem.directoryId)!==String(d.id)) throw new Error("资源文件夹关联写入失败");
+        queueBaserowResourceSync(savedItem); stored++; saveDb();
       }catch(e){
         failed++;
         console.error("❌ UPLOAD RESOURCE INDEX:",e?.message||e,"sourceMessage=",batch[n]?.messageId);
