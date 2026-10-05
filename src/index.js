@@ -3570,7 +3570,7 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
           db.resources=db.resources.slice(0,MAX_RESOURCES);
           const savedItem=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
           if(!savedItem||String(savedItem.directoryId)!==String(d.id)) throw new Error("资源文件夹关联写入失败");
-          queueBaserowResourceSync(savedItem); stored++; saveDb();
+          queueBaserowResourceSync(savedItem); stored++;
         }catch(err){ failed++; console.error("❌ UPLOAD RESOURCE FALLBACK:",err?.message||err,"sourceMessage=",entry?.messageId); }
       }
       saveDb();
@@ -3592,7 +3592,7 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
         db.resources=db.resources.slice(0,MAX_RESOURCES);
         const savedItem=db.resources.find(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
         if(!savedItem||String(savedItem.directoryId)!==String(d.id)) throw new Error("资源文件夹关联写入失败");
-        queueBaserowResourceSync(savedItem); stored++; saveDb();
+        queueBaserowResourceSync(savedItem); stored++;
       }catch(e){
         failed++;
         console.error("❌ UPLOAD RESOURCE INDEX:",e?.message||e,"sourceMessage=",batch[n]?.messageId);
