@@ -3182,19 +3182,16 @@ function sortedDirectories(list=db.directories) {
     return String(b?.name||"").localeCompare(String(a?.name||""),"zh-Hans");
   });
 }
-function uploadFolderInlineMenu(page=0) {
+function uploadFolderInlineMenu() {
+  // 每次打开/刷新都从当前 db.directories 动态生成，不能固定显示某一个文件夹。
   const all=sortedDirectories();
-  const pageSize=10;
-  const currentPage=Math.max(0,Number(page)||0);
-  const start=currentPage*pageSize;
-  const current=all.slice(start,start+pageSize);
   const rows=[];
   let row=[];
-  for(const d of current) {
+  for(const d of all) {
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
-    const name=String(d.name||"未命名").slice(0,18);
+    const name=String(d.name||"未命名").trim() || "未命名";
     row.push({
-      text:"📁 "+name+" · "+count,
+      text:"📁 "+name.slice(0,24)+" · "+count,
       callback_data:"upload_dir:"+d.id
     });
     if(row.length===2) {
@@ -3205,17 +3202,14 @@ function uploadFolderInlineMenu(page=0) {
   if(row.length) rows.push(row);
   if(!rows.length) rows.push([{text:"📭 暂无文件夹",callback_data:"noop"}]);
 
-  const nav=[];
-  if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"uploadsp:"+(currentPage-1)});
-  if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"uploadsp:"+(currentPage+1)});
-  if(nav.length) rows.push(nav);
-
   rows.push([
     {text:"➕ 新建文件夹",callback_data:"upload_new"},
+    {text:"🔄 刷新文件夹",callback_data:"upload_folder_refresh"},
     {text:"❌ 取消",callback_data:"upload_cancel"}
   ]);
   return {inline_keyboard:rows};
 }
+
 function deleteResourceMenu() {
   const rows = [];
   for (const d of db.directories) {
