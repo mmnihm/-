@@ -253,6 +253,7 @@ function readEnvFirst(...names) {
 
 const GOOGLE_SHEETS_ID = readEnvFirst("GOOGLE_SHEETS_ID") || "1-7f_dKaSU66sbftuT2RM1ctf5-VY6KLxU1AJhGmI8D8";
 const GOOGLE_SHEETS_TAB = readEnvFirst("GOOGLE_SHEETS_TAB") || "Sheet1";
+const GOOGLE_SHEETS_WEBHOOK_URL = readEnvFirst("GOOGLE_SHEETS_WEBHOOK_URL");
 const GOOGLE_SERVICE_ACCOUNT_JSON = readEnvFirst(
   "GOOGLE_SERVICE_ACCOUNT_JSON",
   "GOOGLE_SERVICE_ACCOUNT"
@@ -279,13 +280,14 @@ const GOOGLE_SERVICE_ACCOUNT_B64_PARTS = Object.keys(process.env)
   .filter(k => /^GOOGLE_SERVICE_ACCOUNT_B64_\d+$/i.test(k))
   .sort((a, b) => Number(a.match(/\d+$/)?.[0] || 0) - Number(b.match(/\d+$/)?.[0] || 0));
 const GOOGLE_ACCESS_TOKEN = readEnvFirst("GOOGLE_ACCESS_TOKEN");
-const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
+const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_SHEETS_WEBHOOK_URL || GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
 
 const googleEnvKeys = Object.keys(process.env)
   .filter(k => /^GOOGLE_/i.test(k))
   .map(k => k + "=" + (String(process.env[k] ?? "").trim() ? ("已配置(" + String(process.env[k]).trim().length + " chars)") : "空值"));
 
 console.log("🔐 GOOGLE SHEETS ENV:", {
+  webhook: GOOGLE_SHEETS_WEBHOOK_URL ? "已配置" : "❌ 未配置",
   sheetId: GOOGLE_SHEETS_ID ? "已配置" : "❌ 未配置",
   tab: GOOGLE_SHEETS_TAB || "Sheet1",
   serviceAccountJson: GOOGLE_SERVICE_ACCOUNT_JSON ? "已配置" : "❌ 未配置",
@@ -377,6 +379,22 @@ async function getGoogleAccessToken(){
   return data.access_token;
 }
 
+async function googleAppsScriptRequest(payload){
+  if(!GOOGLE_SHEETS_WEBHOOK_URL) throw new Error("Google Apps Script Webhook 未配置 GOOGLE_SHEETS_WEBHOOK_URL");
+  const r=await fetch(GOOGLE_SHEETS_WEBHOOK_URL,{
+    method:"POST",
+    headers:{"content-type":"application/json","accept":"application/json"},
+    body:JSON.stringify(payload||{})
+  });
+  const text=await r.text();
+  let data={};
+  try{ data=JSON.parse(text||"{}"); }catch{}
+  if(!r.ok || data?.ok===false) {
+    throw new Error("Google Apps Script "+(r.status||0)+": "+String(data?.error||text||"请求失败").slice(0,500));
+  }
+  return data;
+}
+
 const GOOGLE_SHEETS_API="https://sheets.googleapis.com/v4/spreadsheets/";
 function sheetNameRange(suffix=""){
   return encodeURIComponent("'"+GOOGLE_SHEETS_TAB.replace(/'/g,"''")+"'"+suffix);
@@ -396,6 +414,17 @@ async function googleSheetsRequest(method,pathName,body){
 const DEFAULT_SHEET_FIELDS=["名称","文件夹","类型","网址","标签","上传日期","所有者","聊天ID","消息ID","描述","文件ID","下载"];
 
 async function ensureGoogleSheetHeaders(){
+  if(GOOGLE_SHEETS_WEBHOOK_URL){
+    const data=await googleAppsScriptRequest({action:"get"});
+    const headers=Array.isArray(data?.headers)?data.headers.map(x=>String(x??"").trim()).filter(Boolean):[];
+    if(headers.length) return headers;
+    // Apps Script 当前接口会按 data 的键自动创建第一行表头；空值不会产生资源记录。
+    const dataObject={};
+    for(const name of DEFAULT_SHEET_FIELDS) dataObject[name]="";
+    await googleAppsScriptRequest({action:"append",data:dataObject});
+    const created=await googleAppsScriptRequest({action:"get"});
+    return Array.isArray(created?.headers)&&created.headers.length ? created.headers : [...DEFAULT_SHEET_FIELDS];
+  }
   const range=sheetNameRange("!1:1");
   const data=await googleSheetsRequest("GET","/values/"+range+"?majorDimension=ROWS");
   const headers=Array.isArray(data.values?.[0])?data.values[0].map(x=>String(x??"").trim()):[];
@@ -438,12 +467,14 @@ async function checkGoogleSheetsConnection(){
   if(!GOOGLE_SHEETS_CREDENTIAL){
     baserow.enabled=false;
     baserow.connected=false;
-    baserow.lastError="未配置 GOOGLE_SERVICE_ACCOUNT_JSON/B64 或 GOOGLE_ACCESS_TOKEN";
-    console.error("❌ Google Sheets 配置缺失：未读取到服务账号凭据。请检查 FadeHost 环境变量名称，并确认修改后已重新部署。");
+    baserow.lastError="未配置 GOOGLE_SHEETS_WEBHOOK_URL 或旧版 Google 凭据";
+    console.error("❌ Google Sheets 配置缺失：未读取到共享接口。");
     return false;
   }
   try{
-    if(!GOOGLE_ACCESS_TOKEN){
+    if(GOOGLE_SHEETS_WEBHOOK_URL){
+      console.log("🔗 Google Apps Script:", "已配置");
+    } else if(!GOOGLE_ACCESS_TOKEN){
       const sa=parseGoogleServiceAccount();
       console.log("🔐 Google 服务账号:", sa?.client_email ? "已读取("+sa.client_email+")" : "❌ 无法读取");
     }
@@ -465,7 +496,62 @@ async function checkBaserowConnection(){ return checkGoogleSheetsConnection(); }
 
 async function baserowRequest(method,pathName,body){
   if(!GOOGLE_SHEETS_ID) throw new Error("Google Sheets 未配置 GOOGLE_SHEETS_ID");
-  if(!GOOGLE_SHEETS_CREDENTIAL) throw new Error("Google Sheets 未配置服务账号凭据");
+  if(!GOOGLE_SHEETS_CREDENTIAL) throw new Error("Google Sheets 未配置共享接口");
+
+  if(GOOGLE_SHEETS_WEBHOOK_URL){
+    if(pathName.includes("/fields/table/")){
+      if(method==="GET"){
+        const data=await googleAppsScriptRequest({action:"get"});
+        const headers=Array.isArray(data?.headers)?data.headers:[];
+        return headers.map((name,i)=>({id:i+1,name:String(name),type:"text",read_only:false,index:i}));
+      }
+      if(method==="POST"){
+        // 现有 Apps Script 会在首次 append 时自动补齐缺失表头。
+        const name=String(body?.name||"").trim();
+        if(!name) throw new Error("Google Sheets 字段名称为空");
+        const data=await googleAppsScriptRequest({action:"append",data:{[name]:""}});
+        return {name,type:"text",read_only:false};
+      }
+    }
+
+    if(pathName.includes("/rows/table/")){
+      if(method==="GET"){
+        const data=await googleAppsScriptRequest({action:"get"});
+        const rows=Array.isArray(data?.rows)?data.rows:[];
+        return {
+          results: rows.map(row=>{
+            const out={};
+            Object.keys(row||{}).forEach(k=>{
+              if(k!=="_row") out[k]=row[k];
+            });
+            out.id=Number(row?._row||0);
+            return out;
+          }),
+          next:null
+        };
+      }
+
+      const rowMatch=pathName.match(/\/rows\/table\/[^/]+\/(\d+)/);
+      const rowNumber=rowMatch?Number(rowMatch[1]):0;
+
+      if(method==="POST"){
+        const data=await googleAppsScriptRequest({action:"append",data:body||{}});
+        return {...(body||{}),id:Number(data?.row||0)||null};
+      }
+
+      if(method==="PATCH" && rowNumber>1){
+        const data=await googleAppsScriptRequest({action:"update",row:rowNumber,data:body||{}});
+        return {...(body||{}),id:Number(data?.row||rowNumber)};
+      }
+
+      if(method==="DELETE" && rowNumber>1){
+        await googleAppsScriptRequest({action:"delete",row:rowNumber});
+        return {};
+      }
+    }
+
+    throw new Error("Google Sheets 未支持的共享数据操作: "+method+" "+pathName);
+  }
 
   if(pathName.includes("/fields/table/")){
     if(method==="GET") return (await getGoogleSheetHeaders()).map(f=>({...f}));
