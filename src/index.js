@@ -806,21 +806,11 @@ async function baserowSyncResource(item) {
   }
 }
 
-function requestSharedDataRefresh() {
-  if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
-  if (sharedImmediateRefreshTimer) clearTimeout(sharedImmediateRefreshTimer);
-  sharedImmediateRefreshTimer = setTimeout(() => {
-    sharedImmediateRefreshTimer = null;
-    refreshSharedData(true).catch(e => console.warn("⚠️ 操作后立即刷新异常:", String(e?.message || e)));
-  }, 1200);
-}
-
 function queueBaserowResourceSync(item) {
   if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !item) return;
   baserowSyncQueue = baserowSyncQueue
     .then(() => baserowSyncResource(item))
     .catch(e => console.error("❌ Google Sheets 同步队列:", e.message));
-  requestSharedDataRefresh();
 }
 
 async function waitBaserowSyncQueue() {
@@ -831,7 +821,6 @@ async function waitBaserowSyncQueue() {
 let baserowRowsCache = new Map();
 let sharedRefreshAt = 0;
 let sharedRefreshPromise = null;
-let sharedImmediateRefreshTimer = null;
 let sharedSyncLock = false;
 
 function sharedDirectoryId(name) {
@@ -3033,6 +3022,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
  [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],
  [{text:"🛠️ 恢复文件夹资源",callback_data:"adm:folder_repair"}],
+ [{text:"🔄 同步共享数据",callback_data:"adm:shared_refresh"}],
  [{text:"🏷️ 标签自动建文件夹",callback_data:"adm:tagfolders"}],
  [{text:"🗑️ 删除所有文件夹",callback_data:"adm:folders_all_confirm"}],
  [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步任务",callback_data:"adm:auto"}],
@@ -4531,8 +4521,6 @@ async function mainMessage(msg) {
   // 上传中的文件只进入当前批次，不要为每个文件触发跨机器人 Google Sheets 刷新。
   const preUploadState=msg?.chat?.type==="private" ? states.get("m:"+String(msg.from?.id||"")) : null;
   if(!(preUploadState?.step==="upload_file" || preUploadState?.step==="upload_folder" || preUploadState?.step==="folder_create")) {
-    // 共享数据刷新放到后台，绝不能阻塞 Telegram 菜单和普通消息响应。
-    refreshSharedData(false).catch(e=>console.warn("⚠️ 主机器人共享数据刷新失败:",String(e?.message||e)));
   }
   // Telegram 消息处理不能等待 Google Sheets；共享数据在后台同步。
   if(await binding(msg)) return;
@@ -5711,9 +5699,7 @@ async function mainMessage(msg) {
 }
 
 async function childMessage(child,msg,token) {
-  // 目录/资源以 Google Sheets 为跨机器人共享源；刷新放后台，不能阻塞 /start 和菜单按钮。
-  refreshSharedData(false).catch(e=>console.warn("⚠️ 子机器人共享目录刷新失败:",String(e?.message||e)));
-  // 子机器人消息处理同样不能等待 Google Sheets，避免 /start 和菜单被共享同步卡住。
+  // 子机器人消息处理不能等待 Google Sheets，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id;
   await ensureUserInlineMode(token, uid);
@@ -5962,9 +5948,6 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   void answer();
-  // 按钮回调绝不能等待 Google Sheets：确认请求后台发送，业务逻辑立即继续。
-  void refreshSharedData(false);
-
   // 自动同步控制按钮优先处理，避免被其他管理员菜单路由抢先截断。
   if(data==="adm:auto_stop"){
     await answer("正在停止自动同步…");
@@ -7107,14 +7090,7 @@ async function boot(){
     }, 30000);
   }
 
-  // Google Sheets 共享刷新独立于其他后台定时器，避免被后台初始化状态影响。
-  if (!sharedBaserowRefreshTimerStarted) {
-    sharedBaserowRefreshTimerStarted = true;
-    console.log("🔁 Google Sheets 共享刷新定时器已启动：每 5 分钟检查一次；资源/文件夹操作后立即刷新");
-    setInterval(() => {
-      refreshSharedData(false).catch(e => console.warn("⚠️ 跨机器人目录同步异常:", String(e?.message || e)));
-    }, 300000);
-  }
+  // Google Sheets 不再定时全表刷新；只在机器人启动时强制刷新，或管理员手动点击“同步共享数据”时刷新。
   processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除初始化失败：",e.message));
 
   console.log("🫀 BOT HEARTBEAT ENABLED");
