@@ -5584,7 +5584,21 @@ async function mainMessage(msg) {
     if(t==="✅ 结束上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-      return finalizeUpload(uid,s);
+      const finishState=states.get(key)||s;
+      const count=Array.isArray(finishState?.pendingUploads)?finishState.pendingUploads.length:0;
+      if(!count) return sendHtml(TOKEN,uid,"⚠️ <b>当前批次没有收到文件</b>\n\n请先发送文件，再点击「✅ 结束上传」。",adminMenu());
+      await sendHtml(TOKEN,uid,
+        "⏳ <b>已结束上传</b>\n━━━━━━━━━━━━━━\n\n"+
+        "📁 文件夹：<b>"+escapeHtml(finishState.directoryName||"未命名")+"</b>\n"+
+        "📥 本批收到：<b>"+count+"</b> 个\n\n"+
+        "📦 正在后台转存资源，请稍候……",
+        {reply_markup:{remove_keyboard:true}}
+      ).catch(()=>{});
+      void finalizeUpload(uid,finishState,TOKEN,key,adminMenu()).catch(e=>{
+        console.error("❌ UPLOAD FINALIZE TEXT:",String(e?.message||e));
+        sendHtml(TOKEN,uid,"❌ <b>上传整理失败</b>\n\n<code>"+escapeHtml(String(e?.message||e))+"</code>",adminMenu()).catch(()=>{});
+      });
+      return;
     }
     if(!repo()) {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
