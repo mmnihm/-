@@ -3568,7 +3568,6 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
           queueBaserowResourceSync(savedItem); stored++;
         }catch(err){ failed++; console.error("❌ UPLOAD RESOURCE FALLBACK:",err?.message||err,"sourceMessage=",entry?.messageId); }
       }
-      saveDb();
       continue;
     }
 
@@ -3593,7 +3592,6 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
         console.error("❌ UPLOAD RESOURCE INDEX:",e?.message||e,"sourceMessage=",batch[n]?.messageId);
       }
     }
-    saveDb();
   }
 
   // Telegram 仓库转存完成后，再等待 Google Sheets 同步队列；临时上传会话最后才清理。
