@@ -250,6 +250,14 @@ const GOOGLE_SERVICE_ACCOUNT_B64 = String(process.env.GOOGLE_SERVICE_ACCOUNT_B64
 const GOOGLE_ACCESS_TOKEN = String(process.env.GOOGLE_ACCESS_TOKEN || "").trim();
 const GOOGLE_SHEETS_CREDENTIAL = GOOGLE_ACCESS_TOKEN || GOOGLE_SERVICE_ACCOUNT_JSON || GOOGLE_SERVICE_ACCOUNT_B64;
 
+console.log("🔐 GOOGLE SHEETS ENV:", {
+  sheetId: GOOGLE_SHEETS_ID ? "已配置" : "❌ 未配置",
+  tab: GOOGLE_SHEETS_TAB || "Sheet1",
+  serviceAccountJson: GOOGLE_SERVICE_ACCOUNT_JSON ? "已配置" : "❌ 未配置",
+  serviceAccountB64: GOOGLE_SERVICE_ACCOUNT_B64 ? "已配置(" + GOOGLE_SERVICE_ACCOUNT_B64.length + " chars)" : "❌ 未配置",
+  accessToken: GOOGLE_ACCESS_TOKEN ? "已配置" : "未配置"
+});
+
 const baserow = {
   enabled: Boolean(GOOGLE_SHEETS_ID && GOOGLE_SHEETS_CREDENTIAL),
   connected: false,
@@ -260,15 +268,21 @@ const baserow = {
 function parseGoogleServiceAccount() {
   let raw=GOOGLE_SERVICE_ACCOUNT_JSON;
   if(!raw && GOOGLE_SERVICE_ACCOUNT_B64){
-    try { raw=Buffer.from(GOOGLE_SERVICE_ACCOUNT_B64,"base64").toString("utf8"); } catch {}
+    try {
+      const encoded=GOOGLE_SERVICE_ACCOUNT_B64.replace(/\\s+/g,"");
+      raw=Buffer.from(encoded,"base64").toString("utf8");
+    } catch(e) {
+      throw new Error("GOOGLE_SERVICE_ACCOUNT_B64 解码失败："+String(e?.message||e));
+    }
   }
   if(!raw) return null;
   try {
     const x=JSON.parse(raw);
     if(!x.client_email || !x.private_key) throw new Error("服务账号缺少 client_email/private_key");
+    if(!String(x.private_key).includes("BEGIN PRIVATE KEY")) throw new Error("private_key 格式异常");
     return x;
   } catch(e) {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON 无效："+String(e?.message||e));
+    throw new Error("Google 服务账号 JSON 无效："+String(e?.message||e));
   }
 }
 let googleAccessTokenCache={token:"",expiresAt:0};
@@ -357,11 +371,25 @@ async function ensureGoogleSheetField(name){
 }
 
 async function checkGoogleSheetsConnection(){
-  if(!GOOGLE_SHEETS_ID || !GOOGLE_SHEETS_CREDENTIAL){
-    baserow.enabled=false; baserow.connected=false; baserow.lastError="未配置 GOOGLE_SHEETS_ID / GOOGLE_SERVICE_ACCOUNT_JSON";
+  if(!GOOGLE_SHEETS_ID){
+    baserow.enabled=false;
+    baserow.connected=false;
+    baserow.lastError="未配置 GOOGLE_SHEETS_ID";
+    console.error("❌ Google Sheets 配置缺失：GOOGLE_SHEETS_ID");
+    return false;
+  }
+  if(!GOOGLE_SHEETS_CREDENTIAL){
+    baserow.enabled=false;
+    baserow.connected=false;
+    baserow.lastError="未配置 GOOGLE_SERVICE_ACCOUNT_JSON/B64 或 GOOGLE_ACCESS_TOKEN";
+    console.error("❌ Google Sheets 配置缺失：未读取到服务账号凭据。请检查 FadeHost 环境变量名称，并确认修改后已重新部署。");
     return false;
   }
   try{
+    if(!GOOGLE_ACCESS_TOKEN){
+      const sa=parseGoogleServiceAccount();
+      console.log("🔐 Google 服务账号:", sa?.client_email ? "已读取("+sa.client_email+")" : "❌ 无法读取");
+    }
     await ensureGoogleSheetHeaders();
     baserow.enabled=true; baserow.connected=true; baserow.lastError=""; baserow.lastOkAt=Date.now();
     console.log("📊 Google Sheets: 已连接，sheet="+GOOGLE_SHEETS_ID+" tab="+GOOGLE_SHEETS_TAB);
@@ -6936,7 +6964,7 @@ async function boot(){
         initializeSharedBaserow()
           .then(async()=>{
             console.log("✅ Google Sheets 共享初始化完成", "pid=" + PROCESS_ID);
-            console.log("🔎 Google Sheets 共享配置:", "enabled="+baserow.enabled, "table="+GOOGLE_SHEETS_ID);
+            console.log("🔎 Google Sheets 共享配置:", "enabled="+baserow.enabled, "connected="+baserow.connected, "credential="+(GOOGLE_SHEETS_CREDENTIAL ? "已配置" : "❌ 未配置"), "table="+GOOGLE_SHEETS_ID, baserow.lastError ? "error="+baserow.lastError : "");
             // 初始化完成后立即强制刷新一次，确保刚启动的机器人立刻拿到其他机器人已经写入的目录。
             await refreshSharedData(true);
             console.log("✅ Google Sheets 启动后首次强制刷新完成", "pid=" + PROCESS_ID);
