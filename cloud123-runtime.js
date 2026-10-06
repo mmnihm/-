@@ -130,17 +130,17 @@ function patchSource() {
   if (!src.includes(importAnchor)) throw new Error("123云盘补丁：找不到 import 锚点");
   src = src.replace(importAnchor, importAnchor + '\nimport { createWebDavClient } from "./cloud123.js";');
 
-  const menuFn = src.indexOf("function adminResourceMenu()");
-  if (menuFn < 0) throw new Error("123云盘补丁：找不到资源管理菜单函数");
-  const menuEnd = src.indexOf("function ", menuFn + 10);
-  const menuBlock = src.slice(menuFn, menuEnd > 0 ? menuEnd : menuFn + 5000);
-  if (!menuBlock.includes("☁️ 123云盘")) {
+  if (!src.includes("☁️ 123云盘")) {
+    const menuFn = src.indexOf("function adminResourceInline()");
+    if (menuFn < 0) throw new Error("123云盘补丁：找不到资源管理菜单函数");
+    const menuEnd = src.indexOf("function ", menuFn + 10);
+    const menuBlock = src.slice(menuFn, menuEnd > 0 ? menuEnd : menuFn + 5000);
     const menuLines = menuBlock.split("\n");
-    const insertAt = menuLines.findIndex(line => line.includes("🔄 迁移旧仓库"));
-    const fallbackAt = menuLines.findIndex(line => line.includes("📦 资源仓库"));
-    const at = insertAt >= 0 ? insertAt + 1 : (fallbackAt >= 0 ? fallbackAt + 1 : -1);
+    const insertAt = menuLines.findIndex(line => line.includes("adm:auto"));
+    const fallbackAt = menuLines.findIndex(line => line.includes("adm:scan"));
+    const at = insertAt >= 0 ? insertAt : (fallbackAt >= 0 ? fallbackAt + 1 : -1);
     if (at < 0) throw new Error("123云盘补丁：资源管理菜单结构不匹配");
-    menuLines.splice(at, 0, '    ["☁️ 123云盘","🔄 云盘同步"],');
+    menuLines.splice(at, 0, ' [{text:"☁️ 123云盘",callback_data:"adm:cloud123"},{text:"🔄 云盘同步",callback_data:"adm:cloud123"}],');
     const patchedMenuBlock = menuLines.join("\n");
     src = src.slice(0, menuFn) + patchedMenuBlock + src.slice(menuFn + menuBlock.length);
   }
