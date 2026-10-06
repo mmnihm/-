@@ -1635,6 +1635,9 @@ async function ensureHistoryClient(uid) {
     } catch {}
 
     if (!authorized) {
+      if (!current.phone && !current.session) {
+        throw new Error("扫描账号还没登录。请先点「扫描账号」完成授权，不要在扫描上传里等待。");
+      }
       const phone = current.phone || await askHistoryInput(uid, "phone", "📱 请输入用于历史扫描的 Telegram 手机号（含国家区号，例如 +886...）。");
       db.settings.historyAuth = {...current, apiId, apiHash:encrypt(apiHash), phone:String(phone).trim()};
       saveDb();
