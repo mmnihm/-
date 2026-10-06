@@ -5457,6 +5457,11 @@ async function mainMessage(msg) {
     db.settings.admins.splice(idx,1); saveDb(); logAdmin(uid,"删除管理员",id); states.delete(key);
     return send(TOKEN,uid,`✅ 已删除管理员：<code>${id}</code>`,{parse_mode:"HTML",...adminMenu()});
   }
+  if((t==="☁️ 123云盘" || t==="🔄 云盘同步" || t==="🚀 扫描并上传") && admin) {
+    if(t==="🚀 扫描并上传" && typeof cloud123ScanAndUpload==="function") return cloud123ScanAndUpload(uid);
+    if(typeof cloud123StatusText==="function" && typeof cloud123Menu==="function") return sendHtml(TOKEN,uid,cloud123StatusText(),cloud123Menu());
+    return sendHtml(TOKEN,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n已收到「"+escapeHtml(t)+"」。\n扫描上传还没加载，所以不会开始。\n请先在服务器执行 <code>node cloud123-runtime.js</code> 后重启。",adminResourceMenu());
+  }
   if(t==="📦 资源管理"&&admin) return send(TOKEN,uid,"📦 <b>资源管理</b>\\n\\n上传资源、管理文件夹、资源仓库和历史扫描。\\n\\n👇 <i>请选择操作</i>",{parse_mode:"HTML",...adminResourceMenu()});
   if(t==="⚙️ 系统设置"&&admin) return send(TOKEN,uid,"⚙️ <b>平台设置</b>\\n\\n指定访问群、管理员和系统参数。\\n\\n👇 <i>请选择设置</i>",{parse_mode:"HTML",...adminSettingsMenu()});
   if(t==="📊 数据与运营"&&admin) return send(TOKEN,uid,"📊 <b>数据与运营</b>\\n\\n查看平台数据、操作记录和广播设置。\\n\\n👇 <i>请选择功能</i>",{parse_mode:"HTML",...adminOpsMenu()});
@@ -6188,12 +6193,13 @@ async function handleDirectoryCallback(token, q, child=false) {
     const key=uploadStateKey(uid,child,token);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
-    if(data==="adm:cloud123" || data==="adm:cloud_sync"){
-      await answer("打开123云盘");
+    if(data==="adm:cloud123" || data==="adm:cloud_sync" || data==="adm:cloud_scan"){
+      await answer(data==="adm:cloud_scan" ? "开始扫描上传" : "打开123云盘");
+      if(data==="adm:cloud_scan" && typeof cloud123ScanAndUpload==="function") return cloud123ScanAndUpload(uid);
       if(typeof cloud123StatusText==="function" && typeof cloud123Menu==="function"){
         return sendHtml(token,uid,cloud123StatusText(),cloud123Menu());
       }
-      return sendHtml(token,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n按钮已收到，但云盘功能还没加载。\n\n请在服务器执行：\n<code>node cloud123-runtime.js && bash update.sh</code>",adminResourceMenu());
+      return sendHtml(token,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n扫描上传功能还没加载，所以刚才点了没有开始。\n\n先配置 WebDAV 后，再在服务器执行：\n<code>node cloud123-runtime.js</code>\n然后重启机器人。",{reply_markup:{inline_keyboard:[[{text:"🔄 再试一次扫描上传",callback_data:"adm:cloud_scan"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
     }
     if(data==="admin:resource")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 资源管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminResourceInline()});
     if(data==="admin:ops")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📊 数据与运营</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminOpsInline()});
