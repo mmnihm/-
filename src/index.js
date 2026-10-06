@@ -408,8 +408,9 @@ async function googleAppsScriptRequest(payload){
   const text=await r.text();
   let data={};
   try{ data=JSON.parse(text||"{}"); }catch{}
-  if(!r.ok || data?.ok===false || text.lstrip().startswith("<")) {
-    const brief = text.lstrip().startswith("<") ? "返回了网页而不是接口数据，请重新部署 Web 应用，访问权限选任何人" : String(data?.error||text||"请求失败");
+  const bodyText = String(text||"");
+  if(!r.ok || data?.ok===false || bodyText.trim().startsWith("<")) {
+    const brief = bodyText.trim().startsWith("<") ? "返回了网页而不是接口数据，请重新部署 Web 应用，访问权限选任何人" : String(data?.error||bodyText||"请求失败");
     throw new Error("Google Apps Script "+(r.status||0)+": "+brief.slice(0,180));
   }
   return data;
