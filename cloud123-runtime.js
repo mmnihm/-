@@ -113,6 +113,9 @@ function patchSource() {
     return true;
   }
 
+  if (src.includes("正在连接 Telegram 扫描账号，请稍候")) {
+    console.log("CLOUD123 检测到旧的静态提示，准备重新打补丁");
+  }
   if (src.includes(PATCH_MARK)) {
     const repairedSrc = src.replace(
       /^\s*if\(!\/\^https\?:.*$/m,
@@ -281,13 +284,19 @@ async function cloud123ScanAndUpload(uid) {
   let currentFileName="";
   try {
     const client=cloud123Client();
-    statusMessage=await sendHtml(TOKEN,uid,
-      "<b>🚀 正在启动123云盘扫描上传</b>\n\n"+
-      "⏳ 正在连接 Telegram 扫描账号，请稍候...\n"+
-      "📁 将按机器人现有文件夹建立目录\n"+
-      "📦 每批最多传输 1GB；超过容量自动等待下一批。",
-      cloud123Menu()
-    );
+    let phase="正在连接 Telegram 扫描账号";
+    const render=()=>"<b>🚀 123云盘扫描上传</b>\n━━━━━━━━━━━━━━\n"+
+      "⏱ 已运行：<b>"+Math.floor((Date.now()-started)/1000)+"</b> 秒\n"+
+      "📍 当前：<b>"+phase+"</b>\n"+
+      "✅ 成功："+success+"  ⚠️ 失败："+fail+"  ⏭️ 跳过："+skip+"\n"+
+      (currentFileName?"📄 当前文件："+escapeHtml(currentFileName)+"\n":"")+
+      "📁 按现有文件夹建立目录\n"+
+      "📦 每批最多 1GB";
+    statusMessage=await sendHtml(TOKEN,uid, render(), cloud123Menu());
+    const tick=setInterval(()=>{
+      if(!statusMessage?.message_id) return;
+      tg(TOKEN,"editMessageText",{chat_id:uid,message_id:statusMessage.message_id,text:render(),parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup}).catch(()=>{});
+    },5000);
     const clientHistory=await ensureHistoryClient(uid);
     if(statusMessage?.message_id) {
       try { await tg(TOKEN,"editMessageText",{
@@ -483,6 +492,7 @@ async function cloud123ScanAndUpload(uid) {
       await send(TOKEN,uid,"❌ 123云盘同步失败：\n"+String(e.message||e),adminMenu());
     }
   } finally {
+    if(typeof tick!=="undefined") clearInterval(tick);
     cloud123Syncing=false;
   }
 }
