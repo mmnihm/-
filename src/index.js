@@ -436,7 +436,7 @@ async function googleSheetsRequest(method,pathName,body){
 const DEFAULT_SHEET_FIELDS=["名称","文件夹","类型","网址","标签","上传日期","所有者","聊天ID","消息ID","描述","文件ID","下载"];
 
 async function ensureGoogleSheetHeaders(){
-  if(GOOGLE_SHEETS_WEBHOOK_URL){
+  if(GOOGLE_SHEETS_WEBHOOK_URL && !GOOGLE_SERVICE_ACCOUNT_JSON && !GOOGLE_SERVICE_ACCOUNT_B64){
     const data=await googleAppsScriptRequest({action:"get"});
     const headers=Array.isArray(data?.headers)?data.headers.map(x=>String(x??"").trim()).filter(Boolean):[];
     if(headers.length) return headers;
@@ -494,7 +494,7 @@ async function checkGoogleSheetsConnection(){
     return false;
   }
   try{
-    if(GOOGLE_SHEETS_WEBHOOK_URL){
+    if(GOOGLE_SHEETS_WEBHOOK_URL && !GOOGLE_SERVICE_ACCOUNT_JSON && !GOOGLE_SERVICE_ACCOUNT_B64){
       console.log("🔗 Google Apps Script:", "已配置");
     } else if(!GOOGLE_ACCESS_TOKEN){
       const sa=parseGoogleServiceAccount();
@@ -520,7 +520,7 @@ async function baserowRequest(method,pathName,body){
   if(!GOOGLE_SHEETS_ID) throw new Error("Google Sheets 未配置 GOOGLE_SHEETS_ID");
   if(!GOOGLE_SHEETS_CREDENTIAL) throw new Error("Google Sheets 未配置共享接口");
 
-  if(GOOGLE_SHEETS_WEBHOOK_URL){
+  if(GOOGLE_SHEETS_WEBHOOK_URL && !GOOGLE_SERVICE_ACCOUNT_JSON && !GOOGLE_SERVICE_ACCOUNT_B64){
     if(pathName.includes("/fields/table/")){
       if(method==="GET"){
         const data=await googleAppsScriptRequest({action:"get"});
