@@ -366,8 +366,8 @@ function parseGoogleServiceAccount() {
 let googleAccessTokenCache={token:"",expiresAt:0};
 
 function base64url(value){
-  return Buffer.from(String(value)).toString("base64")
-    .replace(/=+$/,"").replace(/\+/g,"-").replace(/\//g,"_");
+  const buf = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+  return buf.toString("base64").replace(/=+$/,"").replace(/\+/g,"-").replace(/\//g,"_");
 }
 async function getGoogleAccessToken(){
   if(GOOGLE_ACCESS_TOKEN) return GOOGLE_ACCESS_TOKEN;
