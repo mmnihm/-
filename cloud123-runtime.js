@@ -186,7 +186,7 @@ function cloud123Menu() {
       inline_keyboard:[
         [{text:"🔗 配置123云盘",callback_data:"adm:cloud_setup"},{text:"🧪 测试连接",callback_data:"adm:cloud_test"}],
         [{text:"📁 同步机器人目录",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
-        [{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
+        [{text:"🔐 扫描账号",callback_data:"adm:scan_auth"},{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
       ]
     }
   };
@@ -291,11 +291,44 @@ async function cloud123ScanAndUpload(uid) {
       "📁 按现有文件夹建立目录\n"+
       "📦 每批最多 1GB";
     statusMessage=await sendHtml(TOKEN,uid, render(), cloud123Menu());
-    const tick=setInterval(()=>{
+    tick=setInterval(()=>{
       if(!statusMessage?.message_id) return;
       tg(TOKEN,"editMessageText",{chat_id:uid,message_id:statusMessage.message_id,text:render(),parse_mode:"HTML"}).catch(()=>{});
     },5000);
-    const clientHistory=await ensureHistoryClient(uid);
+    const savedHistoryAuth = db.settings.historyAuth || {};
+    if (!savedHistoryAuth.session) {
+      phase="扫描账号未授权，请先点击「🔐 扫描账号」";
+      if(statusMessage?.message_id) {
+        try { await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:statusMessage.message_id,
+          text:render()+"\\n\\n<b>👉 请先点击「🔐 扫描账号」完成授权</b>",
+          parse_mode:"HTML",
+          reply_markup:cloud123Menu().reply_markup
+        }); } catch {}
+      }
+      return;
+    }
+
+    phase="连接已保存的 Telegram 扫描账号";
+    let clientHistory;
+    try {
+      clientHistory = await Promise.race([
+        ensureHistoryClient(uid),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Telegram 扫描账号连接超时（超过 20 秒）")), 20000))
+      ]);
+    } catch(e) {
+      phase="连接失败";
+      if(statusMessage?.message_id) {
+        try { await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:statusMessage.message_id,
+          text:render()+"\\n\\n❌ <b>连接失败：</b>"+escapeHtml(String(e?.message||e)),
+          parse_mode:"HTML"
+        }); } catch {}
+      }
+      return;
+    }
     if(statusMessage?.message_id) {
       try { await tg(TOKEN,"editMessageText",{
         chat_id:uid,message_id:statusMessage.message_id,
@@ -490,15 +523,20 @@ async function cloud123ScanAndUpload(uid) {
       await send(TOKEN,uid,"❌ 123云盘同步失败：\n"+String(e.message||e),adminMenu());
     }
   } finally {
-    if(typeof tick!=="undefined") clearInterval(tick);
+    if(tick) clearInterval(tick);
     cloud123Syncing=false;
   }
 }
 `;
   src = src.replace(insertAnchor, insertAnchor + "\n" + feature);
 
-  const stateAnchor = '  if(t==="/start" || t==="🏠 开始" || t==="开始使用" || t==="🏠 开始使用") {';
-  if(!src.includes(stateAnchor)) throw new Error("123云盘补丁：找不到状态处理锚点");
+  const stateAnchors = [
+    '  if(t==="/start" || t==="🏠 开始" || t==="开始使用" || t==="🏠 开始使用") {',
+    '  if(t==="/start" || t==="🏠 开始" || t==="开始使用") {',
+    '  if(t==="/start" || t==="🏠 开始") {'
+  ];
+  const stateAnchor = stateAnchors.find(a => src.includes(a));
+  if(!stateAnchor) throw new Error("123云盘补丁：找不到状态处理锚点（当前首页入口已变化）");
   const stateCode = String.raw`
   if(admin && cloud123State.has(String(uid))) {
     const cs=cloud123State.get(String(uid));
