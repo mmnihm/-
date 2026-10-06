@@ -6069,7 +6069,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       states.delete(oldUploadKey);
       if(!repo()){
         void answer("尚未绑定资源仓库",true);
-        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>❌ 尚未绑定资源仓库</b>\n\n请先绑定资源仓库。",parse_mode:"HTML",reply_markup:adminResourceInline()});
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n⚠️ 还没有绑定资源仓库，文件暂时不能入库。\n可以先选择或新建文件夹。\n\n👇 请选择文件夹",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
       }
       const key=uploadStateKey(uid,child,token);
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
