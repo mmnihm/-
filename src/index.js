@@ -2220,7 +2220,7 @@ async function repositoryAutoSyncBatch(batch){
       // 一起提交，就不会在目标仓库拆成单条。
       copiedIds=await main("copyMessages",{
         chat_id:targetId,
-        from_chat_id:sourceId,
+        from_chat_id:jobs[0]?.fromChatId||sourceId,
         message_ids:messageIds,
         ...(contentProtectionEnabled()?{protect_content:true}:{})
       });
@@ -2239,7 +2239,7 @@ async function repositoryAutoSyncBatch(batch){
     try{
       const single=await main("copyMessage",{
         chat_id:targetId,
-        from_chat_id:sourceId,
+        from_chat_id:jobs[0]?.fromChatId||sourceId,
         message_id:messageIds[0],
         ...(contentProtectionEnabled()?{protect_content:true}:{})
       });
@@ -2450,16 +2450,30 @@ async function processRepositoryAutoSyncQueue(){
 
   return repositoryAutoSyncQueue;
 }
+function sameAutoSyncChat(a,b){
+  const left=String(a??"").trim();
+  const right=String(b??"").trim();
+  if(!left||!right)return false;
+  if(left===right)return true;
+  const norm=v=>v.replace(/^-100/,"").replace(/^-/,"");
+  return norm(left)===norm(right);
+}
 function queueRepositoryAutoSyncMessage(msg){
   if(!msg?.chat?.id||!msg?.message_id)return;
   const state=repositoryAutoSyncState();
-  if(!state.enabled||String(msg.chat.id)!==String(state.sourceId))return;
+  if(!state.enabled||!state.targetId)return;
+  const fromChatId=String(msg.chat.id);
+  if(sameAutoSyncChat(fromChatId,state.targetId))return;
+  const fromSource=sameAutoSyncChat(fromChatId,state.sourceId);
+  const liveGroup=["group","supergroup","channel"].includes(String(msg.chat?.type||""));
+  const hasMedia=Boolean(msg.document||msg.video||msg.audio||msg.animation||msg.photo||msg.voice||msg.video_note||msg.media_group_id);
+  if(!fromSource && !(liveGroup && hasMedia))return;
   const messageId=Number(msg.message_id);if(!messageId)return;
-  const exists=state.queue.some(x=>Number(x.messageId)===messageId);
-  const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&Number(x.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
+  const exists=state.queue.some(x=>Number(x.messageId)===messageId&&sameAutoSyncChat(x.fromChatId||state.sourceId,fromChatId));
+  const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&sameAutoSyncChat(x.migratedFrom?.chatId,fromChatId)&&Number(x.migratedFrom?.messageId||0)===messageId);
   if(!exists&&!already){
-    state.queue.push({messageId,mediaGroupId:String(msg.media_group_id||""),historical:false,syncType:repositoryAutoSyncItemType(db.resources.find(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)===messageId)||{}),queuedAt:Date.now()});
-    console.log("⚡ AUTO SYNC 实时消息入队:",String(state.sourceId)+"#"+messageId,"->",String(state.targetId),"queue="+state.queue.length);
+    state.queue.push({messageId,fromChatId,mediaGroupId:String(msg.media_group_id||""),historical:false,syncType:repositoryAutoSyncItemType(db.resources.find(x=>sameAutoSyncChat(x.chatId,fromChatId)&&Number(x.messageId)===messageId)||msg),queuedAt:Date.now()});
+    console.log("⚡ AUTO SYNC 实时消息入队:",fromChatId+"#"+messageId,"->",String(state.targetId),"queue="+state.queue.length);
   }
   // 注意：这里只记录“已进入队列”，不能提前推进 lastMessageId。
   // lastMessageId 必须只在目标仓库实际复制成功（或明确跳过无效消息）后推进，
