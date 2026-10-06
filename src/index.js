@@ -6238,7 +6238,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       }
       return sendHtml(token,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n扫描上传功能还没加载，所以刚才点了没有开始。\n\n先配置 WebDAV 后，再在服务器执行：\n<code>node cloud123-runtime.js</code>\n然后重启机器人。",{reply_markup:{inline_keyboard:[[{text:"🔄 再试一次扫描上传",callback_data:"adm:cloud_scan"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
     }
-    if(data==="adm:scan_auth"){
+    if(data==="adm:cloud_account"){\n      await answer("打开123云盘账号");\n      const auth=db.settings.historyAuth||{};\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔐 123云盘账号</b>\\n━━━━━━━━━━━━━━\\n\\n"+\n        "📌 与扫描仓库账号共用同一个 Telegram 账号。\\n\\n"+\n        "授权状态："+(auth.session?"✅ 已授权":"❌ 未授权")+"\\n\\n"+\n        (auth.session?"123云盘将直接使用当前扫描仓库账号。":"请先完成扫描仓库账号授权。"),\n        parse_mode:"HTML",reply_markup:{inline_keyboard:[\n          [{text:"🔐 开始授权",callback_data:"adm:scan_auth_start"}],\n          [{text:"📚 查看扫描账号",callback_data:"adm:scan_auth"}],\n          [{text:"⬅️ 返回123云盘",callback_data:"adm:cloud123"}]\n        ]}});\n    }\n    if(data==="adm:scan_auth"){
       await answer("打开扫描账号");
       const auth=db.settings.historyAuth||{};
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔐 扫描账号</b>\n━━━━━━━━━━━━━━\n\n"+
