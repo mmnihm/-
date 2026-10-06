@@ -4236,7 +4236,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   }
 
   const navigation=options.mode
-    ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||valid.length)}
+    ? batchNavigation(options.mode,options.offset||0,options.total||valid.length)
     : {};
 
   const summary =
