@@ -1624,18 +1624,23 @@ async function ensureHistoryClient(uid) {
     const current = db.settings.historyAuth || {};
     const {client, apiId, apiHash} = await createHistoryClient();
     let authorized = false;
+    let connectError = "";
     try {
       await connectionTimeout(client.connect(), 20000, "Telegram 扫描账号连接超时");
       await connectionTimeout(client.getMe(), 10000, "Telegram 扫描账号登录状态检查超时");
       authorized = true;
-      try {
-        const me = await client.getMe();
-        console.log("✅ MTProto 扫描账号已连接:", me?.username ? "@" + me.username : String(me?.id || ""));
-      } catch {}
-    } catch {}
+      const me = await client.getMe();
+      console.log("✅ MTProto 扫描账号已连接:", me?.username ? "@" + me.username : String(me?.id || ""));
+    } catch (e) {
+      connectError = String(e?.message || e);
+      console.error("❌ MTProto 已保存登录连接失败:", connectError);
+    }
 
     if (!authorized) {
-      if (!current.phone && !current.session) {
+      if (current.session) {
+        throw new Error("扫描账号已登录，但连接失败：" + connectError);
+      }
+      if (!current.phone) {
         throw new Error("扫描账号还没登录。请先点「扫描账号」完成授权，不要在扫描上传里等待。");
       }
       const phone = current.phone || await askHistoryInput(uid, "phone", "📱 请输入用于历史扫描的 Telegram 手机号（含国家区号，例如 +886...）。");
