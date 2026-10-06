@@ -408,8 +408,9 @@ async function googleAppsScriptRequest(payload){
   const text=await r.text();
   let data={};
   try{ data=JSON.parse(text||"{}"); }catch{}
-  if(!r.ok || data?.ok===false) {
-    throw new Error("Google Apps Script "+(r.status||0)+": "+String(data?.error||text||"请求失败").slice(0,500));
+  if(!r.ok || data?.ok===false || text.lstrip().startswith("<")) {
+    const brief = text.lstrip().startswith("<") ? "返回了网页而不是接口数据，请重新部署 Web 应用，访问权限选任何人" : String(data?.error||text||"请求失败");
+    throw new Error("Google Apps Script "+(r.status||0)+": "+brief.slice(0,180));
   }
   return data;
 }
@@ -4912,105 +4913,6 @@ async function mainMessage(msg) {
       ]}});
   }
 
-  if(data==="adm:repo_unbind_confirm") {
-    const current=repo();
-    if(!current) {
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 当前没有绑定资源仓库</b>\\n\\n无需解绑。",parse_mode:"HTML",reply_markup:adminResourceInline()});
-    }
-    const title=String(current.title||current.chatId||"未命名仓库");
-    const cid=String(current.chatId||"").trim();
-    return safeEdit(token,{
-      chat_id:chatId,
-      message_id:messageId,
-      text:"<b>⚠️ 确认解绑资源仓库</b>\\n━━━━━━━━━━━━━━\\n\\n"+
-        "📦 仓库：<b>"+escapeHtml(title)+"</b>\\n"+
-        "🆔 <code>"+escapeHtml(cid)+"</code>\\n\\n"+
-        "解绑后：\\n"+
-        "• 停止使用该仓库作为资源来源\\n"+
-        "• 清除本地该仓库的资源索引\\n"+
-        "• 随机获取 / 最新资源不会再抽到这些资源\\n"+
-        "• 后续扫描也不会继续读取该仓库\\n\\n"+
-        "⚠️ 仅清除机器人里的资源记录，不会删除 Telegram 群/频道里的原消息。\\n\\n"+
-        "<b>确定要解绑吗？</b>",
-      parse_mode:"HTML",
-      reply_markup:{inline_keyboard:[
-        [{text:"⚠️ 确认解绑",callback_data:"adm:repo_unbind"}],
-        [{text:"⬅️ 返回仓库管理",callback_data:"adm:repo"}]
-      ]}
-    });
-  }
-
-  if(data==="adm:repo_unbind") {
-    const current=repo();
-    if(!current) {
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 当前没有绑定资源仓库</b>",parse_mode:"HTML",reply_markup:adminResourceInline()});
-    }
-    const cid=String(current.chatId||"").trim();
-    const oldResources=Array.isArray(db.resources) ? db.resources : [];
-    const removed=cid ? oldResources.filter(x=>String(x?.chatId||"").trim()===cid) : [];
-    db.resources=cid ? oldResources.filter(x=>String(x?.chatId||"").trim()!==cid) : oldResources;
-
-    // 删除随机历史、收藏、最近浏览中的旧仓库记录，避免解绑后再次被引用。
-    for(const key of ["randomHistory","userFavorites","userRecent"]) {
-      const store=db.settings?.[key];
-      if(!store || typeof store!=="object") continue;
-      for(const uidKey of Object.keys(store)) {
-        if(Array.isArray(store[uidKey])) {
-          store[uidKey]=store[uidKey].filter(id=>!removed.some(item=>resourceKey(item)===String(id)));
-        }
-      }
-    }
-
-    // 当前仓库已经失效，停止相关自动同步/迁移状态，防止后台继续引用它。
-    const auto=db.settings?.repositoryAutoSync;
-    if(auto && (String(auto.sourceId||"")===cid || String(auto.targetId||"")===cid)) {
-      db.settings.repositoryAutoSync={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:Date.now()};
-    }
-    const mig=db.settings?.repositoryMigration;
-    if(mig && (String(mig.sourceId||"")===cid || String(mig.targetId||"")===cid)) {
-      mig.autoSync=false;
-      mig.status="idle";
-      mig.queue=[];
-      mig.source=null;
-      mig.target=null;
-      mig.sourceId=null;
-      mig.targetId=null;
-      mig.completedKeys=[];
-      mig.failedKeys=[];
-    }
-
-    db.settings.repository=null;
-    db.settings.resourceSources=Array.isArray(db.settings.resourceSources)
-      ? db.settings.resourceSources.filter(x=>String(x?.chatId||"").trim()!==cid)
-      : [];
-    if(db.settings.randomHistory && typeof db.settings.randomHistory==="object") {
-      const validIds=new Set(db.resources.map(resourceKey));
-      for(const uidKey of Object.keys(db.settings.randomHistory)) {
-        db.settings.randomHistory[uidKey]=(db.settings.randomHistory[uidKey]||[]).filter(id=>validIds.has(String(id)));
-      }
-    }
-    saveDb();
-
-    // Google Sheets 中同步删除该仓库对应的资源行；失败不会阻塞解绑本身。
-    for(const item of removed) {
-      try { queueBaserowDeleteResource(item); } catch {}
-    }
-
-    logAdmin(uid,"解绑资源仓库","chatId="+cid+" removed="+removed.length);
-    return safeEdit(token,{
-      chat_id:chatId,
-      message_id:messageId,
-      text:"<b>✅ 资源仓库已解绑</b>\\n━━━━━━━━━━━━━━\\n\\n"+
-        "📦 原仓库："+escapeHtml(current.title||cid)+"\\n"+
-        "🆔 <code>"+escapeHtml(cid)+"</code>\\n"+
-        "🧹 已清除资源索引：<b>"+removed.length+"</b> 条\\n\\n"+
-        "现在机器人不会再从这个仓库读取、扫描或随机获取资源。\\n\\n"+
-        "💡 如果要换新仓库，点击「📦 资源仓库」→「🔄 重新绑定」。",
-      parse_mode:"HTML",
-      reply_markup:adminResourceInline()
-    });
-  }
-
   if(t==="🔐 指定群管理" && admin)
     return send(TOKEN,uid,
       "🔐 指定群设置\\n\\n"+
@@ -5891,6 +5793,106 @@ async function handleDirectoryCallback(token, q, child=false) {
       console.warn("⚠️ callback确认失败（继续处理按钮）:", String(e?.telegramDescription || e?.message || e));
     }
   };
+  if(data==="adm:repo_unbind_confirm") {
+    const current=repo();
+    if(!current) {
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 当前没有绑定资源仓库</b>\\n\\n无需解绑。",parse_mode:"HTML",reply_markup:adminResourceInline()});
+    }
+    const title=String(current.title||current.chatId||"未命名仓库");
+    const cid=String(current.chatId||"").trim();
+    return safeEdit(token,{
+      chat_id:chatId,
+      message_id:messageId,
+      text:"<b>⚠️ 确认解绑资源仓库</b>\\n━━━━━━━━━━━━━━\\n\\n"+
+        "📦 仓库：<b>"+escapeHtml(title)+"</b>\\n"+
+        "🆔 <code>"+escapeHtml(cid)+"</code>\\n\\n"+
+        "解绑后：\\n"+
+        "• 停止使用该仓库作为资源来源\\n"+
+        "• 清除本地该仓库的资源索引\\n"+
+        "• 随机获取 / 最新资源不会再抽到这些资源\\n"+
+        "• 后续扫描也不会继续读取该仓库\\n\\n"+
+        "⚠️ 仅清除机器人里的资源记录，不会删除 Telegram 群/频道里的原消息。\\n\\n"+
+        "<b>确定要解绑吗？</b>",
+      parse_mode:"HTML",
+      reply_markup:{inline_keyboard:[
+        [{text:"⚠️ 确认解绑",callback_data:"adm:repo_unbind"}],
+        [{text:"⬅️ 返回仓库管理",callback_data:"adm:repo"}]
+      ]}
+    });
+  }
+
+  if(data==="adm:repo_unbind") {
+    const current=repo();
+    if(!current) {
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 当前没有绑定资源仓库</b>",parse_mode:"HTML",reply_markup:adminResourceInline()});
+    }
+    const cid=String(current.chatId||"").trim();
+    const oldResources=Array.isArray(db.resources) ? db.resources : [];
+    const removed=cid ? oldResources.filter(x=>String(x?.chatId||"").trim()===cid) : [];
+    db.resources=cid ? oldResources.filter(x=>String(x?.chatId||"").trim()!==cid) : oldResources;
+
+    // 删除随机历史、收藏、最近浏览中的旧仓库记录，避免解绑后再次被引用。
+    for(const key of ["randomHistory","userFavorites","userRecent"]) {
+      const store=db.settings?.[key];
+      if(!store || typeof store!=="object") continue;
+      for(const uidKey of Object.keys(store)) {
+        if(Array.isArray(store[uidKey])) {
+          store[uidKey]=store[uidKey].filter(id=>!removed.some(item=>resourceKey(item)===String(id)));
+        }
+      }
+    }
+
+    // 当前仓库已经失效，停止相关自动同步/迁移状态，防止后台继续引用它。
+    const auto=db.settings?.repositoryAutoSync;
+    if(auto && (String(auto.sourceId||"")===cid || String(auto.targetId||"")===cid)) {
+      db.settings.repositoryAutoSync={enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:Date.now()};
+    }
+    const mig=db.settings?.repositoryMigration;
+    if(mig && (String(mig.sourceId||"")===cid || String(mig.targetId||"")===cid)) {
+      mig.autoSync=false;
+      mig.status="idle";
+      mig.queue=[];
+      mig.source=null;
+      mig.target=null;
+      mig.sourceId=null;
+      mig.targetId=null;
+      mig.completedKeys=[];
+      mig.failedKeys=[];
+    }
+
+    db.settings.repository=null;
+    db.settings.resourceSources=Array.isArray(db.settings.resourceSources)
+      ? db.settings.resourceSources.filter(x=>String(x?.chatId||"").trim()!==cid)
+      : [];
+    if(db.settings.randomHistory && typeof db.settings.randomHistory==="object") {
+      const validIds=new Set(db.resources.map(resourceKey));
+      for(const uidKey of Object.keys(db.settings.randomHistory)) {
+        db.settings.randomHistory[uidKey]=(db.settings.randomHistory[uidKey]||[]).filter(id=>validIds.has(String(id)));
+      }
+    }
+    saveDb();
+
+    // Google Sheets 中同步删除该仓库对应的资源行；失败不会阻塞解绑本身。
+    for(const item of removed) {
+      try { queueBaserowDeleteResource(item); } catch {}
+    }
+
+    logAdmin(uid,"解绑资源仓库","chatId="+cid+" removed="+removed.length);
+    return safeEdit(token,{
+      chat_id:chatId,
+      message_id:messageId,
+      text:"<b>✅ 资源仓库已解绑</b>\\n━━━━━━━━━━━━━━\\n\\n"+
+        "📦 原仓库："+escapeHtml(current.title||cid)+"\\n"+
+        "🆔 <code>"+escapeHtml(cid)+"</code>\\n"+
+        "🧹 已清除资源索引：<b>"+removed.length+"</b> 条\\n\\n"+
+        "现在机器人不会再从这个仓库读取、扫描或随机获取资源。\\n\\n"+
+        "💡 如果要换新仓库，点击「📦 资源仓库」→「🔄 重新绑定」。",
+      parse_mode:"HTML",
+      reply_markup:adminResourceInline()
+    });
+  }
+
+
   // 用户首页内联按钮：统一处理资源目录、搜索、随机、最新，避免 user:* 回调落空。
   if(data.startsWith("user:")) {
     const action=data.slice("user:".length);
