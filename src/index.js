@@ -1291,6 +1291,12 @@ async function initializeSharedBaserow() {
 }
 
 
+function requestSharedDataRefresh(){
+  if(globalThis.__sharedRefreshTimer) clearTimeout(globalThis.__sharedRefreshTimer);
+  globalThis.__sharedRefreshTimer=setTimeout(()=>{
+    refreshSharedData(true).catch(e=>console.error("❌ Google Sheets 共享数据刷新失败:",String(e?.message||e)));
+  },1500);
+}
 async function refreshSharedData(force=false) {
   if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
   const now=Date.now();

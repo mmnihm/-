@@ -2,6 +2,7 @@
 set -e
 cd /root/bot
 echo ">>> 拉取最新代码"
+git checkout -- src/index.js
 git pull --ff-only
 echo ">>> 安装依赖"
 if [ -f cloud123-runtime.js ]; then node cloud123-runtime.js || true; fi
