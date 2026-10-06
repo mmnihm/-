@@ -831,7 +831,7 @@ async function baserowSyncResource(item) {
 function queueBaserowResourceSync(item) {
   if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !item) return;
   baserowSyncQueue = baserowSyncQueue
-    .then(() => baserowSyncResource(item))
+    .then(async () => { await sleep(1200); return baserowSyncResource(item); })
     .catch(e => console.error("❌ Google Sheets 同步队列:", e.message));
 }
 
@@ -927,9 +927,8 @@ function queueBaserowDirectorySync(directory) {
   if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !directory) return;
   // 文件夹必须优先于资源批量写入，否则历史扫描/迁移后的大量资源会把目录同步堵住。
   baserowDirectorySyncQueue=baserowDirectorySyncQueue
-    .then(()=>baserowSyncDirectory(directory))
+    .then(async()=>{ await sleep(1200); return baserowSyncDirectory(directory); })
     .catch(e=>console.error("❌ Google Sheets 文件夹队列:",e.message));
-  requestSharedDataRefresh();
 }
 
 async function waitBaserowDirectorySyncQueue() {
