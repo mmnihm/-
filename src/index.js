@@ -6089,6 +6089,13 @@ async function handleDirectoryCallback(token, q, child=false) {
     const key=uploadStateKey(uid,child,token);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
+    if(data==="adm:cloud123" || data==="adm:cloud_sync"){
+      await answer("打开123云盘");
+      if(typeof cloud123StatusText==="function" && typeof cloud123Menu==="function"){
+        return sendHtml(token,uid,cloud123StatusText(),cloud123Menu());
+      }
+      return sendHtml(token,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n按钮已收到，但云盘功能还没加载。\n\n请在服务器执行：\n<code>node cloud123-runtime.js && bash update.sh</code>",adminResourceMenu());
+    }
     if(data==="admin:resource")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 资源管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminResourceInline()});
     if(data==="admin:ops")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📊 数据与运营</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminOpsInline()});
     if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
