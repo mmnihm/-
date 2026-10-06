@@ -3959,6 +3959,21 @@ function search(q) {
   if(!q) return [];
   return db.resources.filter(x=>(String(x.title||"")+" "+String(x.caption||"")+" "+String(x.directoryId||"")).toLowerCase().includes(q));
 }
+function isVideoResource(item){
+  const type=String(item?.fileType||"").toLowerCase();
+  if(type==="video"||type==="animation"||type==="videonote") return true;
+  const name=String(item?.title||item?.caption||"").toLowerCase();
+  return /\.(mp4|mkv|mov|avi|webm|m4v|flv|ts)(?:\s|$)/.test(name);
+}
+function randomVideos(userId,limit=10){
+  const arr=[...db.resources].filter(x=>x&&x.chatId!==undefined&&x.chatId!==null&&String(x.chatId).trim()&&Number(x.messageId)>0&&isVideoResource(x));
+  if(!arr.length) return [];
+  for(let i=arr.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+  return arr.slice(0,limit);
+}
 function random10(userId) {
   // 随机获取只从“可定位到 Telegram 原消息”的记录中抽取。
   // 真正失效的仓库消息会在 deliver() 发送失败后自动清理。
@@ -4135,6 +4150,7 @@ function batchNavigation(mode,offset,total){
   const next=Number(offset||0)+10;
   if(mode==="random"){
     rows.push([{text:"🎲 再来一组",callback_data:"batch:random"}]);
+    rows.push([{text:"🎬 获取视频",callback_data:"batch:video"}]);
   } else if(mode==="latest"){
     const nav=[];
     if(Number(offset||0)>0) nav.push({text:"⬅️ 上一批",callback_data:"batch:latest:"+Math.max(0,Number(offset||0)-10)});
@@ -6481,7 +6497,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
   }
 
-  if(data==="batch:random" || data.startsWith("batch:latest:") || data==="batch:home"){
+  if(data==="batch:random" || data==="batch:video" || data.startsWith("batch:latest:") || data==="batch:home"){
     if(data==="batch:home"){
       void answer("返回首页");
       return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
@@ -6491,6 +6507,10 @@ async function handleDirectoryCallback(token, q, child=false) {
         void answer("正在随机获取…");
         return deliverFromHistory(token,uid,uid,random10(uid),{mode:"random",offset:0,total:db.resources.length});
       }
+      if(data==="batch:video"){
+        void answer("正在获取视频…");
+        return deliverFromHistory(token,uid,uid,randomVideos(uid),{mode:"random",offset:0,total:db.resources.length});
+      }
       const offset=Math.max(0,Number(data.split(":")[2])||0);
       void answer("正在获取最新资源…");
       return deliverFromHistory(token,uid,uid,db.resources.slice(offset,offset+10),{mode:"latest",offset,total:db.resources.length});
@@ -6498,6 +6518,10 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="batch:random"){
       void answer("正在随机获取…");
       return deliver(token,uid,uid,random10(uid),TOKEN,{mode:"random",offset:0,total:db.resources.length});
+    }
+    if(data==="batch:video"){
+      void answer("正在获取视频…");
+      return deliver(token,uid,uid,randomVideos(uid),TOKEN,{mode:"random",offset:0,total:db.resources.length});
     }
     const offset=Math.max(0,Number(data.split(":")[2])||0);
     void answer("正在获取最新资源…");
