@@ -3706,7 +3706,7 @@ function directoryInlineKeyboard(page=0) {
   for(const d of current){
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
     row.push({text:"📁 "+String(d.name||"未命名").slice(0,18)+" · "+count,callback_data:"dir:"+d.id+":0"});
-    if(row.length===2){ rows.push(row); row=[]; }
+    if(row.length===3){ rows.push(row); row=[]; }
   }
   if(row.length) rows.push(row);
   if(!rows.length) rows.push([{text:"📭 暂无分类",callback_data:"noop"}]);
@@ -3921,6 +3921,38 @@ function contentProtectionText() {
       ? "📌 用户获取的资源将在 "+autoDeleteText()+" 后自动删除。"
       : "💡 开启内容保护后，可设置资源消息自动删除时间。"
   ].join("\\n");
+}
+async function sendResourceAlbum(token, chatId, items) {
+  const valid=(Array.isArray(items)?items:[]).filter(x=>x&&x.chatId&&Number(x.messageId)>0);
+  if(!valid.length) return 0;
+  const groups=new Map();
+  for(const item of valid) {
+    const key=String(item.chatId);
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  let sent=0;
+  for(const [fromChat, group] of groups) {
+    const ids=group.map(x=>Number(x.messageId)).slice(0,10);
+    try {
+      const copied=await tg(token, "copyMessages", {
+        chat_id:chatId,
+        from_chat_id:fromChat,
+        message_ids:ids,
+        ...(contentProtectionEnabled()?{protect_content:true}:{})
+      });
+      sent += Array.isArray(copied) ? copied.filter(x=>x&&x.message_id).length : 0;
+      if(!Array.isArray(copied) || !copied.length) throw new Error("相册复制没有返回结果");
+    } catch(e) {
+      console.warn("⚠️ 相册发送失败，改为逐条发送:", String(e?.message||e));
+      for(const item of group.slice(0,10)) {
+        try { await sendIndexedResource(token, chatId, item); sent++; } catch(err) {
+          console.error("ALBUM ITEM:", String(err?.message||err));
+        }
+      }
+    }
+  }
+  return sent;
 }
 async function sendIndexedResource(token, chatId, item) {
   // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
@@ -6921,19 +6953,19 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
-        text:"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",
+        text:"📁 <b>"+safe+"</b>\n\n📭 这个文件夹目前没有可获取的资源。",
         parse_mode:"HTML",
         reply_markup:directoryInlineKeyboard()
       });
     }
-
-    return safeEdit(token,{
-      chat_id:chatId,
-      message_id:messageId,
-      text:"📁 <b>"+safe+"</b>\n\n━━━━━━━━━━━━\n📦 共 <b>"+all.length+"</b> 个资源\n📤 每次获取 <b>10 个</b>\n\n👇 点击下方按钮开始获取\n━━━━━━━━━━━━",
-      parse_mode:"HTML",
-      reply_markup:folderSummaryKeyboard(d.id,all.length,0)
-    });
+    await answer("正在发送相册");
+    const first=all.slice(0,10);
+    const sent=await sendResourceAlbum(token,chatId,first);
+    const next=first.length;
+    return sendHtml(token,chatId,
+      "📁 <b>"+safe+"</b>\n━━━━━━━━━━━━━━\n📦 已发送：<b>"+sent+"</b> / "+first.length+"\n📚 文件夹共：<b>"+all.length+"</b> 个\n\n👇 可继续获取下一组",
+      folderProgressKeyboard(d.id,all.length,next)
+    );
   }
 
   if(offset>=all.length) return;
