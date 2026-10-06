@@ -1604,69 +1604,117 @@ async function createHistoryClient() {
 async function ensureHistoryClient(uid) {
   if (historyClient) return historyClient;
   if (historyConnecting) return historyConnecting;
+
   historyConnecting = (async () => {
-    const connectionTimeout = (promise, ms, label) => Promise.race([
+    const timeout = (promise, ms, label) => Promise.race([
       promise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error(label + "（超过 " + Math.round(ms/1000) + " 秒）")), ms))
+      new Promise((_, reject) => setTimeout(() => reject(new Error(label + "（超过 " + Math.round(ms / 1000) + " 秒）")), ms))
     ]);
-    const auth = db.settings.historyAuth || {};
-    const hasApi = Boolean(auth.apiId || TG_API_ID) && Boolean(auth.apiHash || TG_API_HASH);
-    if (!hasApi) {
-      const apiIdText = await askHistoryInput(uid, "api_id", "🔐 历史扫描首次授权\n\n请发送你的 Telegram API ID。\n\n获取位置：my.telegram.org → API development tools");
-      const apiId = Number(String(apiIdText).trim());
+
+    let auth = db.settings.historyAuth || {};
+    let apiId = Number(auth.apiId || TG_API_ID || 0);
+    let apiHash = auth.apiHash ? decrypt(auth.apiHash) : TG_API_HASH;
+
+    // 首次授权必须完整走：API ID → API HASH → 手机号 → 验证码 → 2FA（如有）。
+    if (!apiId) {
+      const apiIdText = await askHistoryInput(uid, "api_id",
+        "🔐 <b>Telegram 扫描账号授权</b>\n\n请发送 Telegram API ID。\n\n获取位置：my.telegram.org → API development tools");
+      apiId = Number(String(apiIdText).trim());
       if (!Number.isInteger(apiId) || apiId <= 0) throw new Error("API ID 格式不正确");
-      const apiHash = await askHistoryInput(uid, "api_hash", "现在发送 Telegram API HASH。\n\n⚠️ 不要把 Bot Token 发到这里。");
-      if (!String(apiHash).trim()) throw new Error("API HASH 不能为空");
-      db.settings.historyAuth = {apiId, apiHash:encrypt(String(apiHash).trim()), session:null, phone:null};
-      saveDb();
     }
 
-    const current = db.settings.historyAuth || {};
-    const {client, apiId, apiHash} = await createHistoryClient();
-    let authorized = false;
-    let connectError = "";
+    if (!apiHash) {
+      const apiHashText = await askHistoryInput(uid, "api_hash",
+        "现在发送 Telegram API HASH。\n\n⚠️ 不要把 Bot Token 发到这里。");
+      apiHash = String(apiHashText || "").trim();
+      if (!apiHash) throw new Error("API HASH 不能为空");
+    }
+
+    auth = {
+      ...auth,
+      apiId,
+      apiHash: encrypt(apiHash),
+      phone: auth.phone || null,
+      session: auth.session || null
+    };
+    db.settings.historyAuth = auth;
+    saveDb();
+
+    const buildClient = async (sessionValue = "") => {
+      await loadTeleproto();
+      return new TelegramClientClass(
+        new StringSessionClass(sessionValue || ""),
+        apiId,
+        apiHash,
+        {connectionRetries:5, autoReconnect:true, floodSleepThreshold:60}
+      );
+    };
+
+    // 已有 session：只连接已保存账号，失败就明确报错，绝不再次索要验证码。
+    if (auth.session) {
+      const client = await buildClient(decrypt(auth.session));
+      try {
+        await timeout((async () => {
+          await client.connect();
+          await client.getMe();
+        })(), 20000, "Telegram 扫描账号连接超时");
+        historyClient = client;
+        const me = await client.getMe().catch(() => null);
+        console.log("✅ MTProto 扫描账号已连接:", me?.username ? "@" + me.username : String(me?.id || ""));
+        return historyClient;
+      } catch (e) {
+        try { await client.disconnect(); } catch {}
+        throw new Error("扫描账号已登录，但 20 秒内连接失败：" + String(e?.message || e));
+      }
+    }
+
+    // 没有 session：立即进入授权，不允许在连接阶段空等。
+    const phone = String(auth.phone || await askHistoryInput(uid, "phone",
+      "📱 <b>请输入 Telegram 扫描账号手机号</b>\n\n必须带国家区号，例如：<code>+886...</code>\n\n发送 /cancel 可取消。")).trim();
+    if (!phone) throw new Error("手机号不能为空");
+
+    auth = {...auth, phone};
+    db.settings.historyAuth = auth;
+    saveDb();
+
+    const client = await buildClient("");
     try {
-      await connectionTimeout(client.connect(), 20000, "Telegram 扫描账号连接超时");
-      await connectionTimeout(client.getMe(), 10000, "Telegram 扫描账号登录状态检查超时");
-      authorized = true;
-      const me = await client.getMe();
-      console.log("✅ MTProto 扫描账号已连接:", me?.username ? "@" + me.username : String(me?.id || ""));
-    } catch (e) {
-      connectError = String(e?.message || e);
-      console.error("❌ MTProto 已保存登录连接失败:", connectError);
-    }
+      await timeout(client.start({
+        phoneNumber: () => Promise.resolve(phone),
+        phoneCode: () => askHistoryInput(uid, "phone_code",
+          "📩 Telegram 已发送登录验证码。\n\n请输入验证码："),
+        password: () => askHistoryInput(uid, "password",
+          "🔑 你的 Telegram 账号启用了两步验证。\n\n请输入 2FA 密码："),
+        onError: e => console.error("MTProto AUTH:", e?.message || e)
+      }), 20000, "Telegram 扫描账号授权超时");
 
-    if (!authorized) {
-      if (current.session) {
-        throw new Error("扫描账号已登录，但连接失败：" + connectError);
-      }
-      if (!current.phone) {
-        throw new Error("扫描账号还没登录。请先点「扫描账号」完成授权，不要在扫描上传里等待。");
-      }
-      const phone = current.phone || await askHistoryInput(uid, "phone", "📱 请输入用于历史扫描的 Telegram 手机号（含国家区号，例如 +886...）。");
-      db.settings.historyAuth = {...current, apiId, apiHash:encrypt(apiHash), phone:String(phone).trim()};
+      auth = {
+        ...db.settings.historyAuth,
+        apiId,
+        apiHash: encrypt(apiHash),
+        phone,
+        session: encrypt(client.session.save())
+      };
+      db.settings.historyAuth = auth;
       saveDb();
-      await client.start({
-        phoneNumber: () => Promise.resolve(db.settings.historyAuth.phone),
-        phoneCode: () => askHistoryInput(uid, "phone_code", "📩 Telegram 已发送登录验证码。\n\n请输入验证码："),
-        password: () => askHistoryInput(uid, "password", "🔑 你的 Telegram 账号启用了两步验证。\n\n请输入 2FA 密码："),
-        onError: e => console.error("MTProto AUTH:", e.message)
-      });
-      db.settings.historyAuth.session = encrypt(client.session.save());
-      saveDb();
+      historyClient = client;
+      console.log("✅ MTProto 扫描账号授权成功，session 已保存");
+      return historyClient;
+    } catch (e) {
+      try { await client.disconnect(); } catch {}
+      throw new Error("Telegram 扫描账号授权失败：" + String(e?.message || e));
     }
-    historyClient = client;
-    console.log("✅ MTProto history client ready");
-    return historyClient;
   })().catch(async e => {
     console.error("❌ MTProto SCAN ACCOUNT:", e?.message || e);
-    try { await sendHtml(TOKEN, uid,
-      "<b>❌ Telegram 扫描账号连接失败</b>\\n\\n" +
-      "⚠️ " + escapeHtml(e?.message || "未知连接错误") + "\\n\\n" +
-      "💡 请确认扫描账号已经加入目标仓库，并在 Telegram 客户端打开过该仓库；如果提示 API 配置错误，请检查 TG_API_ID / TG_API_HASH。"
-    ); } catch {}
+    try {
+      await sendHtml(TOKEN, uid,
+        "<b>❌ Telegram 扫描账号连接失败</b>\n\n" +
+        "⚠️ " + escapeHtml(e?.message || "未知连接错误")
+      );
+    } catch {}
     throw e;
   });
+
   try { return await historyConnecting; }
   finally { historyConnecting = null; }
 }
