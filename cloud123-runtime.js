@@ -280,6 +280,30 @@ async function cloud123ScanAndUpload(uid) {
   let success=0, fail=0, skip=0;
   let activeBatchBytes=0, totalUploadedBytes=0;
   let currentFileName="";
+  const uploadProgress = new Map();
+  let lastProgressEdit = 0;
+  let progressEditing = false;
+  const refreshUploadProgress = async () => {
+    if(!statusMessage?.message_id || progressEditing) return;
+    const now=Date.now();
+    if(now-lastProgressEdit<1000) return;
+    lastProgressEdit=now;
+    progressEditing=true;
+    try {
+      let sentBytes=0,totalBytes=0;
+      for(const p of uploadProgress.values()){sentBytes+=Number(p.sent||0);totalBytes+=Number(p.total||0);}
+      const mb=n=>(n/1024/1024).toFixed(1);
+      await tg(TOKEN,"editMessageText",{
+        chat_id:uid,message_id:statusMessage.message_id,
+        text:"🚀 <b>123云盘实时上传</b>\\n\\n"+
+          "📁 当前文件："+escapeHtml(currentFileName||"准备中")+"\\n"+
+          "📊 成功："+success+"  | 失败："+fail+"  | 跳过："+skip+"\\n"+
+          "📤 当前传输："+mb(sentBytes)+" / "+mb(totalBytes)+" MB\\n"+
+          "⚡ 小文件最多 5 个并发\\n📦 单批总量 ≤ 1GB",
+        parse_mode:"HTML"
+      });
+    } catch {} finally { progressEditing=false; }
+  };
   try {
     const client=cloud123Client();
     let phase="正在连接 Telegram 扫描账号";
