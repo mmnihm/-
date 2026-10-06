@@ -6209,6 +6209,24 @@ async function handleDirectoryCallback(token, q, child=false) {
       }
       return sendHtml(token,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n扫描上传功能还没加载，所以刚才点了没有开始。\n\n先配置 WebDAV 后，再在服务器执行：\n<code>node cloud123-runtime.js</code>\n然后重启机器人。",{reply_markup:{inline_keyboard:[[{text:"🔄 再试一次扫描上传",callback_data:"adm:cloud_scan"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
     }
+    if(data==="adm:scan_auth"){
+      await answer("打开扫描账号");
+      const auth=db.settings.historyAuth||{};
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔐 扫描账号</b>\n━━━━━━━━━━━━━━\n\n"+
+        "API："+(auth.apiId?"已填写":"未填写")+"\n"+
+        "HASH："+(auth.apiHash?"已填写":"未填写")+"\n"+
+        "手机号："+(auth.phone?"已填写":"未填写")+"\n"+
+        "登录："+(auth.session?"已授权":"未授权")+"\n\n"+
+        "点下面按钮开始授权。按提示发送 API ID、API HASH、手机号和验证码。",
+        parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:"🔐 开始授权",callback_data:"adm:scan_auth_start"}],
+          [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
+        ]}});
+    }
+    if(data==="adm:scan_auth_start"){
+      await answer("开始授权");
+      return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔐 扫描授权"});
+    }
     if(data==="admin:resource")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 资源管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminResourceInline()});
     if(data==="admin:ops")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📊 数据与运营</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminOpsInline()});
     if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
