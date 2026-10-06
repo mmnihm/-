@@ -6198,9 +6198,12 @@ async function handleDirectoryCallback(token, q, child=false) {
     const key=uploadStateKey(uid,child,token);
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
-    if(data==="adm:cloud123" || data==="adm:cloud_sync" || data==="adm:cloud_scan"){
+    if(data==="adm:cloud123" || data==="adm:cloud_sync" || data==="adm:cloud_scan" || data==="adm:cloud_setup" || data==="adm:cloud_test"){
       await answer(data==="adm:cloud_scan" ? "开始扫描上传" : "打开123云盘");
       if(data==="adm:cloud_scan" && typeof cloud123ScanAndUpload==="function") return cloud123ScanAndUpload(uid);
+      if(data==="adm:cloud_setup") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔗 配置123云盘"});
+      if(data==="adm:cloud_test") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🧪 测试连接"});
+      if(data==="adm:cloud_sync") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📁 同步机器人目录"});
       if(typeof cloud123StatusText==="function" && typeof cloud123Menu==="function"){
         return sendHtml(token,uid,cloud123StatusText(),cloud123Menu());
       }
