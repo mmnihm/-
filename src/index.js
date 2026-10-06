@@ -3031,14 +3031,8 @@ function adminRootInline(){return{inline_keyboard:[
 function adminResourceInline(){return{inline_keyboard:[
  [{text:"✏️ 修改文件夹",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
- [{text:"🔗 分享资源",callback_data:"adm:share"},{text:"📦 资源仓库",callback_data:"adm:repo"}],
- [{text:"🔍 仓库扫描",callback_data:"adm:scan"},{text:"🧩 恢复历史资源",callback_data:"adm:recover"}],
- [{text:"🛠️ 恢复文件夹资源",callback_data:"adm:folder_repair"}],
- [{text:"🔄 同步共享数据",callback_data:"adm:shared_refresh"}],
- [{text:"🏷️ 标签自动建文件夹",callback_data:"adm:tagfolders"}],
- [{text:"🗑️ 删除所有文件夹",callback_data:"adm:folders_all_confirm"}],
- [{text:"🔄 迁移仓库",callback_data:"adm:migrate"},{text:"⚡ 自动同步任务",callback_data:"adm:auto"}],
- [{text:"🧹 资源维护",callback_data:"admin:maintenance"}],
+ [{text:"📦 资源仓库",callback_data:"adm:repo"},{text:"🔍 仓库扫描",callback_data:"adm:scan"}],
+ [{text:"⚡ 自动同步任务",callback_data:"adm:auto"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
 function adminSettingsInline(){return{inline_keyboard:[
