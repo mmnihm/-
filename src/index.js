@@ -1231,20 +1231,22 @@ async function pullBaserowSharedData() {
     for(const directory of localDirectories) {
       queueBaserowDirectorySync(directory);
     }
+    const normChat=v=>String(v??"").trim().replace(/^-100/,"").replace(/^@/,"").toLowerCase();
     let linked=0;
     for(const remote of byKey.values()) {
       if(!remote.folderName) continue;
       let d=db.directories.find(x=>String(x.name||"").trim()===remote.folderName);
       if(!d) d=ensureDirectory(remote.folderName);
       const key=remote.chat+":"+remote.message;
-      let item=localResources.find(x=>resourceKey(x)===key);
+      let item=localResources.find(x=>resourceKey(x)===key || (normChat(x.chatId)===normChat(remote.chat)&&Number(x.messageId)===Number(remote.message)));
       if(!item && remote.title) item=localResources.find(x=>String(x.title||"").trim()===String(remote.title).trim());
-      if(item && d && String(item.directoryId||"")!==String(d.id)) {
+      if(item && d) {
         item.directoryId=d.id;
         linked++;
       }
     }
-    if(linked) console.log("📁 Google Sheets 已把资源归入文件夹:", linked);
+    normalizeSharedDirectories();
+    console.log("📁 Google Sheets 资源归类:", "归入="+linked, "文件夹="+db.directories.length, "有资源的文件夹="+db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id))).length);
     if(missing) console.log("🔗 本地为准：Google Sheets 缺少 "+missing+" 条资源，已加入同步队列");
     console.log("🔗 Google Sheets 刷新采用本地表格/本地数据库为准：保留本地资源="+localResources.length+" 文件夹="+localDirectories.length+"，远端匹配="+matched);
 
