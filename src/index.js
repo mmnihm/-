@@ -1187,6 +1187,14 @@ async function pullBaserowSharedData() {
     console.log("🧪 Google Sheets 资源恢复诊断：网址非空="+urlNonEmpty+" 私有链接匹配="+telegramPrivateMatches+" 公开链接匹配="+telegramUrlMatches+" 可恢复="+byKey.size+" 总行="+rows.length);
     // MySQL 为正式数据层，Google Sheets 是手机管理界面：
     // Google Sheets 修改名称/描述/文件夹/类型等字段后，立即同步回内存并由 saveDb() 写入 MySQL。
+    let createdFolders=0;
+    for(const folder of folderNames.values()) {
+      if(!db.directories.some(x=>String(x.name||"").trim()===folder.name)) {
+        ensureDirectory(folder.name);
+        createdFolders++;
+      }
+    }
+    if(createdFolders) console.log("📁 Google Sheets 已补入文件夹:", createdFolders);
     const localResources=Array.isArray(db.resources)?db.resources:[];
     const localDirectories=Array.isArray(db.directories)?db.directories:[];
     const remoteByKey=new Map(byKey);
