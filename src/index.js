@@ -3298,7 +3298,8 @@ function sortedDirectories(list=db.directories) {
   });
 }
 function uploadFolderInlineMenu(page=0) {
-  const all=sortedDirectories();
+  const latestUpload=id=>Math.max(0, ...(db.resources||[]).filter(r=>String(r.directoryId)===String(id)).map(r=>Number(r.indexedAt||r.date||r.createdAt||0)));
+  const all=sortedDirectories().sort((a,b)=>latestUpload(b.id)-latestUpload(a.id) || Number(b.createdAt||0)-Number(a.createdAt||0));
   const pageSize=8;
   const totalPages=Math.max(1, Math.ceil(all.length/pageSize));
   const currentPage=Math.min(Math.max(0, Number(page)||0), totalPages-1);
