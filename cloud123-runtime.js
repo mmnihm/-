@@ -186,7 +186,7 @@ function cloud123Menu() {
       inline_keyboard:[
         [{text:"🔗 配置123云盘",callback_data:"adm:cloud_setup"},{text:"🧪 测试连接",callback_data:"adm:cloud_test"}],
         [{text:"📁 同步机器人目录",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
-        [{text:"🔐 扫描账号",callback_data:"adm:scan_auth"},{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
+        [{text:"🔐 授权账号",callback_data:"adm:cloud_account"},{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
       ]
     }
   };
@@ -200,7 +200,7 @@ function cloud123StatusText() {
     "☁️ <b>123云盘</b>",
     "",
     "🔗 WebDAV：" + (c.url ? "✅ 已配置" : "❌ 未配置"),
-    "👤 扫描/上传账号：" + (c.username ? "✅ 已配置" : "❌ 未配置"),
+    "👤 Telegram 扫描仓库账号：" + ((db.settings.historyAuth||{}).session ? "✅ 已授权" : "❌ 未授权"),
     "📚 已上传：" + uploaded + " 个",
     "⚠️ 失败记录：" + failed + " 个",
     "",
