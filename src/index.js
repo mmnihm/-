@@ -6221,6 +6221,22 @@ async function handleDirectoryCallback(token, q, child=false) {
       ]}});}catch(e){void answer("获取失败："+String(e.message||e),true);return;}
     }
   }
+  // 管理后台旧文字入口与内联按钮统一：这些按钮直接复用原有文字菜单处理逻辑，避免出现“按钮能显示但点了没反应”。
+  if(data==="adm:rename") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"✏️ 修改文件夹"});
+  if(data==="adm:delete") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🗑️ 删除资源"});
+  if(data==="adm:move") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔄 移动资源"});
+  if(data==="adm:bulk") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 批量管理"});
+  if(data==="adm:repo") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 资源仓库"});
+  if(data==="adm:scan") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔍 仓库扫描"});
+  if(data==="adm:group") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔐 指定群管理"});
+  if(data==="adm:admins") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"👥 管理员管理"});
+  if(data==="adm:stats") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📊 数据统计"});
+  if(data==="adm:broadcast") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📢 广播消息"});
+  if(data==="adm:logs") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📜 操作日志"});
+  if(data==="adm:pin") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📌 广播后置顶"});
+  if(data==="adm:clone") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🤖 克隆机器人"});
+  if(data==="adm:repo_bind") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 资源仓库"});
+
   if(data.startsWith("admin:")||data.startsWith("adm:")){void answer();
     if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
