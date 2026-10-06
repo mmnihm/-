@@ -3127,10 +3127,7 @@ function quotaSettingsText(){return"<b>🎁 会员 / 非会员额度</b>\n━━
 
 function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
-    [{text:"📂 资源目录",callback_data:"user:dirs"},{text:"🔎 搜索资源",callback_data:"user:search"}],
-    [{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}],
-    [{text:"⭐ 我的资源",callback_data:"hub"},{text:"🤖 克隆机器人",callback_data:"user:clone"}],
-    [{text:"💬 联系客服",callback_data:"support:start"}]
+    [{text:"开始使用",callback_data:"user:dirs"}]
   ]}};
 }
 function userMenu() {
@@ -4871,7 +4868,7 @@ async function mainMessage(msg) {
   }
 
   if(t==="⭐ 我的资源") return sendHtml(TOKEN,uid,userFeatureText(),{reply_markup:userFeatureKeyboard()});
-  if(t==="/start" || t==="🏠 开始") {
+  if(t==="/start" || t==="🏠 开始" || t==="开始使用" || t==="🏠 开始使用") {
     const welcomeStore=db.settings||{};
     if(!welcomeStore.welcomeUsers || typeof welcomeStore.welcomeUsers!=="object") welcomeStore.welcomeUsers={};
     const firstVisit=!welcomeStore.welcomeUsers[String(uid)];
