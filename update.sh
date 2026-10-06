@@ -4,6 +4,7 @@ cd /root/bot
 echo ">>> 拉取最新代码"
 git pull --ff-only
 echo ">>> 安装依赖"
+if [ -f cloud123-runtime.js ]; then node cloud123-runtime.js || true; fi
 npm install --omit=dev
 echo ">>> 重启机器人"
 pm2 delete bot >/dev/null 2>&1 || true

@@ -3049,6 +3049,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"✏️ 修改文件夹",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
  [{text:"🔄 移动资源",callback_data:"adm:move"},{text:"📦 批量管理",callback_data:"adm:bulk"}],
  [{text:"📦 资源仓库",callback_data:"adm:repo"},{text:"🔍 仓库扫描",callback_data:"adm:scan"}],
+ [{text:"🔐 扫描账号",callback_data:"adm:scan_auth"},{text:"☁️ 123云盘",callback_data:"adm:cloud123"}],
  [{text:"⚡ 自动同步任务",callback_data:"adm:auto"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
@@ -6296,7 +6297,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const result=autoCreateTagFoldersForExistingResources();
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签自动分类完成</b>\\n━━━━━━━━━━━━━━\\n\\n📁 新建标签文件夹：<b>"+result.created+"</b>\\n📦 自动归类资源：<b>"+result.assigned+"</b>\\n\\n规则：只处理当前没有文件夹的资源。\\n第一个 #标签会作为文件夹名称。",parse_mode:"HTML",reply_markup:adminResourceInline()});
   }
-  const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步任务",auto_status:"⚡ 自动同步任务",auto_add:"➕ 添加同步任务",auto_pause:"⏸️ 暂停任务",auto_stop:"⏹️ 解绑并停止自动同步",auto_reset:"🧹 解绑并重新绑定",auto_delete:"🧹 删除任务并解绑",auto_test:"🧪 测试同步",auto_resume:"▶️ 继续任务",auto_start:"▶️ 开始同步"};
+  const syn={rename:"✏️ 修改文件夹名称",delete:"🗑️ 删除资源",move:"🔄 移动资源",bulk:"📦 批量管理",share:"🔗 分享资源",repo:"📦 资源仓库",scan:"🔍 仓库扫描",scan_auth:"🔐 扫描授权",cloud123:"☁️ 123云盘",recover:"🧩 恢复历史资源",group:"🔐 指定群管理",admins:"👥 管理员管理",stats:"📊 数据统计",broadcast:"📢 广播消息",logs:"📜 操作日志",pin:"📌 广播后置顶",post:"📣 获取后推广",clone:"🤖 克隆机器人",migrate:"🔄 迁移仓库",auto:"⚡ 自动同步任务",auto_status:"⚡ 自动同步任务",auto_add:"➕ 添加同步任务",auto_pause:"⏸️ 暂停任务",auto_stop:"⏹️ 解绑并停止自动同步",auto_reset:"🧹 解绑并重新绑定",auto_delete:"🧹 删除任务并解绑",auto_test:"🧪 测试同步",auto_resume:"▶️ 继续任务",auto_start:"▶️ 开始同步"};
     if(syn[route])return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:syn[route]});
     if(route==="protect")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
     if(route==="quota")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
