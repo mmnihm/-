@@ -3297,31 +3297,35 @@ function sortedDirectories(list=db.directories) {
     return String(b?.name||"").localeCompare(String(a?.name||""),"zh-Hans");
   });
 }
-function uploadFolderInlineMenu() {
-  // 每次打开/刷新都从当前 db.directories 动态生成，不能固定显示某一个文件夹。
+function uploadFolderInlineMenu(page=0) {
   const all=sortedDirectories();
+  const pageSize=8;
+  const totalPages=Math.max(1, Math.ceil(all.length/pageSize));
+  const currentPage=Math.min(Math.max(0, Number(page)||0), totalPages-1);
+  const current=all.slice(currentPage*pageSize, currentPage*pageSize+pageSize);
   const rows=[];
   let row=[];
-  for(const d of all) {
+  for(const d of current) {
     const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
     const name=String(d.name||"未命名").trim() || "未命名";
     row.push({
-      text:"📁 "+name.slice(0,24)+" · "+count,
+      text:"📁 "+name.slice(0,18)+" · "+count,
       callback_data:"upload_dir:"+d.id
     });
-    if(row.length===2) {
-      rows.push(row);
-      row=[];
-    }
+    if(row.length===2) { rows.push(row); row=[]; }
   }
   if(row.length) rows.push(row);
   if(!rows.length) rows.push([{text:"📭 暂无文件夹",callback_data:"noop"}]);
-
+  const nav=[];
+  if(currentPage>0) nav.push({text:"⬅️ 上一页",callback_data:"upload_folder_page:"+(currentPage-1)});
+  if(currentPage<totalPages-1) nav.push({text:"下一页 ➡️",callback_data:"upload_folder_page:"+(currentPage+1)});
+  if(nav.length) rows.push(nav);
   rows.push([
     {text:"➕ 新建文件夹",callback_data:"upload_new"},
-    {text:"🔄 刷新文件夹",callback_data:"upload_folder_refresh"},
+    {text:"🔄 刷新",callback_data:"upload_folder_refresh"},
     {text:"❌ 取消",callback_data:"upload_cancel"}
   ]);
+  rows.push([{text:"第 "+(currentPage+1)+" / "+totalPages+" 页",callback_data:"noop"}]);
   return {inline_keyboard:rows};
 }
 
@@ -6850,9 +6854,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
-  if(isAdmin(uid) && data==="upload_folder_refresh") {
-    await answer("已刷新");
-    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹\n\n📁 列表已刷新",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+  if(isAdmin(uid) && (data==="upload_folder_refresh" || data.startsWith("upload_folder_page:"))) {
+    const page=data.startsWith("upload_folder_page:") ? Number(data.split(":")[1]||0) : 0;
+    await answer(data==="upload_folder_refresh" ? "已刷新" : "已翻页");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹\n📄 第 <b>"+(page+1)+"</b> 页",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu(page)});
   }
   if(isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
     if(data==="upload_cancel") {
