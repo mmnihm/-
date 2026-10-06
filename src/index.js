@@ -111,6 +111,8 @@ if (!TOKEN) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const api = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
+// Telegram API 长连接复用：减少每次按钮/消息都重新建立 TLS 连接的耗时。
+const telegramHttpsAgent = new https.Agent({keepAlive:true,maxSockets:50,maxFreeSockets:10,keepAliveMsecs:1000});
 async function telegramHttpsRequest(token, method, body, timeoutMs) {
   const payload = JSON.stringify(body || {});
   return await new Promise((resolve, reject) => {
@@ -120,11 +122,11 @@ async function telegramHttpsRequest(token, method, body, timeoutMs) {
         method: "POST",
         family: 4,
         timeout: timeoutMs,
+        agent: telegramHttpsAgent,
         headers: {
           "content-type": "application/json",
           "content-length": Buffer.byteLength(payload),
-          "accept": "application/json",
-          "connection": "keep-alive"
+          "accept": "application/json"
         }
       },
       res => {
@@ -6982,11 +6984,9 @@ async function pollMain() {
             indexResource(u.message);
             queueRepositoryAutoSyncMessage(u.message);
           }
-          try {
-            await mainMessage(u.message);
-          } catch(e) {
-            console.error("MAIN MESSAGE:",e.message);
-          }
+          // 普通消息放到后台处理，不再让一个慢的搜索/上传/Google Sheets 操作堵住后续更新。
+          // offset 立即推进，按钮回调本身已经独立后台执行。
+          void mainMessage(u.message).catch(e=>console.error("MAIN MESSAGE:",e.message));
         }
         db.offset=u.update_id+1;
       }
@@ -7040,7 +7040,7 @@ async function childLoop(child) {
           // 子机器人回调同样后台执行，避免一个慢操作堵住后续按钮。
           void handleDirectoryCallback(token,u.callback_query,true);
         }
-        if(u.message) await childMessage(child,u.message,token);
+        if(u.message) void childMessage(child,u.message,token).catch(e=>console.error("CHILD MESSAGE:",e.message));
       }
       saveDb();
     }catch(e){
