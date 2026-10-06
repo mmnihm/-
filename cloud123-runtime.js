@@ -489,7 +489,7 @@ async function cloud123ScanAndUpload(uid) {
 `;
   src = src.replace(insertAnchor, insertAnchor + "\n" + feature);
 
-  const stateAnchor = '  if(t==="/start" || t==="🏠 开始") return sendHtml';
+  const stateAnchor = '  if(t==="/start" || t==="🏠 开始") {';
   if(!src.includes(stateAnchor)) throw new Error("123云盘补丁：找不到状态处理锚点");
   const stateCode = String.raw`
   if(admin && cloud123State.has(String(uid))) {
