@@ -6237,6 +6237,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="adm:clone") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🤖 克隆机器人"});
   if(data==="adm:repo_bind") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 资源仓库"});
 
+  if(data==="bind_repo_cancel") { states.delete("m:"+uid); states.delete(uploadStateKey(uid,child,token)); await answer("已取消绑定"); return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>↩️ 已取消绑定资源仓库</b>\n\n当前仓库："+(repo()?.title?"✅ "+escapeHtml(repo().title):"❌ 未绑定"),parse_mode:"HTML",reply_markup:adminResourceInline()}); }
   if(data.startsWith("admin:")||data.startsWith("adm:")){void answer();
     if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
