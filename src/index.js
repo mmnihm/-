@@ -4133,12 +4133,14 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const mode=options.mode==="random"?"random":"latest";
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
-    await sendHtml(token,chatId,
+    const extraMessage = postResourceMessage();
+    const historySummary =
       "<b>📦 本批资源获取完成</b>\n━━━━━━━━━━━━━━\n\n📤 成功发送：<b>"+ok+"</b> 条\n⚠️ 失败："+fail+" 条\n📚 本批："+items.length+" 条\n\n"+
-      (mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。"),
-      batchNavigation(mode,offset,total));
-    // 把附加提示放在按钮之前，确保历史随机获取完成后“🎲 再来一组”位于最底部。
-    if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
+      (mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+
+      (extraMessage ? "\n\n"+extraMessage : "");
+    // 结果汇总消息必须是最后一条消息，并且按钮直接挂在这条消息下面。
+    // 不再另发一条 postResourceMessage，避免“再来一组”按钮被挤到上一条消息。
+    await sendHtml(token,chatId,historySummary,batchNavigation(mode,offset,total));
     return;
   }catch(e){
     console.error("HISTORY DELIVERY:",e);
@@ -4246,9 +4248,10 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
         : "✨ <i>资源已发送完成</i>");
 
   // 无论本批是否有失败，都必须保留“再来一组”按钮。
-  // postResourceMessage 单独发送，避免把按钮从结果消息上挤掉。
-  await sendHtml(token,chatId,summary,navigation);
-  if(postResourceMessage()) await sendHtml(token,chatId,postResourceMessage());
+  // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
+  const extraMessage = postResourceMessage();
+  const finalSummary = extraMessage ? summary+"\n\n"+extraMessage : summary;
+  await sendHtml(token,chatId,finalSummary,navigation);
   return;
 }
 const states=new Map();
