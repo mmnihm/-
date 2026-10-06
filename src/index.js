@@ -6740,6 +6740,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
+  if(isAdmin(uid) && data==="upload_folder_refresh") {
+    await answer("已刷新");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 上传资源</b>\n━━━━━━━━━━━━━━\n\n👇 请选择文件夹\n\n📁 列表已刷新",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
+  }
   if(isAdmin(uid) && (data.startsWith("upload_dir:") || data==="upload_new" || data==="upload_cancel")) {
     if(data==="upload_cancel") {
       states.delete(uploadStateKey(uid,child,token));
