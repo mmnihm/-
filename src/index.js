@@ -3458,6 +3458,19 @@ function autoCreateTagFoldersForExistingResources() {
   touchSharedData("system");
   return {created,assigned};
 }
+function repairLocalFolders() {
+  normalizeSharedDirectories();
+  const folders=(db.directories||[]).filter(d=>String(d.name||"").trim());
+  let linked=0;
+  for(const item of db.resources||[]) {
+    if(folders.some(d=>String(d.id)===String(item.directoryId))) continue;
+    const blob=(String(item.title||"")+" "+String(item.caption||"")).toLowerCase();
+    const hit=folders.find(d=>blob.includes(String(d.name||"").trim().toLowerCase()));
+    if(hit) { item.directoryId=hit.id; linked++; }
+  }
+  if(linked) saveDb();
+  console.log("本地文件夹归类完成: 归入="+linked+" 有资源的文件夹="+folders.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id))).length);
+}
 function ensureDirectory(name) {
   const clean=String(name||"").trim().slice(0,80);
   if(!clean)return null;
@@ -7201,6 +7214,8 @@ let sharedBaserowInitStarted = false;
 let sharedBaserowRefreshTimerStarted = false;
 
 async function boot(){
+  try { repairLocalFolders(); } catch(e) { console.warn("本地文件夹归类失败:", String(e?.message||e)); }
+
   if (bootActive) {
     console.warn("⚠️ BOOT 已经运行，忽略重复启动", "pid=" + PROCESS_ID);
     return;
