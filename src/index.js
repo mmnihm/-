@@ -5927,6 +5927,8 @@ async function childMessage(child,msg,token) {
       resourceInlineKeyboard(results,0));
   }
 }
+const callbackDedupe = new Map();
+
 async function handleDirectoryCallback(token, q, child=false) {
   const uid=q.from?.id;
   const data=String(q.data||"");
@@ -5951,6 +5953,19 @@ async function handleDirectoryCallback(token, q, child=false) {
       console.warn("⚠️ callback确认失败（继续处理按钮）:", String(e?.telegramDescription || e?.message || e));
     }
   };
+
+  // 内联按钮防重复点击：Telegram/网络重试可能在极短时间内产生多个 callback，
+  // 如果同时执行“下一页/返回/开始同步”等动作，就会出现重复页面或跳转错乱。
+  const callbackDedupeKey=tokenFingerprint(token)+":"+String(chatId)+":"+String(messageId)+":"+data;
+  const callbackDedupeNow=Date.now();
+  const callbackDedupeLast=callbackDedupe.get(callbackDedupeKey)||0;
+  if(callbackDedupeLast && callbackDedupeNow-callbackDedupeLast<2500){
+    await answer("请勿重复点击",false);
+    return;
+  }
+  callbackDedupe.set(callbackDedupeKey,callbackDedupeNow);
+  setTimeout(()=>callbackDedupe.delete(callbackDedupeKey),3000);
+
   if(data==="adm:repo_unbind_confirm") {
     const current=repo();
     if(!current) {
@@ -6385,26 +6400,6 @@ async function handleDirectoryCallback(token, q, child=false) {
           [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
         ]}});
       }
-    }
-    if(route==="auto_add") {
-      states.set(key,{step:"auto_migration_source"});
-      void answer("请选择旧仓库");
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,
-        text:"<b>➕ 添加自动同步任务</b>\n━━━━━━━━━━━━━━\n\n📤 第一步：发送旧仓库 Chat ID、@用户名，或直接转发旧仓库中的任意消息/文件。\n\n📥 下一步再发送新仓库。\n\n机器人必须同时能访问两个仓库。\n发送 /cancel 可取消。",
-        parse_mode:"HTML",
-        reply_markup:{inline_keyboard:[
-          [{text:"❌ 取消",callback_data:"admin:resource"}]
-        ]}});
-    }
-    if(route==="auto_delete") {
-      await resetRepositoryAutoSyncBinding();
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,
-        text:"<b>🗑️ 同步任务已删除</b>\n━━━━━━━━━━━━━━\n\n旧仓库和新仓库绑定已解除。\n待处理队列已清空。\n\n现在可以重新添加同步任务。",
-        parse_mode:"HTML",
-        reply_markup:{inline_keyboard:[
-          [{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}],
-          [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
-        ]}});
     }
     if(route==="auto_pause") {
       const a=repositoryAutoSyncState(); a.enabled=false; a.status="paused"; a.updatedAt=Date.now(); saveDb();
