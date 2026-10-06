@@ -4158,7 +4158,6 @@ function batchNavigation(mode,offset,total){
   const next=Number(offset||0)+10;
   if(mode==="random"){
     rows.push([{text:"🎲 再来一组",callback_data:"batch:random"}]);
-    rows.push([{text:"🎬 获取视频",callback_data:"batch:video"}]);
   } else if(mode==="latest"){
     const nav=[];
     if(Number(offset||0)>0) nav.push({text:"⬅️ 上一批",callback_data:"batch:latest:"+Math.max(0,Number(offset||0)-10)});
