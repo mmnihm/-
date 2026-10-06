@@ -295,7 +295,7 @@ async function cloud123ScanAndUpload(uid) {
     statusMessage=await sendHtml(TOKEN,uid, render(), cloud123Menu());
     const tick=setInterval(()=>{
       if(!statusMessage?.message_id) return;
-      tg(TOKEN,"editMessageText",{chat_id:uid,message_id:statusMessage.message_id,text:render(),parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup}).catch(()=>{});
+      tg(TOKEN,"editMessageText",{chat_id:uid,message_id:statusMessage.message_id,text:render(),parse_mode:"HTML"}).catch(()=>{});
     },5000);
     const clientHistory=await ensureHistoryClient(uid);
     if(statusMessage?.message_id) {
