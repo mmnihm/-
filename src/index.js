@@ -6186,22 +6186,6 @@ async function handleDirectoryCallback(token, q, child=false) {
     return showRepositoryAutoSyncStatus(uid);
   }
 
-  if(data==="user:dirs") {
-    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});
-  }
-  if(data==="user:search") {
-    states.set("m:"+uid,{step:"search"});
-    await answer("请输入搜索关键词");
-    try {
-      return await safeEdit(token,{chat_id:chatId,message_id:messageId,
-        text:"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n💡 支持模糊搜索，最多返回 10 条。\n↩️ 发送 <code>/cancel</code> 可退出搜索。",
-        parse_mode:"HTML",
-        reply_markup:{inline_keyboard:[[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
-    } catch(e) {
-      console.warn("⚠️ 搜索页面刷新失败:",String(e?.telegramDescription||e?.message||e));
-      return sendHtml(token,uid,"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可退出搜索。",{reply_markup:{inline_keyboard:[[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
-    }
-  }
   if(data==="support:start") {
     supportOpenSession(token,uid);
     return safeEdit(token,{chat_id:chatId,message_id:messageId,
@@ -6217,24 +6201,6 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="support:admin" && isAdmin(uid)) {
     return safeEdit(token,{chat_id:chatId,message_id:messageId,text:supportAdminText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"🔄 刷新",callback_data:"support:admin"},{text:"⬅️ 返回",callback_data:"admin:ops"}]]}});
   }
-  if(data==="user:random") {
-    return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
-  }
-  if(data==="user:latest") {
-    return deliver(token,uid,uid,db.resources.slice(0,10),token,{mode:"latest",offset:0,total:db.resources.length});
-  }
-  if(data==="user:clone") {
-    states.set("m:"+uid,{step:"token"});
-    return send(token,uid,"🤖 创建子机器人\n\n请把你在 BotFather 创建的 Bot Token 发给我。\n\n发送 /cancel 可取消。");
-  }
-  if(data==="user:home") {
-    states.delete("m:"+uid);
-    return safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"<b>👋 欢迎使用资源平台</b>\n\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\n🤖 <b>平台功能</b>：克隆机器人\n\n👇 <i>请选择下方功能开始使用</i>",
-      parse_mode:"HTML",
-      reply_markup:userHomeInlineKeyboard().reply_markup});
-  }
-
   if(data==="hub"||data.startsWith("hub:")){
     const mode=data.split(":")[1]||"home";
     if(mode==="home")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureText(),parse_mode:"HTML",reply_markup:userFeatureKeyboard()});
