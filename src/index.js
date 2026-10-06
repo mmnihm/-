@@ -3128,7 +3128,7 @@ function quotaSettingsText(){return"<b>🎁 会员 / 非会员额度</b>\n━━
 function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
     [{text:"开始使用",callback_data:"user:dirs"}]
-  ]}};
+  ],remove_keyboard:true}};
 }
 function userMenu() {
   return userHomeInlineKeyboard();

@@ -183,13 +183,11 @@ function cloud123Menu() {
   const ready = Boolean(c.url && c.username && c.password);
   return {
     reply_markup:{
-      keyboard:[
-        ["🔗 配置123云盘","🧪 测试连接"],
-        ["📁 同步机器人目录","🚀 扫描并上传"],
-        ["⬅️ 返回管理"]
-      ],
-      resize_keyboard:true,
-      input_field_placeholder:"123云盘"
+      inline_keyboard:[
+        [{text:"🔗 配置123云盘",callback_data:"adm:cloud_setup"},{text:"🧪 测试连接",callback_data:"adm:cloud_test"}],
+        [{text:"📁 同步机器人目录",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
+        [{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
+      ]
     }
   };
 }
