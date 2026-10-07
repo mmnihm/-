@@ -4427,7 +4427,7 @@ function directoryInlineKeyboard(page=0) {
   if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"dirsp:"+(page-1)});
   if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"dirsp:"+(page+1)});
   if(nav.length) rows.push(nav);
-  rows.push([{text:"⭐ 我的资源",callback_data:"hub"},{text:"🔥 热门",callback_data:"hub:hot"}]);
+  rows.push([{text:"⬅️ 返回首页",callback_data:"user:home"}]);
   return {inline_keyboard:rows};
 }
 function folderSummaryKeyboard(directoryId,count,offset=0) {
@@ -4443,16 +4443,8 @@ function folderSummaryKeyboard(directoryId,count,offset=0) {
 }
 function folderProgressKeyboard(directoryId,count,nextOffset) {
   const rows=[];
-  if(nextOffset<count) {
-    const remaining=count-nextOffset;
-    rows.push([{
-      text:"📦 获取剩余资源（"+remaining+"个）",
-      callback_data:"get:"+directoryId+":"+nextOffset
-    }]);
-  } else {
-    rows.push([{text:"✅ 已全部获取",callback_data:"done"}]);
-  }
-  rows.push([{text:"⬅️ 返回资源目录",callback_data:"dirs"}]);
+  if(nextOffset<count) rows.push([{text:"🎲 再来一组",callback_data:"get:"+directoryId+":"+nextOffset}]);
+  rows.push([{text:"⬅️ 返回目录",callback_data:"dirs"}]);
   return {inline_keyboard:rows};
 }
 function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).sort((a,b)=>Number(a.messageId)-Number(b.messageId)); }
@@ -4490,7 +4482,7 @@ function sendDirectoryBatch(token, chatId, items) {
           }
         }
       }
-      await sleep(80);
+      await sleep(40);
     }
     return sent;
   })();
