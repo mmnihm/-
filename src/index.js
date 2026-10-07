@@ -3358,12 +3358,13 @@ async function cloud123ScanAndUpload(uid) {
   try {
     const client=cloud123Client();
     let phase="正在连接 Telegram 扫描账号";
+    let planned=0;
     const render=()=>"<b>🚀 123云盘扫描上传</b>\n━━━━━━━━━━━━━━\n"+
       "⏱ 已运行：<b>"+Math.floor((Date.now()-started)/1000)+"</b> 秒\n"+
       "📍 当前：<b>"+phase+"</b>\n"+
       "✅ 本次成功：<b>"+success+"</b>\n"+
       "❌ 本次失败：<b>"+fail+"</b>\n"+
-      "⏳ 剩余：<b>"+Math.max(0, resources.length-success-fail-skip)+"</b>\n"+
+      "⏳ 剩余：<b>"+Math.max(0, planned-success-fail-skip)+"</b>\n"+
       "⏭️ 跳过："+skip+"\n"+
       (currentFileName?"📄 当前文件："+escapeHtml(currentFileName)+"\n":"")+
       "📁 按现有文件夹建立目录\n"+
@@ -3427,6 +3428,7 @@ async function cloud123ScanAndUpload(uid) {
       }); } catch {}
     }
     const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded && !x.cloud123?.skipped && Number(x.cloud123?.attempts||0) < 3);
+    planned=resources.length;
     if(statusMessage?.message_id) {
       try {
         await tg(TOKEN,"editMessageText",{
