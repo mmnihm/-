@@ -5466,9 +5466,9 @@ async function mainMessage(msg) {
     return sendHtml(TOKEN,uid,"<b>✅ 已设置起始 ID</b>\n\n从消息 <code>"+startId+"</code> 开始复制，更早的会跳过。\n\n点「开始同步」后生效。",{reply_markup:{inline_keyboard:[[{text:"▶️ 开始同步",callback_data:"adm:auto_start"}],[{text:"⬅️ 返回自动同步",callback_data:"adm:auto_status"}]]}});
   }
   if(admin && s?.step==="bind_repository") {
-    if(t==="/cancel" || t==="/start" || t==="🏠 开始" || t==="🏠 返回首页" || t==="⬅️ 返回首页" || t==="⬅️ 返回管理" || t==="⚙️ 管理中心") {
+    if(t==="/cancel" || t==="取消" || t==="取消绑定" || t==="/start" || t==="🏠 开始" || t==="🏠 返回首页" || t==="⬅️ 返回首页" || t==="⬅️ 返回管理" || t==="⚙️ 管理中心") {
       states.delete(key);
-      if(t==="/cancel") return sendHtml(TOKEN,uid,"↩️ <b>已取消绑定资源仓库</b>\n\n当前仓库："+(repo()?.title ? "✅ "+escapeHtml(repo().title) : "❌ 未绑定"),adminMenu());
+      if(t==="/cancel" || t==="取消" || t==="取消绑定") return sendHtml(TOKEN,uid,"↩️ <b>已取消绑定资源仓库</b>\n\n当前仓库："+(repo()?.title ? "✅ "+escapeHtml(repo().title) : "❌ 未绑定"),adminMenu());
     } else {
     // 只有明确进入“绑定仓库”状态后，才允许用 Chat ID/@用户名/转发消息完成绑定。
     // 普通转发消息绝不能自动触发绑定。
@@ -5495,7 +5495,8 @@ async function mainMessage(msg) {
         adminMenu());
     } catch(e) {
       return sendHtml(TOKEN,uid,
-        "<b>❌ 仓库绑定失败</b>\n\n⚠️ "+escapeHtml(e?.telegramDescription||e?.message||e)+"\n\n请检查 Chat ID/@用户名是否正确，以及机器人是否已经加入仓库。");
+        "<b>❌ 仓库绑定失败</b>\n\n⚠️ "+escapeHtml(e?.telegramDescription||e?.message||e)+"\n\n请检查 Chat ID/@用户名是否正确，以及机器人是否已经加入仓库。\n\n发送 /cancel 或点下面按钮退出。",
+        {reply_markup:{inline_keyboard:[[{text:"❌ 取消绑定",callback_data:"bind_repo_cancel"}]]}});
     }
     }
   }
