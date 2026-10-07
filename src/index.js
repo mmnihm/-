@@ -4307,13 +4307,8 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
   // 正式资源记录和 Telegram 仓库消息不会被这里删除。
   let sheetSync="未配置";
   if(GOOGLE_SHEETS_CREDENTIAL && GOOGLE_SHEETS_ID) {
-    try {
-      await waitBaserowSyncQueue();
-      sheetSync=baserow.lastError ? "⚠️ 待重试" : "✅ 已同步";
-    } catch(e) {
-      sheetSync="⚠️ 待重试";
-      console.warn("⚠️ 上传完成后 Google Sheets 同步等待失败：",String(e?.message||e));
-    }
+    sheetSync="⏳ 后台同步中";
+    waitBaserowSyncQueue().catch(e=>console.warn("⚠️ 上传后的表格同步失败：",String(e?.message||e)));
   }
   recordStat(uid,"upload",1);
   recordStat(uid,"uploadedResource",stored);
