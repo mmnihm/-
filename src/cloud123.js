@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { Transform } from "node:stream";
 
 function cleanBaseUrl(value) {
   const raw = String(value || "").trim();
@@ -120,14 +121,17 @@ export function createWebDavClient(config = {}) {
       const stream = fs.createReadStream(localPath);
       let transferred = 0;
       let lastReport = 0;
-      stream.on("data", chunk => {
-        transferred += chunk.length;
-        const now = Date.now();
-        if (typeof onProgress === "function" && (now - lastReport >= 500 || transferred === stat.size)) {
-          lastReport = now;
-          try { onProgress(transferred, stat.size); } catch {}
+      const body = stream.pipe(new Transform({
+        transform(chunk, encoding, callback) {
+          transferred += chunk.length;
+          const now = Date.now();
+          if (typeof onProgress === "function" && (now - lastReport >= 500 || transferred === stat.size)) {
+            lastReport = now;
+            try { onProgress(transferred, stat.size); } catch {}
+          }
+          callback(null, chunk);
         }
-      });
+      }));
       const r = await request(target, {
         method: "PUT",
         username,
@@ -136,7 +140,7 @@ export function createWebDavClient(config = {}) {
           "content-type": "application/octet-stream",
           "content-length": String(stat.size)
         },
-        body: stream,
+        body,
         duplex: "half",
         timeoutMs: Math.max(120000, Math.min(30 * 60 * 1000, 120000 + Math.ceil(stat.size / 1024 / 1024) * 3000))
       });
