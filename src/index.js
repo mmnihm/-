@@ -3864,11 +3864,14 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
         if(controlId>0) {
           const result=await safeEdit(token,{chat_id:uid,message_id:controlId,text,parse_mode:"HTML",reply_markup:statusMarkup});
           if(result) return;
+          current.controlMessageId=0;
         }
-        if(!current.controlMessageId) {
-          const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
-          await saveUploadControlMessage(sent);
-        }
+        if(current.statusSending) return;
+        current.statusSending=true;
+        states.set(key,current);
+        const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
+        current.statusSending=false;
+        await saveUploadControlMessage(sent);
       } catch(e) {
         console.warn("⚠️ 上传进度更新失败:",String(e?.message||e));
       }
