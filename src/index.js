@@ -3707,7 +3707,9 @@ function quotaSettingsText(){return"<b>🎁 会员 / 非会员额度</b>\n━━
 
 function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
-    [{text:"开始使用",callback_data:"user:dirs"}]
+    [{text:"开始使用",callback_data:"user:dirs"}],
+    [{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}],
+    [{text:"🔎 搜索资源",callback_data:"user:search"}]
   ],remove_keyboard:true}};
 }
 function userMenu() {
