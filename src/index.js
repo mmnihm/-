@@ -3211,6 +3211,7 @@ function cloud123StatusText() {
   const c = cloud123Config();
   const uploaded = db.resources.filter(x=>x.cloud123?.uploaded).length;
   const failed = db.resources.filter(x=>x.cloud123?.error && !x.cloud123?.uploaded).length;
+  const remaining = db.resources.filter(x=>!x.cloud123?.uploaded && !x.cloud123?.skipped && Number(x.cloud123?.attempts||0) < 3).length;
   const run = cloud123RunStats();
   return [
     "☁️ <b>123云盘</b>",
@@ -3220,12 +3221,13 @@ function cloud123StatusText() {
     "⚙️ 后台：" + (run.running || cloud123Syncing ? "正在上传" : "自动检查中"),
     "",
     "📚 累计已上传：" + uploaded + " 个",
+    "⏳ 剩余待上传：" + remaining + " 个",
     "⚠️ 累计失败：" + failed + " 个",
     "📤 本次已上传：" + Number(run.success||0) + " 个",
     "❌ 本次失败：" + Number(run.fail||0) + " 个",
     "⏭️ 本次跳过：" + Number(run.skip||0) + " 个",
     "",
-    "👇 点刷新可看最新数量"
+    "失败的文件会自动再试，最多 3 次。点刷新可看最新数量。"
   ].join("\n");
 }
 
@@ -3392,7 +3394,7 @@ async function cloud123ScanAndUpload(uid) {
         parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
       }); } catch {}
     }
-    const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded);
+    const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded && !x.cloud123?.skipped && Number(x.cloud123?.attempts||0) < 3);
     if(statusMessage?.message_id) {
       try {
         await tg(TOKEN,"editMessageText",{
@@ -3478,7 +3480,7 @@ async function cloud123ScanAndUpload(uid) {
         return stat.size;
       } catch(e) {
         uploadProgress.delete(String(item.messageId));
-        item.cloud123={uploaded:false,error:String(e.message||e).slice(0,500),at:Date.now()};
+        item.cloud123={uploaded:false,error:String(e.message||e).slice(0,500),attempts:Number(item.cloud123?.attempts||0)+1,at:Date.now()};
         fail++;
         globalThis.cloud123Run={running:true,success,fail,skip,total:resources.length};
         console.error("123 UPLOAD:", item.title, e);
