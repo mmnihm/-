@@ -3859,9 +3859,6 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
         const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
         current.statusSending=false;
         await saveUploadControlMessage(sent);
-        if(sent?.message_id) {
-          tg(token,"pinChatMessage",{chat_id:uid,message_id:sent.message_id,disable_notification:true}).catch(()=>{});
-        }
         if(oldId>0 && oldId!==Number(sent?.message_id||0)) {
           tg(token,"deleteMessage",{chat_id:uid,message_id:oldId}).catch(()=>{});
         }
