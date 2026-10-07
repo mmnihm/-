@@ -3883,6 +3883,10 @@ const replyKeyboardClearedChats = new Set();
 async function ensureUserInlineMode(token, chatId) {
   const key = tokenFingerprint(token) + ":" + String(chatId);
   if (replyKeyboardClearedChats.has(key)) return;
+  if (String(chatId) === String(TOKEN.split(":")[0] || "")) {
+    replyKeyboardClearedChats.add(key);
+    return;
+  }
   try {
     await tg(token, "sendMessage", {
       chat_id: chatId,
@@ -3891,7 +3895,12 @@ async function ensureUserInlineMode(token, chatId) {
     });
     replyKeyboardClearedChats.add(key);
   } catch (e) {
-    console.warn("⚠️ 清理旧键盘失败:", String(e?.message || e));
+    const message = String(e?.message || e);
+    if (/can't send messages to the bot|bot was blocked|chat not found/i.test(message)) {
+      replyKeyboardClearedChats.add(key);
+      return;
+    }
+    console.warn("⚠️ 清理旧键盘失败:", message);
   }
 }
 
