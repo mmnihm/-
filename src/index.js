@@ -7935,19 +7935,28 @@ async function boot(){
   console.log("🛡️ 内容保护：", contentProtectionEnabled() ? "开启" : "关闭", "自动删除：", autoDeleteText());
   if (!globalThis.cloud123AutoStarted) {
     globalThis.cloud123AutoStarted = true;
+    const reportCloud123Auto = async (adminId, message) => {
+      if (!adminId || !message) return;
+      if (globalThis.cloud123AutoLastError === message) return;
+      globalThis.cloud123AutoLastError = message;
+      await sendHtml(TOKEN, adminId, "<b>❌ 123云盘自动上传未开始</b>\n━━━━━━━━━━━━━━\n\n" + escapeHtml(message)).catch(()=>{});
+    };
     const runCloud123Auto = async () => {
+      const adminId = [...ADMIN_IDS][0];
       try {
         if (cloud123Syncing) return;
-        const cfg = cloud123Config();
-        if (!cfg.url || !cfg.username || !cfg.password) return;
-        if (!repo()) return;
-        if (!db.settings?.historyAuth?.session) return;
-        const adminId = [...ADMIN_IDS][0];
         if (!adminId) return;
+        const cfg = cloud123Config();
+        if (!cfg.url || !cfg.username || !cfg.password) return reportCloud123Auto(adminId, "123云盘还没配置。请先点「配置123云盘」。");
+        if (!repo()) return reportCloud123Auto(adminId, "资源仓库还没绑定。");
+        if (!db.settings?.historyAuth?.session) return reportCloud123Auto(adminId, "扫描账号还没登录。请先点「扫描账号」完成授权。");
+        globalThis.cloud123AutoLastError = "";
         console.log("☁️ 123云盘自动上传开始");
         await cloud123ScanAndUpload(adminId);
       } catch (e) {
-        console.error("❌ 123云盘自动上传失败:", String(e?.message || e));
+        const message = String(e?.message || e);
+        console.error("❌ 123云盘自动上传失败:", message);
+        await reportCloud123Auto(adminId, message);
       }
     };
     setTimeout(() => runCloud123Auto().catch(()=>{}), 60000);
