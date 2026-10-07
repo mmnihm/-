@@ -3717,7 +3717,7 @@ function userFeatureListText(title,items,extra=""){return"<b>"+title+"</b>\n━�
 function adminMaintenanceMenu(){return{inline_keyboard:[
  [{text:"🔄 重复资源检查",callback_data:"admin:dupes"},{text:"🧹 仓库健康检查",callback_data:"admin:health"}],
  [{text:"🏷️ 标签统计",callback_data:"admin:tags"}],
- [{text:"🗃️ 备份恢复",callback_data:"admin:backupbot"}],
+ [{text:"🗃️ 备份恢复",callback_data:"admin:backup"}],
  [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
 ]};}
 function backupBotConfig(){
@@ -3815,7 +3815,7 @@ function adminRootInline(){return{inline_keyboard:[
  [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"🔐 扫描账号",callback_data:"adm:scan_auth"}],
  [{text:"⚡ 自动同步",callback_data:"adm:auto"},{text:"☁️ 123云盘",callback_data:"adm:cloud123"}],
  [{text:"📦 资源目录",callback_data:"admin:resource"},{text:"💬 客服",callback_data:"support:admin"}],
- [{text:"🛟 备份机器人",callback_data:"admin:backup"},{text:"✅ 平台状态",callback_data:"admin:root"}],
+ [{text:"🛟 备份机器人",callback_data:"admin:backupbot"},{text:"✅ 平台状态",callback_data:"admin:root"}],
  [{text:"更多",callback_data:"admin:more"}],
  [{text:"🏠 返回首页",callback_data:"admin:home"}]
 ]};}
