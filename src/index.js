@@ -3852,18 +3852,19 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
       "可以继续发送，数量会自动更新。全部发完后点「✅ 结束上传」。";
     void (async()=>{
       try {
-        const controlId=Number(current.controlMessageId||0);
-        if(controlId>0) {
-          const result=await safeEdit(token,{chat_id:uid,message_id:controlId,text,parse_mode:"HTML",reply_markup:statusMarkup});
-          if(result) return;
-          current.controlMessageId=0;
-        }
         if(current.statusSending) return;
         current.statusSending=true;
         states.set(key,current);
+        const oldId=Number(current.controlMessageId||0);
         const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
         current.statusSending=false;
         await saveUploadControlMessage(sent);
+        if(sent?.message_id) {
+          tg(token,"pinChatMessage",{chat_id:uid,message_id:sent.message_id,disable_notification:true}).catch(()=>{});
+        }
+        if(oldId>0 && oldId!==Number(sent?.message_id||0)) {
+          tg(token,"deleteMessage",{chat_id:uid,message_id:oldId}).catch(()=>{});
+        }
       } catch(e) {
         console.warn("⚠️ 上传进度更新失败:",String(e?.message||e));
       }
