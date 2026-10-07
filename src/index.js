@@ -1706,7 +1706,7 @@ async function createHistoryClient() {
   const apiHash = auth.apiHash ? decrypt(auth.apiHash) : TG_API_HASH;
   const session = auth.session ? decrypt(auth.session) : (process.env.TG_SESSION || "");
   if (!apiId || !apiHash) throw new Error("未配置 TG_API_ID / TG_API_HASH");
-  const client = new TelegramClientClass(new StringSessionClass(session), apiId, apiHash, {connectionRetries:5, autoReconnect:true});
+  const client = new TelegramClientClass(new StringSessionClass(session), apiId, apiHash, {connectionRetries:5, autoReconnect:true, downloadRetries:8, maxConcurrentDownloads:2, downloadPool:{requestDeadlineMs:60000, requestRetries:8, inflightPerDc:2, maxSessions:2, sessions:2}});
   return {client, apiId, apiHash};
 }
 
@@ -1755,7 +1755,7 @@ async function ensureHistoryClient(uid) {
         new StringSessionClass(sessionValue || ""),
         apiId,
         apiHash,
-        {connectionRetries:5, autoReconnect:true, floodSleepThreshold:60}
+        {connectionRetries:5, autoReconnect:true, floodSleepThreshold:60, downloadRetries:8, maxConcurrentDownloads:2, downloadPool:{requestDeadlineMs:60000, requestRetries:8, inflightPerDc:2, maxSessions:2, sessions:2}}
       );
     };
 
@@ -3401,7 +3401,7 @@ async function cloud123ScanAndUpload(uid) {
     }
 
     const BATCH_LIMIT = 1024 * 1024 * 1024;
-    const SMALL_CONCURRENCY = 5;
+    const SMALL_CONCURRENCY = 2;
     let batchNumber = 1;
     let batchBytes = 0;
 
