@@ -5149,11 +5149,16 @@ async function supportHandleUserMessage(token,msg) {
   await sendHtml(token,uid,"<b>📨 消息已转给客服</b>\\n━━━━━━━━━━━━━━\\n\\n✅ 已收到，你的消息已转给客服。\\n💬 客服回复后会自动发送给你。\\n\\n👇 需要结束会话时，点击下方按钮。",{reply_markup:supportUserKeyboard()});
   return true;
 }
+function supportLink() {
+  const link=String(db.settings.supportLink||"").trim();
+  return /^https?:\/\//i.test(link) ? link : "";
+}
 function supportUserKeyboard() {
-  return {inline_keyboard:[
-    [{text:"❌ 结束客服",callback_data:"support:end"}],
-    [{text:"⬅️ 返回首页",callback_data:"user:home"}]
-  ]};
+  const rows=[];
+  if(supportLink()) rows.push([{text:"🔗 打开客服链接",url:supportLink()}]);
+  rows.push([{text:"❌ 结束客服",callback_data:"support:end"}]);
+  rows.push([{text:"⬅️ 返回首页",callback_data:"user:home"}]);
+  return {inline_keyboard:rows};
 }
 function supportAdminText() {
   const rows=supportActiveSessions();
@@ -5399,6 +5404,15 @@ async function mainMessage(msg) {
 
 
 
+  if(admin && s?.step==="support_link") {
+    const value=String(t||"").trim();
+    if(value==="0") db.settings.supportLink="";
+    else if(!/^https?:\/\//i.test(value)) return sendHtml(TOKEN,uid,"⚠️ 请发送以 http:// 或 https:// 开头的链接。发送 0 可清除。");
+    else db.settings.supportLink=value;
+    saveDb();
+    states.delete(key);
+    return sendHtml(TOKEN,uid,"✅ 客服链接已保存。用户点「联系客服」就能看到。",adminMenu());
+  }
   if(admin && s?.step==="auto_start_id") {
     const startId=Number(String(t||"").trim());
     if(!Number.isInteger(startId) || startId<0) return sendHtml(TOKEN,uid,"⚠️ 请发送数字消息 ID。发送 0 表示从头复制。");
@@ -6928,7 +6942,12 @@ async function handleDirectoryCallback(token, q, child=false) {
       parse_mode:"HTML",reply_markup:userHomeInlineKeyboard().reply_markup});
   }
   if(data==="support:admin" && isAdmin(uid)) {
-    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:supportAdminText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"🔄 刷新",callback_data:"support:admin"},{text:"⬅️ 返回",callback_data:"admin:ops"}]]}});
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:supportAdminText()+"\n\n🔗 客服链接："+(supportLink()?escapeHtml(supportLink()):"未设置"),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"🔗 设置客服链接",callback_data:"support:link"}],[{text:"🔄 刷新",callback_data:"support:admin"},{text:"⬅️ 返回",callback_data:"admin:ops"}]]}});
+  }
+  if(data==="support:link" && isAdmin(uid)) {
+    states.set("m:"+uid,{step:"support_link"});
+    await answer("请发送链接");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔗 设置客服链接</b>\n\n请发送要放在客服里的网址。\n例如：https://t.me/yourname\n\n发送 0 可清除链接。",parse_mode:"HTML"});
   }
   if(data==="hub"||data.startsWith("hub:")){
     const mode=data.split(":")[1]||"home";
