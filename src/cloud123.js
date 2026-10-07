@@ -118,38 +118,44 @@ export function createWebDavClient(config = {}) {
       if (!stat.isFile()) throw new Error("待上传文件不存在");
       await this.ensureDirectory(remoteDir);
       const target = joinUrl(baseUrl, remoteDir) + encodePathPart(fileName);
-      const stream = fs.createReadStream(localPath);
-      let transferred = 0;
-      let lastReport = 0;
-      const body = stream.pipe(new Transform({
-        transform(chunk, encoding, callback) {
-          transferred += chunk.length;
-          const now = Date.now();
-          if (typeof onProgress === "function" && (now - lastReport >= 500 || transferred === stat.size)) {
-            lastReport = now;
-            try { onProgress(transferred, stat.size); } catch {}
+      let lastError = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const body = await fs.promises.readFile(localPath);
+          if (body.length !== stat.size) throw new Error("本地文件大小发生变化");
+          if (typeof onProgress === "function") {
+            try { onProgress(0, body.length); } catch {}
           }
-          callback(null, chunk);
+          const r = await request(target, {
+            method: "PUT",
+            username,
+            password,
+            headers: {
+              "content-type": "application/octet-stream",
+              "content-length": String(body.length)
+            },
+            body,
+            timeoutMs: Math.max(180000, Math.min(30 * 60 * 1000, 180000 + Math.ceil(body.length / 1024 / 1024) * 4000))
+          });
+          if (![200,201,204].includes(r.status)) {
+            let detail = "";
+            try { detail = (await r.text()).slice(0,300); } catch {}
+            throw new Error("123云盘上传失败 HTTP " + r.status + (detail ? "：" + detail : ""));
+          }
+          if (typeof onProgress === "function") {
+            try { onProgress(body.length, body.length); } catch {}
+          }
+          return {size: body.length};
+        } catch (e) {
+          lastError = e;
+          const message = String(e?.message || e);
+          const retryable = /content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network/i.test(message);
+          console.warn("⚠️ 123云盘上传重试:", fileName, attempt + "/3", message);
+          if (!retryable || attempt === 3) break;
+          await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
         }
-      }));
-      const r = await request(target, {
-        method: "PUT",
-        username,
-        password,
-        headers: {
-          "content-type": "application/octet-stream",
-          "content-length": String(stat.size)
-        },
-        body,
-        duplex: "half",
-        timeoutMs: Math.max(120000, Math.min(30 * 60 * 1000, 120000 + Math.ceil(stat.size / 1024 / 1024) * 3000))
-      });
-      if (![200,201,204].includes(r.status)) {
-        let detail = "";
-        try { detail = (await r.text()).slice(0,300); } catch {}
-        throw new Error("123云盘上传失败 HTTP " + r.status + (detail ? "：" + detail : ""));
       }
-      return {size:stat.size};
+      throw lastError || new Error("123云盘上传失败");
     }
   };
 }
