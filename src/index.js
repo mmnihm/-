@@ -1568,6 +1568,8 @@ function loadDb() {
   return emptyDb();
 }
 let lastSavedJson = "";
+let pendingDbWrite = "";
+let localDbWriteTimer = null;
 function csvCell(value) {
   const s=String(value ?? "");
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
@@ -1599,24 +1601,60 @@ function writeLocalTables() {
   }
 }
 
-function saveDb() {
+function saveDb(options = {}) {
   try {
     fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
     const json = JSON.stringify(db, null, 2);
-    if (json === lastSavedJson) return;
+    if (json === lastSavedJson && !pendingDbWrite) return;
+    pendingDbWrite = json;
+
+    // 高频事件只更新内存/MySQL队列；本地 JSON/CSV/备份合并到一个短批次写入。
+    // 这样频道连续入库时不会每条消息都重写数千条资源。
+    if (options.immediate === true) {
+      flushLocalDb();
+      return;
+    }
+
+    if (!localDbWriteTimer) {
+      localDbWriteTimer = setTimeout(() => {
+        localDbWriteTimer = null;
+        try { flushLocalDb(); } catch (e) { console.error("❌ 延迟保存失败:", e?.message || e); }
+      }, 300);
+      localDbWriteTimer.unref?.();
+    }
+
+    // MySQL 层自身已经做快照合并，这里可以立即接收最新内存状态。
+    persistMySQL(db);
+  } catch (e) {
+    console.error("❌ SAVE:", e.message);
+    console.error("❌ 当前数据文件:", DATA_FILE);
+    console.error("❌ 备份文件:", BACKUP_FILE);
+  }
+}
+
+function flushLocalDb() {
+  if (!pendingDbWrite) return;
+  const json = pendingDbWrite;
+  if (localDbWriteTimer) {
+    clearTimeout(localDbWriteTimer);
+    localDbWriteTimer = null;
+  }
+  try {
+    fs.mkdirSync(path.dirname(DATA_FILE), {recursive:true});
     const tmp = DATA_FILE + ".tmp";
     fs.writeFileSync(tmp, json);
     fs.renameSync(tmp, DATA_FILE);
 
-    // 每次成功保存后同步生成一份可恢复备份。
     if (BACKUP_FILE !== DATA_FILE) {
       fs.mkdirSync(path.dirname(BACKUP_FILE), {recursive:true});
       const backupTmp = BACKUP_FILE + ".tmp";
       fs.writeFileSync(backupTmp, json);
       fs.renameSync(backupTmp, BACKUP_FILE);
     }
+
     writeLocalTables();
-    try{
+
+    try {
       const hourKey=new Date().toISOString().slice(0,13).replace(/[:T]/g,"-");
       fs.mkdirSync(BACKUP_SNAPSHOT_DIR,{recursive:true});
       const snapshotFile=path.join(BACKUP_SNAPSHOT_DIR,"database-"+hourKey+".json");
@@ -1628,14 +1666,16 @@ function saveDb() {
         const old=snapshots.shift();
         try{fs.rmSync(path.join(BACKUP_SNAPSHOT_DIR,old),{force:true});}catch{}
       }
-    }catch(e){ console.warn("⚠️ 数据快照备份失败:",String(e?.message||e)); }
+    } catch(e) {
+      console.warn("⚠️ 数据快照备份失败:",String(e?.message||e));
+    }
+
     lastSavedJson = json;
-    // MySQL 是正式数据层；JSON 仅保留为本地兼容/应急快照。
+    pendingDbWrite = "";
     persistMySQL(db);
   } catch (e) {
-    console.error("❌ SAVE:", e.message);
-    console.error("❌ 当前数据文件:", DATA_FILE);
-    console.error("❌ 备份文件:", BACKUP_FILE);
+    console.error("❌ LOCAL SAVE:", e.message);
+    // 保留 pendingDbWrite，下一个周期继续尝试，不丢掉最新内存状态。
   }
 }
 const db = loadDb();
@@ -1646,7 +1686,7 @@ async function gracefulShutdown(signal){
   if(gracefulStopping) return;
   gracefulStopping=true;
   console.log("🛑 收到 "+signal+"，正在保存本地数据并等待 MySQL 写入完成...");
-  try{ saveDb(); }catch(e){ console.error("❌ 退出前保存失败:",String(e?.message||e)); }
+  try{ saveDb({immediate:true}); }catch(e){ console.error("❌ 退出前保存失败:",String(e?.message||e)); }
   try{ await flushMySQL(); }catch(e){ console.error("❌ 退出前 MySQL flush 失败:",String(e?.message||e)); }
   try{ server.close(); }catch{}
   process.exit(0);
@@ -1719,7 +1759,7 @@ async function createHistoryClient() {
   const apiHash = auth.apiHash ? decrypt(auth.apiHash) : TG_API_HASH;
   const session = auth.session ? decrypt(auth.session) : (process.env.TG_SESSION || "");
   if (!apiId || !apiHash) throw new Error("未配置 TG_API_ID / TG_API_HASH");
-  const client = new TelegramClientClass(new StringSessionClass(session), apiId, apiHash, {connectionRetries:5, autoReconnect:true, downloadRetries:8, maxConcurrentDownloads:2, downloadPool:{requestDeadlineMs:60000, requestRetries:8, inflightPerDc:2, maxSessions:2, sessions:2}});
+  const client = new TelegramClientClass(new StringSessionClass(session), apiId, apiHash, {connectionRetries:5, autoReconnect:true, downloadRetries:8, maxConcurrentDownloads:2, downloadPool:{requestDeadlineMs:120000, requestRetries:8, inflightPerDc:2, maxSessions:2, sessions:2}});
   return {client, apiId, apiHash};
 }
 
@@ -1768,7 +1808,7 @@ async function ensureHistoryClient(uid) {
         new StringSessionClass(sessionValue || ""),
         apiId,
         apiHash,
-        {connectionRetries:5, autoReconnect:true, floodSleepThreshold:60, downloadRetries:8, maxConcurrentDownloads:2, downloadPool:{requestDeadlineMs:60000, requestRetries:8, inflightPerDc:2, maxSessions:2, sessions:2}}
+        {connectionRetries:5, autoReconnect:true, floodSleepThreshold:60, downloadRetries:8, maxConcurrentDownloads:2, downloadPool:{requestDeadlineMs:120000, requestRetries:8, inflightPerDc:2, maxSessions:2, sessions:2}}
       );
     };
 
