@@ -4326,15 +4326,18 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
   }
   states.delete(stateKey);
 
-  return sendHtml(token,uid,
-    "<b>📦 后台批量转存完成</b>\\n\\n"+
-    "📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\\n"+
-    "📥 收到资源：<b>"+items.length+"</b> 个\\n"+
-    "💾 已存入资源库：<b>"+stored+"</b> 个\\n"+
-    (failed?"⚠️ 转存失败：<b>"+failed+"</b> 个\\n":"✅ 全部转存成功\\n")+
-    "\\n📚 资源已整理完成。",
-    menu
-  );
+  const doneText="<b>📦 本批上传完成</b>\n━━━━━━━━━━━━━━\n\n"+
+    "📁 文件夹：<b>"+escapeHtml(d.name)+"</b>\n"+
+    "📥 收到：<b>"+items.length+"</b> 个\n"+
+    "✅ 成功入库：<b>"+stored+"</b> 个\n"+
+    "❌ 失败：<b>"+failed+"</b> 个\n"+
+    "📊 表格："+sheetSync;
+  const controlId=Number(state.controlMessageId||0);
+  if(controlId>0) {
+    const edited=await safeEdit(token,{chat_id:uid,message_id:controlId,text:doneText,parse_mode:"HTML",reply_markup:{inline_keyboard:[]}});
+    if(edited) return edited;
+  }
+  return sendHtml(token,uid,doneText,menu);
 }
 async function finalizeUpload(uid, state, token=TOKEN, stateKey=uploadStateKey(uid,false,TOKEN), menu=adminMenu()) {
   const lockKey=tokenFingerprint(token)+":"+String(uid);
