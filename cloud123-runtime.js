@@ -418,7 +418,26 @@ async function cloud123ScanAndUpload(uid) {
       fs.mkdirSync(tempDir,{recursive:true});
       const tempPath=path.join(tempDir,String(item.messageId)+"-"+crypto.randomUUID()+"-"+originalName);
       try {
-        await clientHistory.downloadMedia(message,{outputFile:tempPath});
+        let downloadError=null;
+        let downloaded=false;
+        for(let attempt=1;attempt<=4;attempt++){
+          try{
+            try { await fs.promises.rm(tempPath,{force:true}); } catch {}
+            await clientHistory.downloadMedia(message,{outputFile:tempPath});
+            downloaded=true;
+            break;
+          }catch(e){
+            downloadError=e;
+            const msg=String(e?.message||e);
+            console.warn("⚠️ 123 Telegram 媒体下载失败:",String(item?.messageId||""),"attempt="+attempt+"/4",msg);
+            if(attempt<4 && /TIMEOUT|deadline|RequestTimeout|ETIMEDOUT|ECONNRESET|network/i.test(msg)){
+              await new Promise(resolve=>setTimeout(resolve,Math.min(8000,1500*attempt)));
+              continue;
+            }
+            break;
+          }
+        }
+        if(!downloaded) throw downloadError || new Error("Telegram 媒体下载失败");
         const stat=await fs.promises.stat(tempPath);
         currentFileName=originalName;
         uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
