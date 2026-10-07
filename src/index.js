@@ -4148,16 +4148,26 @@ function autoCreateTagFoldersForExistingResources() {
     db.directories=(db.directories||[]).filter(d=>!badIds.has(String(d.id)));
     for(const item of db.resources||[]) if(badIds.has(String(item.directoryId||""))) { item.directoryId=null; item.autoTagFolder=""; removed++; }
   }
-  for(const item of (db.resources||[])) {
-    const before=String(item.directoryId||"");
-    const tags=extractResourceTags(item);
-    const tag=chineseFolderTag(tags);
+  const groups=new Map();
+  for(const item of db.resources||[]) {
+    const key=String(item.mediaGroupId||("single:"+item.chatId+":"+item.messageId));
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  for(const items of groups.values()) {
+    const tag=items.map(item=>chineseFolderTag(extractResourceTags(item))).find(Boolean);
     if(!tag) continue;
     const existed=Boolean(getDirectoryByName(tag));
-    const folder=autoAssignResourceTagFolder(item);
-    if(folder) {
-      if(!existed) created++;
-      if(before!==String(folder.id)) assigned++;
+    const folder=ensureDirectory(tag);
+    if(!folder) continue;
+    if(!existed) created++;
+    for(const item of items) {
+      const before=String(item.directoryId||"");
+      if(before===String(folder.id)) continue;
+      item.directoryId=String(folder.id);
+      item.autoTagFolder=tag;
+      item.tags=extractResourceTags(item);
+      assigned++;
       queueBaserowResourceSync(item);
     }
   }
