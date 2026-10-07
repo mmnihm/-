@@ -3732,11 +3732,33 @@ async function backupBotApi(method, body){
 async function backupResourceFile(item){
   const cfg=backupBotConfig();
   if(!cfg.token || !cfg.chatId || !item?.fileId || item.backupFileId) return;
-  const sent=await backupBotApi("send"+String(item.fileType||"Document"), {chat_id:cfg.chatId, [String(item.fileType||"Document").toLowerCase()]:item.fileId, caption:String(item.caption||item.title||"").slice(0,200)});
-  const file=sent?.document||sent?.video||sent?.photo?.[0]||sent?.audio;
-  item.backupFileId=file?.file_id||item.fileId;
+  const info=await tg(TOKEN,"getFile",{file_id:item.fileId});
+  if(!info?.file_path) throw new Error("主机器人取不到原文件");
+  const url="https://api.telegram.org/file/bot"+TOKEN+"/"+info.file_path;
+  const type=String(item.fileType||"Document");
+  const sent=await backupBotApi("send"+type, {chat_id:cfg.chatId, [type.toLowerCase()]:url, caption:String(item.caption||item.title||"").slice(0,200)});
+  const file=sent?.document||sent?.video||sent?.audio||sent?.animation||sent?.photo?.at?.(-1)||sent?.photo?.[sent.photo.length-1];
+  item.backupFileId=file?.file_id||"";
   item.backupMessageId=sent?.message_id||0;
+  if(!item.backupFileId) throw new Error("备份机器人没有返回编号");
   saveDb();
+}
+async function backfillBackupBot(uid){
+  if(globalThis.backupBackfillRunning) return;
+  globalThis.backupBackfillRunning=true;
+  let ok=0, fail=0, skip=0;
+  try{
+    for(const item of db.resources||[]){
+      if(item.backupFileId){ skip++; continue; }
+      if(!item.fileId){ skip++; continue; }
+      try{ await backupResourceFile(item); ok++; }
+      catch(e){ fail++; console.warn("⚠️ 补备份失败:",String(e?.message||e)); }
+      if((ok+fail)%10===0) saveDb();
+      await sleep(400);
+    }
+    saveDb();
+    await sendHtml(TOKEN,uid,"<b>✅ 现有文件补备份完成</b>\n\n成功：<b>"+ok+"</b>\n失败：<b>"+fail+"</b>\n跳过：<b>"+skip+"</b>",adminMenu());
+  } finally { globalThis.backupBackfillRunning=false; }
 }
 
 async function restoreFromBackupBot(uid){
@@ -7090,7 +7112,13 @@ async function handleDirectoryCallback(token, q, child=false) {
     const key=uploadStateKey(uid,child,token);
     if(data==="admin:backupbot"){
       const cfg=backupBotConfig();
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 备份机器人</b>\n━━━━━━━━━━━━━━\n\n状态："+(cfg.token?"✅ 已配置":"❌ 未配置")+"\n\n主机器人入库后，会把文件再发给备份机器人保存编号。主机器人被封后，可从备份复制回来。\n\n请先给备份机器人发 /start。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"➕ 设置备份 Token",callback_data:"admin:backupbot_set"}],[{text:"📥 从备份复制回来",callback_data:"admin:backup_copy"}],[{text:"⬅️ 返回管理",callback_data:"admin:root"}]]}});
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 备份机器人</b>\n━━━━━━━━━━━━━━\n\n状态："+(cfg.token?"✅ 已配置":"❌ 未配置")+"\n\n主机器人入库后，会把文件再发给备份机器人保存编号。主机器人被封后，可从备份复制回来。\n\n请先给备份机器人发 /start。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"➕ 设置备份 Token",callback_data:"admin:backupbot_set"}],[{text:"📤 补备份现有文件",callback_data:"admin:backup_fill"}],[{text:"📥 从备份复制回来",callback_data:"admin:backup_copy"}],[{text:"⬅️ 返回管理",callback_data:"admin:root"}]]}});
+    }
+    if(data==="admin:backup_fill"){
+      if(!backupBotConfig().token) return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"❌ 请先设置备份机器人 Token。",reply_markup:adminRootInline()});
+      await answer("开始补备份");
+      backfillBackupBot(uid).catch(e=>sendHtml(TOKEN,uid,"❌ 补备份失败：\n"+escapeHtml(String(e?.message||e)),adminMenu()));
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📤 正在补备份现有文件</b>\n\n后台进行，不会逐条发消息。完成后只回一次结果。",parse_mode:"HTML",reply_markup:adminRootInline()});
     }
     if(data==="admin:backup_copy"){
       await answer("开始从备份复制");
