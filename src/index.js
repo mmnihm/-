@@ -7065,7 +7065,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const next=first.length;
     return sendHtml(token,chatId,
       "📁 <b>"+safe+"</b>\n━━━━━━━━━━━━━━\n📦 已发送：<b>"+sent+"</b> / "+first.length+"\n📚 文件夹共：<b>"+all.length+"</b> 个\n\n👇 可继续获取下一组",
-      folderProgressKeyboard(d.id,all.length,next)
+      {reply_markup:folderProgressKeyboard(d.id,all.length,next)}
     );
   }
 
