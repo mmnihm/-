@@ -3787,23 +3787,7 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
 
   const pending=Array.isArray(state.pendingUploads)?state.pendingUploads:[];
   pending.push({messageId:Number(msg.message_id),msg});
-  if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
-  uploadTimers.set(key,setTimeout(()=>{
-    uploadTimers.delete(key);
-    const current=states.get(key);
-    if(current?.step==="upload_file") {
-      sendHtml(token,uid,
-        "<b>⏸️ 暂时没有收到新文件</b>\n\n"+
-        "📁 文件夹："+escapeHtml(current.directoryName)+"\n"+
-        "📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个\n\n"+
-        "还要继续上传吗？",
-        {reply_markup:{inline_keyboard:[[
-          {text:"▶️ 继续上传",callback_data:"upload_continue"},
-          {text:"✅ 结束上传",callback_data:"upload_finish"}
-        ]]}}
-      ).catch(()=>{});
-    }
-  },UPLOAD_TIMEOUT_MS));
+  if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
 
   const nextUploadState={
     step:"upload_file",
@@ -6185,7 +6169,7 @@ async function mainMessage(msg) {
         states.delete(key);
         send(TOKEN,uid,"⏸️ <b>暂时没有收到新的广播内容</b>\\n\\n📢 广播模式已等待 3 分钟。\\n\\n还要继续广播吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续广播","✅ 结束广播"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
       }
-    },UPLOAD_TIMEOUT_MS));
+    },24*60*60*1000));
     return send(TOKEN,uid,"📢 <b>广播消息</b>\\n\\n现在请直接发送要广播的文字、图片、视频、音频、文件或其他消息。\\n⏱️ 连续 3 分钟没有收到新的广播内容，将自动结束本次广播。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
 
@@ -6200,7 +6184,7 @@ async function mainMessage(msg) {
         states.delete(key);
         send(TOKEN,uid,"⏸️ <b>暂时没有收到新的广播内容</b>\\n\\n📢 广播模式已等待 3 分钟。\\n\\n还要继续广播吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续广播","✅ 结束广播"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
       }
-    },UPLOAD_TIMEOUT_MS));
+    },24*60*60*1000));
     return send(TOKEN,uid,"📢 <b>广播消息</b>\\n\\n现在请继续发送要广播的文字、图片、视频、音频、文件或其他消息。\\n⏱️ 连续 3 分钟没有收到新的广播内容，将自动结束本次广播。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML"});
   }
 
@@ -6293,7 +6277,7 @@ async function mainMessage(msg) {
       if(current?.step==="upload_file") {
         send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\n\n📁 文件夹："+escapeHtml(current.directoryName)+"\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\n\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
       }
-    },UPLOAD_TIMEOUT_MS));
+    },24*60*60*1000));
 
     const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
     states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending,controlMessageId:Number(s?.controlMessageId||0)});
@@ -6318,7 +6302,7 @@ async function mainMessage(msg) {
         if(current?.step==="upload_file") {
           send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
         }
-      },UPLOAD_TIMEOUT_MS));
+      },24*60*60*1000));
       return;
     }
     if(t==="✅ 结束上传") {
@@ -6357,7 +6341,7 @@ async function mainMessage(msg) {
         if(current?.step==="upload_file") {
           send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
         }
-      },UPLOAD_TIMEOUT_MS));
+      },24*60*60*1000));
       states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
       console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
       // 每收到一个文件立即确认，但不立即转存；所有文件继续留在当前批次，点击结束后统一批量处理。
@@ -6417,7 +6401,7 @@ async function mainMessage(msg) {
         states.delete(key);
         send(TOKEN,uid,"⏸️ <b>暂时没有收到新的广播内容</b>\\n\\n📢 广播模式已等待 3 分钟。\\n\\n还要继续广播吗？",{parse_mode:"HTML",reply_markup:{keyboard:[["▶️ 继续广播","✅ 结束广播"],["🏠 开始"]],resize_keyboard:true}}).catch(()=>{});
       }
-    },UPLOAD_TIMEOUT_MS));
+    },24*60*60*1000));
     states.set(key,{step:"broadcast"});
     console.log("📢 BROADCAST SENT:", "message=",msg.message_id, "success=",ok, "fail=",fail, "users=",db.users.length);
     return send(TOKEN,uid,"📢 <b>广播发送完成</b>\\n\\n✅ 成功发送：<b>"+ok+"</b> 人\\n❌ 发送失败：<b>"+fail+"</b> 人\\n👥 用户总数：<b>"+db.users.length+"</b> 人\\n\\n你可以继续发送下一条广播。\\n⏱️ 连续 3 分钟没有新内容将自动结束。",{parse_mode:"HTML"});
@@ -6523,7 +6507,7 @@ async function childMessage(child,msg,token) {
         uploadTimers.delete(key);
         const current=states.get(key);
         if(current?.step==="upload_file") send(token,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-      },UPLOAD_TIMEOUT_MS));
+      },24*60*60*1000));
       return;
     }
     if(t==="✅ 结束上传") {
@@ -6541,7 +6525,7 @@ async function childMessage(child,msg,token) {
       uploadTimers.delete(key);
       const current=states.get(key);
       if(current?.step==="upload_file") send(token,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-    },UPLOAD_TIMEOUT_MS));
+    },24*60*60*1000));
     states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
     console.log("📥 CHILD RESOURCE RECEIVED:", "bot="+tokenFingerprint(token), "folder="+s.directoryName, "message="+msg.message_id, "pending="+pending.length);
     return;
@@ -7460,7 +7444,7 @@ async function handleDirectoryCallback(token, q, child=false) {
             ]]}}
           ).catch(()=>{});
         }
-      },UPLOAD_TIMEOUT_MS));
+      },24*60*60*1000));
       void sendHtml(token,uid,"📤 <b>上传控制</b>\n\n可继续发送文件；底部固定按钮可直接结束上传。",uploadBottomKeyboard()).catch(()=>{});
       void answer("可以继续上传");
       return safeEdit(token,{
