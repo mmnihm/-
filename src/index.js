@@ -3717,11 +3717,7 @@ function adminBotInline(){return{inline_keyboard:[
 function quotaSettingsText(){return"<b>🎁 会员 / 非会员额度</b>\n━━━━━━━━━━━━━━\n\n👤 非会员每日免费：<b>"+nonMemberDailyLimit()+"</b> 个资源\n💎 会员：不限量\n\n👇 修改额度";}
 
 function userHomeInlineKeyboard() {
-  return {reply_markup:{inline_keyboard:[
-    [{text:"开始使用",callback_data:"user:dirs"}],
-    [{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}],
-    [{text:"🔎 搜索资源",callback_data:"user:search"}]
-  ],remove_keyboard:true}};
+  return {reply_markup:directoryInlineKeyboard()};
 }
 function userMenu() {
   return userHomeInlineKeyboard();
@@ -4357,7 +4353,8 @@ function directoryInlineKeyboard(page=0) {
   if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"dirsp:"+(page-1)});
   if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"dirsp:"+(page+1)});
   if(nav.length) rows.push(nav);
-  rows.push([{text:"⭐ 我的资源",callback_data:"hub"},{text:"🔥 热门",callback_data:"hub:hot"}]);
+  rows.push([{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}]);
+  rows.push([{text:"🔎 搜索资源",callback_data:"user:search"},{text:"⭐ 我的资源",callback_data:"hub"}]);
   return {inline_keyboard:rows};
 }
 function folderSummaryKeyboard(directoryId,count,offset=0) {
@@ -5522,10 +5519,11 @@ async function mainMessage(msg) {
 👇 <i>点击下方菜单开始使用</i>`,admin?adminMenu():userMenu());
       return;
     }
+    if(!admin) return sendHtml(TOKEN,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
     return sendHtml(TOKEN,uid,`<b>🏠 资源平台</b>
 ━━━━━━━━━━━━━━
 
-👇 <i>请选择你要使用的功能</i>`,admin?adminMenu():userMenu());
+👇 <i>请选择你要使用的功能</i>`,adminMenu());
   }
   if(t==="/admin") {
   if(t.startsWith("/start share_")) {
