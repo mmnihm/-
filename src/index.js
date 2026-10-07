@@ -4033,9 +4033,9 @@ function platformMenu() {
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
 function extractResourceTags(item) {
-  const text=String(item?.caption||"")+" "+String(item?.title||"")+" "+(Array.isArray(item?.tags)?item.tags.join(" "):"");
+  const text=String(item?.caption||"")+" "+String(item?.title||"")+" "+(Array.isArray(item?.tags)?item.tags.map(x=>"#"+String(x).replace(/^#/,"")).join(" "):"");
   const tags=[];
-  const re=/[#＃]?([\u4e00-\u9fff]{2,20})/g;
+  const re=/[#＃]([\u4e00-\u9fff]{2,20})/g;
   let m;
   while((m=re.exec(text))) {
     const tag=String(m[1]||"").trim();
@@ -4137,7 +4137,17 @@ async function deleteAllFoldersKeepResources() {
 }
 
 function autoCreateTagFoldersForExistingResources() {
-  let created=0, assigned=0;
+  let created=0, assigned=0, removed=0;
+  const badIds=new Set();
+  for(const d of db.directories||[]) {
+    const name=String(d.name||"");
+    const items=(db.resources||[]).filter(x=>String(x.directoryId)===String(d.id));
+    if(items.length===1 && String(items[0].title||"")===name && !extractResourceTags(items[0]).includes(name)) badIds.add(String(d.id));
+  }
+  if(badIds.size) {
+    db.directories=(db.directories||[]).filter(d=>!badIds.has(String(d.id)));
+    for(const item of db.resources||[]) if(badIds.has(String(item.directoryId||""))) { item.directoryId=null; item.autoTagFolder=""; removed++; }
+  }
   for(const item of (db.resources||[])) {
     const before=String(item.directoryId||"");
     const tags=extractResourceTags(item);
@@ -4153,7 +4163,7 @@ function autoCreateTagFoldersForExistingResources() {
   }
   saveDb();
   touchSharedData("system");
-  return {created,assigned};
+  return {created,assigned,removed};
 }
 function repairLocalFolders() {
   normalizeSharedDirectories();
