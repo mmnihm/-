@@ -3731,27 +3731,26 @@ async function backupBotApi(method, body){
 }
 async function backupResourceFile(item){
   const cfg=backupBotConfig();
-  if(!cfg.token || !cfg.chatId || item?.backupFileId) return;
-  let fileId=item.fileId||"";
-  let type=item.fileType||"Document";
-  if(!fileId && item.chatId && item.messageId){
-    const forwarded=await tg(TOKEN,"forwardMessage",{chat_id:cfg.chatId, from_chat_id:item.chatId, message_id:item.messageId});
-    const media=forwarded?.document||forwarded?.video||forwarded?.audio||forwarded?.animation||forwarded?.voice||forwarded?.photo?.at?.(-1);
-    fileId=media?.file_id||"";
-    type=forwarded?.document?"Document":forwarded?.video?"Video":forwarded?.audio?"Audio":forwarded?.animation?"Animation":forwarded?.photo?"Photo":"Document";
-    if(forwarded?.message_id) tg(TOKEN,"deleteMessage",{chat_id:cfg.chatId, message_id:forwarded.message_id}).catch(()=>{});
-  }
-  if(!fileId) throw new Error("仓库消息里没有可备份的文件");
-  const info=await tg(TOKEN,"getFile",{file_id:fileId});
-  if(!info?.file_path) throw new Error("主机器人取不到原文件");
+  if(!cfg.token||!cfg.chatId||!item?.chatId||!item?.messageId)return;
+  if(item.backupMessageId&&item.backupChatId)return;
+  try{
+    const sent=await backupBotApi("copyMessage",{chat_id:cfg.chatId,from_chat_id:item.chatId,message_id:Number(item.messageId)});
+    if(!sent?.message_id)throw new Error("备份机器人没有返回消息编号");
+    item.backupMessageId=Number(sent.message_id);item.backupChatId=String(cfg.chatId);item.backupFileId="";
+    saveDb();return;
+  }catch(e){console.warn("⚠️ 备份机器人直接复制失败，使用兼容文件备份:",String(e?.message||e));}
+  if(!item.fileId)throw new Error("资源没有 file_id，无法兼容备份");
+  const type=item.fileType||"Document";
+  const info=await tg(TOKEN,"getFile",{file_id:item.fileId});
+  if(!info?.file_path)throw new Error("主机器人取不到原文件");
   const url="https://api.telegram.org/file/bot"+TOKEN+"/"+info.file_path;
-  const sent=await backupBotApi("send"+type, {chat_id:cfg.chatId, [type.toLowerCase()]:url, caption:String(item.caption||item.title||"").slice(0,200)});
-  const file=sent?.document||sent?.video||sent?.audio||sent?.animation||sent?.photo?.at?.(-1)||sent?.photo?.[sent.photo.length-1];
-  item.backupFileId=file?.file_id||"";
-  item.backupMessageId=sent?.message_id||0;
-  if(!item.backupFileId) throw new Error("备份机器人没有返回编号");
+  const sent=await backupBotApi("send"+type,{chat_id:cfg.chatId,[type.toLowerCase()]:url,caption:String(item.caption||item.title||"").slice(0,200)});
+  const file=sent?.document||sent?.video||sent?.audio||sent?.animation||sent?.photo?.at?.(-1);
+  item.backupFileId=file?.file_id||"";item.backupMessageId=sent?.message_id||0;item.backupChatId=String(cfg.chatId);
+  if(!item.backupFileId)throw new Error("备份机器人没有返回文件编号");
   saveDb();
 }
+
 async function backfillBackupBot(uid){
   if(globalThis.backupBackfillRunning) return;
   globalThis.backupBackfillRunning=true;
@@ -3771,31 +3770,37 @@ async function backfillBackupBot(uid){
 }
 
 async function restoreFromBackupBot(uid){
-  const cfg=backupBotConfig();
-  const r=repo();
-  if(!cfg.token) throw new Error("未配置备份机器人");
-  if(!r) throw new Error("未绑定资源仓库");
-  let ok=0, fail=0;
+  const cfg=backupBotConfig(),r=repo();
+  if(!cfg.token)throw new Error("未配置备份机器人");
+  if(!r)throw new Error("未绑定资源仓库");
+  let ok=0,fail=0,skip=0;
   for(const item of db.resources||[]){
-    if(!item.backupFileId) continue;
-    try{
-      const info=await backupBotApi("getFile",{file_id:item.backupFileId});
-      const filePath=info?.file_path;
-      if(!filePath) throw new Error("备份文件不存在");
-      const url="https://api.telegram.org/file/bot"+cfg.token+"/"+filePath;
-      const sent=await tg(TOKEN,"sendDocument",{chat_id:r.chatId, document:url, caption:String(item.caption||item.title||"").slice(0,200)});
-      if(sent?.message_id){
-        item.chatId=String(r.chatId);
-        item.messageId=sent.message_id;
-        item.fileId=sent.document?.file_id||item.fileId;
-        ok++;
-        if(ok%20===0) saveDb();
-      }
-    }catch(e){ fail++; console.warn("⚠️ 备份复制失败:",String(e?.message||e)); }
+    if(item.backupMessageId&&item.backupChatId){
+      try{
+        const sent=await backupBotApi("copyMessage",{chat_id:r.chatId,from_chat_id:item.backupChatId,message_id:Number(item.backupMessageId)});
+        if(!sent?.message_id)throw new Error("没有返回恢复消息编号");
+        item.chatId=String(r.chatId);item.messageId=Number(sent.message_id);ok++;
+        if(ok%20===0)saveDb();await sleep(120);continue;
+      }catch(e){fail++;console.warn("⚠️ 备份消息恢复失败:",String(e?.message||e));}
+    }
+    if(item.backupFileId){
+      try{
+        const info=await backupBotApi("getFile",{file_id:item.backupFileId});
+        if(!info?.file_path)throw new Error("备份文件不存在");
+        const url="https://api.telegram.org/file/bot"+cfg.token+"/"+info.file_path;
+        const sent=await tg(TOKEN,"sendDocument",{chat_id:r.chatId,document:url,caption:String(item.caption||item.title||"").slice(0,200)});
+        if(!sent?.message_id)throw new Error("恢复没有返回消息编号");
+        item.chatId=String(r.chatId);item.messageId=Number(sent.message_id);item.fileId=sent.document?.file_id||item.fileId;ok++;
+        if(ok%20===0)saveDb();
+      }catch(e){fail++;console.warn("⚠️ 旧格式备份恢复失败:",String(e?.message||e));}
+      await sleep(120);continue;
+    }
+    skip++;
   }
   saveDb();
-  await sendHtml(TOKEN,uid,"<b>✅ 备份复制完成</b>\n\n成功：<b>"+ok+"</b>\n失败：<b>"+fail+"</b>",adminMenu());
+  await sendHtml(TOKEN,uid,"<b>✅ 备份恢复完成</b>\n\n成功：<b>"+ok+"</b>\n失败：<b>"+fail+"</b>\n跳过：<b>"+skip+"</b>",adminMenu());
 }
+
 function adminStatusText(){
   const auth=db.settings.historyAuth||{};
   const cloud=cloud123Config();
@@ -4748,42 +4753,34 @@ function contentProtectionText() {
 }
 async function sendResourceAlbum(token, chatId, items) {
   const valid=(Array.isArray(items)?items:[]).filter(x=>x&&x.chatId&&Number(x.messageId)>0);
-  if(!valid.length) return 0;
+  if(!valid.length) return {sent:0,lastMessageId:0};
   const groups=new Map();
-  for(const item of valid) {
-    const key=String(item.chatId);
-    if(!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(item);
-  }
-  let sent=0;
-  let lastMessageId=0;
-  for(const [fromChat, group] of groups) {
-    const ids=group.map(x=>Number(x.messageId)).slice(0,10);
-    try {
-      const copied=await tg(token, "copyMessages", {
-        chat_id:chatId,
-        from_chat_id:fromChat,
-        message_ids:ids,
-        ...(contentProtectionEnabled()?{protect_content:true}:{})
-      });
-      const ids=Array.isArray(copied)?copied.filter(x=>x&&x.message_id):[];
-      sent += ids.length;
-      if(ids.length) lastMessageId=ids[ids.length-1].message_id;
-      if(!ids.length) throw new Error("相册复制没有返回结果");
-    } catch(e) {
-      console.warn("⚠️ 相册发送失败，改为逐条发送:", String(e?.message||e));
-      for(const item of group.slice(0,10)) {
-        try {
-          const one=await sendIndexedResource(token, chatId, item);
-          sent++;
-          if(one?.message_id) lastMessageId=one.message_id;
-        } catch(err) {
-          console.error("ALBUM ITEM:", String(err?.message||err));
+  for(const item of valid){const key=String(item.chatId);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(item);}
+  let sent=0,lastMessageId=0;
+  for(const [fromChat,group] of groups){
+    const batch=group.slice(0,10),ids=batch.map(x=>Number(x.messageId));
+    try{
+      const copied=await tg(token,"copyMessages",{chat_id:chatId,from_chat_id:fromChat,message_ids:ids,...(contentProtectionEnabled()?{protect_content:true}:{})});
+      const copiedIds=Array.isArray(copied)?copied.filter(x=>x&&x.message_id):[];
+      if(copiedIds.length!==ids.length)throw new Error("批量复制数量不完整："+copiedIds.length+"/"+ids.length);
+      sent+=copiedIds.length;lastMessageId=copiedIds.at(-1)?.message_id||lastMessageId;
+    }catch(e){
+      console.warn("⚠️ 批量资源发送失败，改为逐条发送:",String(e?.message||e));
+      for(const item of batch){
+        try{
+          const one=await sendIndexedResource(token,chatId,item);
+          if(one?.message_id){sent++;lastMessageId=one.message_id;}
+        }catch(err){
+          const reason=String(err?.message||err);
+          console.error("ALBUM ITEM:",reason);
+          const permanent=isPermanentResourceError(err)||(/^Bad Request(?::|$)/i.test(reason)&&/message|file|copy|forward/i.test(reason));
+          if(permanent&&typeof removeInvalidResource==="function"){try{removeInvalidResource(item,reason);}catch(cleanErr){console.warn("⚠️ 清理失效资源失败:",String(cleanErr?.message||cleanErr));}}
         }
+        await sleep(80);
       }
     }
   }
-  return {sent, lastMessageId};
+  return {sent,lastMessageId};
 }
 async function sendIndexedResource(token, chatId, item) {
   // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
