@@ -3361,7 +3361,10 @@ async function cloud123ScanAndUpload(uid) {
     const render=()=>"<b>🚀 123云盘扫描上传</b>\n━━━━━━━━━━━━━━\n"+
       "⏱ 已运行：<b>"+Math.floor((Date.now()-started)/1000)+"</b> 秒\n"+
       "📍 当前：<b>"+phase+"</b>\n"+
-      "✅ 成功："+success+"  ⚠️ 失败："+fail+"  ⏭️ 跳过："+skip+"\n"+
+      "✅ 本次成功：<b>"+success+"</b>\n"+
+      "❌ 本次失败：<b>"+fail+"</b>\n"+
+      "⏳ 剩余：<b>"+Math.max(0, resources.length-success-fail-skip)+"</b>\n"+
+      "⏭️ 跳过："+skip+"\n"+
       (currentFileName?"📄 当前文件："+escapeHtml(currentFileName)+"\n":"")+
       "📁 按现有文件夹建立目录\n"+
       "📦 每批最多 1GB";
@@ -6948,7 +6951,10 @@ async function handleDirectoryCallback(token, q, child=false) {
       if(data==="adm:cloud_test") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🧪 测试连接"});
       if(data==="adm:cloud_sync") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📁 同步机器人目录"});
       if(typeof cloud123StatusText==="function" && typeof cloud123Menu==="function"){
-        return sendHtml(token,uid,cloud123StatusText(),cloud123Menu());
+        const status=cloud123StatusText();
+        const edited=await safeEdit(token,{chat_id:chatId,message_id:messageId,text:status,parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup});
+        if(edited) return edited;
+        return sendHtml(token,uid,status,cloud123Menu());
       }
       return sendHtml(token,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n扫描上传功能还没加载，所以刚才点了没有开始。\n\n先配置 WebDAV 后，再在服务器执行：\n<code>node cloud123-runtime.js</code>\n然后重启机器人。",{reply_markup:{inline_keyboard:[[{text:"🔄 再试一次扫描上传",callback_data:"adm:cloud_scan"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
     }
