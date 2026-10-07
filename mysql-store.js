@@ -4,6 +4,8 @@ import crypto from "node:crypto";
 let pool = null;
 let ready = false;
 let writeQueue = Promise.resolve();
+let pendingSnapshot = null;
+let writeRunning = false;
 
 function envBool(v, fallback=false) {
   const s=String(v ?? "").trim().toLowerCase();
@@ -253,14 +255,32 @@ export function isMySQLReady() {
 
 export function persistMySQL(db) {
   if(!ready || !pool) return;
-  const snapshot=JSON.parse(JSON.stringify(db));
-  writeQueue=writeQueue.then(()=>persistNormalized(snapshot)).catch(e=>{
-    console.error("❌ MySQL 保存失败：",String(e?.message||e));
-  });
+  // 批量迁移/上传期间 saveDb() 可能高频触发；只保留最新快照，
+  // 避免把数百次完整数据库写入全部排进 MySQL 队列。
+  pendingSnapshot=JSON.parse(JSON.stringify(db));
+  if(writeRunning) return;
+  writeRunning=true;
+  writeQueue=writeQueue.then(async()=>{
+    while(pendingSnapshot){
+      const snapshot=pendingSnapshot;
+      pendingSnapshot=null;
+      try{
+        await persistNormalized(snapshot);
+      }catch(e){
+        console.error("❌ MySQL 保存失败：",String(e?.message||e));
+        if(!pendingSnapshot) pendingSnapshot=snapshot;
+        break;
+      }
+    }
+  }).finally(()=>{ writeRunning=false; });
 }
 
 export async function flushMySQL() {
   await writeQueue;
+  if(pendingSnapshot && ready && pool && !writeRunning){
+    persistMySQL(pendingSnapshot);
+    await writeQueue;
+  }
 }
 
 export async function closeMySQL() {
