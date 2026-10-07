@@ -3615,17 +3615,24 @@ async function cloud123ScanAndUpload(uid) {
     }
   } catch(e) {
     console.error("123 SYNC:",e);
+    const raw=String(e?.message||e);
+    const friendly=/resources' before initialization/.test(raw)
+      ? "上传进度初始化失败，请重新点「扫描并上传」。已上传的文件会跳过。"
+      : /423|Locked/.test(raw)
+        ? "123云盘文件被锁定，稍后会自动重试。"
+        : /fetch failed|请求超时|ETIMEDOUT/.test(raw)
+          ? "连接123云盘超时，稍后会自动重试。"
+          : "上传暂时失败，已上传的文件会跳过，可稍后重试。";
     if(statusMessage?.message_id) {
       try { await tg(TOKEN,"editMessageText",{
         chat_id:uid,
         message_id:statusMessage.message_id,
-        text:"❌ <b>123云盘同步中断</b>\n\n"+escapeHtml(e.message||String(e))+"\n\n"+
-          "已完成的文件会保留上传记录，下次可以继续。",
+        text:"❌ <b>123云盘同步中断</b>\n\n"+escapeHtml(friendly)+"\n\n已完成的文件会保留上传记录，下次可以继续。",
         parse_mode:"HTML",
         reply_markup:cloud123Menu().reply_markup
       }); } catch {}
     } else {
-      await send(TOKEN,uid,"❌ 123云盘同步失败：\n"+String(e.message||e),adminMenu());
+      await send(TOKEN,uid,"❌ 123云盘同步中断：\n"+friendly,adminMenu());
     }
   } finally {
     if(tick) clearInterval(tick);
@@ -6214,7 +6221,7 @@ async function mainMessage(msg) {
       );
       return cloud123ScanAndUpload(uid);
     } catch(e) {
-      return send(TOKEN,uid,"❌ 123云盘同步失败：\n\n"+String(e.message||e),cloud123Menu());
+      return send(TOKEN,uid,"❌ 123云盘同步中断：\n上传暂时失败，请稍后重试。已上传的文件会跳过。",cloud123Menu());
     }
   }
   if(t==="🚀 扫描并上传"&&admin) {
