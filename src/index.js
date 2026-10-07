@@ -3802,11 +3802,10 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
   // 这里统一采用“先编辑，编辑失败就重新发送”的方式，确保每批都有「继续/结束/取消」。
   const statusText="📤 <b>正在上传</b>\n━━━━━━━━━━━━━━\n\n"+
     "📁 文件夹：<b>"+escapeHtml(directoryName)+"</b>\n"+
-    "📥 本批已收到：<b>"+pending.length+"</b> 个资源\n\n"+
-    "可以继续发送文件；全部发送完成后点击「✅ 结束上传」。";
+    "📥 已接收：<b>"+pending.length+"</b> 个\n\n"+
+    "可以继续发送，数量会自动更新。全部发完后点「✅ 结束上传」。";
   const statusMarkup={inline_keyboard:[
-    [{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],
-    [{text:"❌ 取消上传",callback_data:"upload_cancel"}]
+    [{text:"✅ 结束上传",callback_data:"upload_finish"},{text:"❌ 取消上传",callback_data:"upload_cancel"}]
   ]};
   const saveUploadControlMessage=async(sent)=>{
     const current=states.get(key);
@@ -3819,29 +3818,33 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
       saveDb();
     }
   };
-  void (async()=>{
-    try {
-      let edited=false;
-      const controlId=Number(state.controlMessageId||0);
-      if(controlId>0) {
-        const result=await safeEdit(token,{
-          chat_id:uid,
-          message_id:controlId,
-          text:statusText,
-          parse_mode:"HTML",
-          reply_markup:statusMarkup
-        });
-        edited=Boolean(result);
+  if(!globalThis.uploadStatusTimers) globalThis.uploadStatusTimers=new Map();
+  if(globalThis.uploadStatusTimers.has(key)) clearTimeout(globalThis.uploadStatusTimers.get(key));
+  globalThis.uploadStatusTimers.set(key,setTimeout(()=>{
+    globalThis.uploadStatusTimers.delete(key);
+    const current=states.get(key);
+    if(!current || current.step!=="upload_file") return;
+    const count=current.pendingUploads?.length||0;
+    const text="📤 <b>正在上传</b>\n━━━━━━━━━━━━━━\n\n"+
+      "📁 文件夹：<b>"+escapeHtml(current.directoryName)+"</b>\n"+
+      "📥 已接收：<b>"+count+"</b> 个\n\n"+
+      "可以继续发送，数量会自动更新。全部发完后点「✅ 结束上传」。";
+    void (async()=>{
+      try {
+        const controlId=Number(current.controlMessageId||0);
+        if(controlId>0) {
+          const result=await safeEdit(token,{chat_id:uid,message_id:controlId,text,parse_mode:"HTML",reply_markup:statusMarkup});
+          if(result) return;
+        }
+        if(!current.controlMessageId) {
+          const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
+          await saveUploadControlMessage(sent);
+        }
+      } catch(e) {
+        console.warn("⚠️ 上传进度更新失败:",String(e?.message||e));
       }
-      if(!edited) {
-        const sent=await sendHtml(token,uid,statusText,{reply_markup:statusMarkup});
-        await saveUploadControlMessage(sent);
-      }
-      // 底部固定键盘只在进入上传模式时显示，不再通过空白消息反复撑起键盘。
-    } catch(e) {
-      console.warn("⚠️ 上传控制按钮恢复失败:",String(e?.message||e));
-    }
-  })();
+    })();
+  },600));
   console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
     uid:String(uid),
