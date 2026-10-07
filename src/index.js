@@ -93,6 +93,63 @@ function runtimeStatus() {
   };
 }
 
+
+function systemHealthText(){
+  const now=Date.now();
+  const rs=repo();
+  const auto=db.settings?.repositoryAutoSync||{};
+  const history=db.settings?.historyAuth||{};
+  const memory=process.memoryUsage();
+  const rss=(memory.rss/1024/1024).toFixed(1);
+  const heap=(memory.heapUsed/1024/1024).toFixed(1);
+  const uptime=Math.floor((now-runtime.startedAt)/1000);
+  const hh=String(Math.floor(uptime/3600)).padStart(2,"0");
+  const mm=String(Math.floor((uptime%3600)/60)).padStart(2,"0");
+  const ss=String(uptime%60).padStart(2,"0");
+  const lines=[
+    "<b>🩺 系统健康检查</b>",
+    "━━━━━━━━━━━━━━",
+    "",
+    "🤖 Telegram： "+(runtime.mainConnected?"✅ 正常":"⚠️ 未确认"),
+    "💾 本地数据库： "+(fs.existsSync(DATA_FILE)?"✅ 正常":"❌ 缺失"),
+    "🗂️ 本地备份： "+(fs.existsSync(BACKUP_FILE)?"✅ 正常":"❌ 缺失"),
+    "🗄️ MySQL： "+(isMySQLReady()?"✅ 已连接":"⚪ 未启用/未连接"),
+    "📊 Google Sheets： "+(baserow.connected?"✅ 已连接":(baserow.enabled?"⚠️ 已配置但未连接":"⚪ 未启用")),
+    "🔐 扫描账号： "+(history.session?"✅ 已授权":"⚪ 未授权"),
+    "📦 资源仓库： "+(rs?.chatId?"✅ 已绑定":"⚠️ 未绑定"),
+    "⚡ 自动同步： "+(auto.sourceId&&auto.targetId?(auto.enabled?"🟢 运行中":"⏸️ 已绑定未运行"):"⚪ 未绑定"),
+    "📚 资源： "+(Array.isArray(db.resources)?db.resources.length:0).toLocaleString(),
+    "📁 文件夹： "+(Array.isArray(db.directories)?db.directories.length:0).toLocaleString(),
+    "👥 用户： "+(Array.isArray(db.users)?db.users.length:0).toLocaleString(),
+    "🧠 内存： RSS "+rss+" MB / Heap "+heap+" MB",
+    "⏱️ 运行时间： "+hh+":"+mm+":"+ss
+  ];
+  if(runtime.lastError) lines.push("⚠️ 最近错误： "+escapeHtml(String(runtime.lastError).slice(0,300)));
+  if(baserow.lastError) lines.push("⚠️ Google： "+escapeHtml(String(baserow.lastError).slice(0,300)));
+  return lines.join("\\n");
+}
+
+function callbackSelfCheck(){
+  try{
+    const source=fs.readFileSync(new URL(import.meta.url),"utf8");
+    const seen=new Map();
+    for(const m of source.matchAll(/callback_data\\s*:\\s*["']([^"']+)["']/g)){
+      const value=String(m[1]);
+      seen.set(value,(seen.get(value)||0)+1);
+    }
+    const duplicates=[...seen.entries()].filter(([,count])=>count>1).sort((a,b)=>b[1]-a[1]);
+    console.log("🧪 CALLBACK SELF-CHECK: unique="+seen.size+" duplicate="+duplicates.length);
+    if(duplicates.length) console.warn("⚠️ 重复 callback_data:",duplicates.slice(0,20));
+    const required=["admin:health","adm:cloud_account","adm:auto_add","adm:auto_start"];
+    for(const value of required){
+      if(!source.includes('data==="'+value+'"') && !source.includes('data.startsWith("'+value+'")')){
+        console.warn("⚠️ CALLBACK ROUTE CHECK: 未找到显式路由 "+value);
+      }
+    }
+  }catch(e){ console.warn("⚠️ CALLBACK SELF-CHECK 失败:",String(e?.message||e)); }
+}
+callbackSelfCheck();
+
 function tokenFingerprint(token) {
   const s = String(token || "").trim();
   return s ? crypto.createHash("sha1").update(s).digest("hex").slice(0, 10) : "未配置";
@@ -6830,6 +6887,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
     if(data==="admin:bot")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🤖 机器人管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminBotInline()});
     if(data==="admin:maintenance")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🧹 资源维护</b>\n━━━━━━━━━━━━━━\n\n👇 选择检查项目",parse_mode:"HTML",reply_markup:adminMaintenanceMenu()});
+    if(data==="admin:health")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:systemHealthText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"🔄 重新检查",callback_data:"admin:health"}],[{text:"⬅️ 返回维护",callback_data:"admin:maintenance"}]]}});
     if(data==="admin:backup") return backupRecoveryPreview(uid);
     if(data==="admin:backup_restore") return backupRecoveryMerge(uid);
       if(data==="admin:upload"){
