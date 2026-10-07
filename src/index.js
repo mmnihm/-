@@ -7833,25 +7833,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     batch=batch.slice(0,remaining);
   }
-  let sent=0;
-  for(const item of batch) {
-    try {
-      await sendIndexedResource(token,chatId,item);
-      sent++;
-      recordStat(uid,"download",1);
-    } catch(e) {
-      const desc=String(e?.telegramDescription||e?.message||e||"");
-      console.error("FOLDER BATCH SEND:",desc,"chat=",chatId,"resource=",item.messageId);
-
-      // 单个资源无法从仓库提取/复制时，只跳过这一条，绝不阻塞同一批其他资源。
-      // 明确判定为永久失效的资源同时从本地资源库清理，避免以后反复发送失败。
-      if(isPermanentResourceError(e)) {
-        removeInvalidResource(item,desc);
-        console.warn("⏭️ 文件夹批量获取：资源无法提取，已跳过并清理 resource=",String(item?.messageId||""));
-      }
-    }
-    await sleep(80);
-  }
+  const sent=await sendResourceAlbum(token,chatId,batch);
+  if(sent) recordStat(uid,"download",sent);
 
   const next=Math.min(offset+batch.length,all.length);
   if(sent) {
