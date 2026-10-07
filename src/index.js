@@ -7135,7 +7135,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         return sendHtml(token,chatId,repositoryAutoSyncContentText(a),repositoryAutoSyncContentMenu());
       }
     }
-    if(route==="auto_content_toggle"){
+    if(route==="auto_content_toggle" || route.startsWith("auto_content_toggle:")){
       const type=data.split(":")[2]||"";
       const a=repositoryAutoSyncState();
       if(type==="text") a.syncText=a.syncText===false;
