@@ -5285,8 +5285,10 @@ async function mainMessage(msg) {
       resourceInlineKeyboard(results,0));
   }
   // 主机器人重启后恢复未完成的上传会话，避免文件消息因内存状态丢失而被静默忽略。
-  if(!s && db.settings?.uploadSessions?.[key]){
-    const saved=db.settings.uploadSessions[key];
+  const savedUpload=db.settings?.uploadSessions?.[key];
+  const savedFresh=savedUpload && Date.now()-Number(savedUpload.updatedAt||0) < 5*60*1000;
+  if(admin && savedFresh && (!s || !["upload_file","upload_folder"].includes(String(s.step)))){
+    const saved=savedUpload;
     if(saved.step==="upload_file" || saved.step==="upload_folder" || saved.step==="folder_create"){
       s={
         step:String(saved.step),
