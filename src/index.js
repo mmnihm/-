@@ -3319,10 +3319,11 @@ async function cloud123SyncDirectories(uid) {
   return {created,existing,fail,duplicate,total:dirs.length,unique:list.length,progressMessage};
 }
 
-async function cloud123ScanAndUpload(uid) {
-  if (cloud123Syncing) return send(TOKEN,uid,"⏳ 123云盘同步已经在进行中，请不要重复启动。",adminMenu());
+async function cloud123ScanAndUpload(uid, options={}) {
+  const silent=options.silent===true;
+  if (cloud123Syncing) return silent ? null : send(TOKEN,uid,"⏳ 123云盘同步已经在进行中，请不要重复启动。",adminMenu());
   const r = repo();
-  if (!r) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。",adminMenu());
+  if (!r) return silent ? null : send(TOKEN,uid,"❌ 尚未绑定资源仓库。",adminMenu());
   cloud123Syncing=true;
   globalThis.cloud123Run={running:true,success:0,fail:0,skip:0,total:0};
   const started=Date.now();
@@ -3369,8 +3370,8 @@ async function cloud123ScanAndUpload(uid) {
       (currentFileName?"📄 当前文件："+escapeHtml(currentFileName)+"\n":"")+
       "📁 按现有文件夹建立目录\n"+
       "📦 每批最多 1GB";
-    statusMessage=await sendHtml(TOKEN,uid, render(), cloud123Menu());
-    tick=setInterval(()=>{
+    if(!silent) statusMessage=await sendHtml(TOKEN,uid, render(), cloud123Menu());
+    if(!silent) tick=setInterval(()=>{
       if(!statusMessage?.message_id) return;
       tg(TOKEN,"editMessageText",{chat_id:uid,message_id:statusMessage.message_id,text:render(),parse_mode:"HTML"}).catch(()=>{});
     },5000);
@@ -3631,7 +3632,7 @@ async function cloud123ScanAndUpload(uid) {
         parse_mode:"HTML",
         reply_markup:cloud123Menu().reply_markup
       }); } catch {}
-    } else {
+    } else if(!silent) {
       await send(TOKEN,uid,"❌ 123云盘同步中断：\n"+friendly,adminMenu());
     }
   } finally {
@@ -8043,10 +8044,9 @@ async function boot(){
   if (!globalThis.cloud123AutoStarted) {
     globalThis.cloud123AutoStarted = true;
     const reportCloud123Auto = async (adminId, message) => {
-      if (!adminId || !message) return;
-      if (globalThis.cloud123AutoLastError === message) return;
+      if (!message || globalThis.cloud123AutoLastError === message) return;
       globalThis.cloud123AutoLastError = message;
-      await sendHtml(TOKEN, adminId, "<b>❌ 123云盘自动上传未开始</b>\n━━━━━━━━━━━━━━\n\n" + escapeHtml(message)).catch(()=>{});
+      console.warn("☁️ 123云盘自动上传跳过:", message);
     };
     const runCloud123Auto = async () => {
       const adminId = [...ADMIN_IDS][0];
@@ -8059,7 +8059,7 @@ async function boot(){
         if (!db.settings?.historyAuth?.session) return reportCloud123Auto(adminId, "扫描账号还没登录。请先点「扫描账号」完成授权。");
         globalThis.cloud123AutoLastError = "";
         console.log("☁️ 123云盘自动上传开始");
-        await cloud123ScanAndUpload(adminId);
+        await cloud123ScanAndUpload(adminId,{silent:true});
       } catch (e) {
         const message = String(e?.message || e);
         console.error("❌ 123云盘自动上传失败:", message);
