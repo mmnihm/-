@@ -308,6 +308,7 @@ async function cloud123ScanAndUpload(uid) {
   try {
     const client=cloud123Client();
     let phase="正在连接 Telegram 扫描账号";
+    let planned=0;
     const render=()=>"<b>🚀 123云盘扫描上传</b>\n━━━━━━━━━━━━━━\n"+
       "⏱ 已运行：<b>"+Math.floor((Date.now()-started)/1000)+"</b> 秒\n"+
       "📍 当前：<b>"+phase+"</b>\n"+
@@ -374,6 +375,7 @@ async function cloud123ScanAndUpload(uid) {
       }); } catch {}
     }
     const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded);
+    planned=resources.length;
     if(statusMessage?.message_id) {
       try {
         await tg(TOKEN,"editMessageText",{
@@ -580,7 +582,7 @@ async function cloud123ScanAndUpload(uid) {
         reply_markup:cloud123Menu().reply_markup
       }); } catch {}
     } else {
-      await send(TOKEN,uid,"❌ 123云盘同步失败：\n"+String(e.message||e),adminMenu());
+      await send(TOKEN,uid,"❌ 123云盘同步中断：\n上传暂时失败，请稍后重试。已上传的文件会跳过。",adminMenu());
     }
   } finally {
     if(tick) clearInterval(tick);
@@ -679,7 +681,7 @@ async function cloud123ScanAndUpload(uid) {
       );
       return cloud123ScanAndUpload(uid);
     } catch(e) {
-      return send(TOKEN,uid,"❌ 123云盘同步失败：\n\n"+String(e.message||e),cloud123Menu());
+      return send(TOKEN,uid,"❌ 123云盘同步中断：\n上传暂时失败，请稍后重试。已上传的文件会跳过。",cloud123Menu());
     }
   }
   if(t==="🚀 扫描并上传"&&admin) {
