@@ -3448,7 +3448,8 @@ async function cloud123ScanAndUpload(uid) {
             break;
           }
         }
-        if(!downloaded) throw downloadError || new Error("Telegram 媒体下载失败");\n        // CLOUD123_DOWNLOAD_RETRY_V1
+        if(!downloaded) throw downloadError || new Error("Telegram 媒体下载失败");
+        // CLOUD123_DOWNLOAD_RETRY_V1
         const stat=await fs.promises.stat(tempPath);
         currentFileName=originalName;
         uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
