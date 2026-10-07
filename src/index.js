@@ -5631,7 +5631,7 @@ async function mainMessage(msg) {
 👇 <i>点击下方菜单开始使用</i>`,admin?adminMenu():userMenu());
       return;
     }
-    return sendHtml(TOKEN,uid,`<b>🏠 资源平台</b>
+    return sendHtml(TOKEN,uid,admin?adminStatusText():`<b>🏠 资源平台</b>
 ━━━━━━━━━━━━━━
 
 👇 <i>请选择你要使用的功能</i>`,admin?adminMenu():userMenu());
@@ -6867,9 +6867,9 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
-        text:"<b>🏠 资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👇 <i>请选择你要使用的功能</i>",
+        text:isAdmin(uid)?adminStatusText():"<b>🏠 资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👇 <i>请选择你要使用的功能</i>",
         parse_mode:"HTML",
-        reply_markup:userHomeInlineKeyboard()
+        reply_markup:isAdmin(uid)?adminRootInline():userHomeInlineKeyboard().reply_markup
       });
     }
     if(action==="clone") {
