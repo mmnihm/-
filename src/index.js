@@ -47,6 +47,7 @@ try {
   }
 }
 const BACKUP_FILE = process.env.DATA_BACKUP_FILE || (DATA_FILE + ".bak");
+const BACKUP_SNAPSHOT_DIR = process.env.DATA_BACKUP_DIR || (path.dirname(DATA_FILE) + "/backups");
 const LOCAL_TABLE_DIR = process.env.LOCAL_TABLE_DIR || path.dirname(DATA_FILE);
 const LOCAL_RESOURCES_TABLE = path.join(LOCAL_TABLE_DIR, "resources.csv");
 const LOCAL_DIRECTORIES_TABLE = path.join(LOCAL_TABLE_DIR, "directories.csv");
@@ -423,15 +424,32 @@ function sheetNameRange(suffix=""){
   return encodeURIComponent("'"+GOOGLE_SHEETS_TAB.replace(/'/g,"''")+"'"+suffix);
 }
 async function googleSheetsRequest(method,pathName,body){
-  const token=await getGoogleAccessToken();
-  const url=GOOGLE_SHEETS_API+encodeURIComponent(GOOGLE_SHEETS_ID)+pathName;
-  const headers={"Authorization":"Bearer "+token,"Accept":"application/json"};
-  if(body!==undefined) headers["Content-Type"]="application/json";
-  const r=await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
-  const text=await r.text();
-  let data={}; try{data=JSON.parse(text||"{}");}catch{}
-  if(!r.ok) throw new Error("Google Sheets "+r.status+": "+String(data?.error?.message||text||"请求失败").slice(0,500));
-  return data;
+  const maxAttempts=4;
+  for(let attempt=0;attempt<maxAttempts;attempt++){
+    try{
+      const token=await getGoogleAccessToken();
+      const url=GOOGLE_SHEETS_API+encodeURIComponent(GOOGLE_SHEETS_ID)+pathName;
+      const headers={"Authorization":"Bearer "+token,"Accept":"application/json"};
+      if(body!==undefined) headers["Content-Type"]="application/json";
+      const r=await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+      const text=await r.text();
+      let data={}; try{data=JSON.parse(text||"{}");}catch{}
+      if(r.ok) return data;
+      const retryAfter=Number(r.headers.get("retry-after")||0);
+      const transient=r.status===429||r.status>=500;
+      if(!transient||attempt>=maxAttempts-1){
+        throw new Error("Google Sheets "+r.status+": "+String(data?.error?.message||text||"请求失败").slice(0,500));
+      }
+      const wait=Math.min(15000,Math.max(1000,retryAfter*1000||1000*Math.pow(2,attempt)));
+      console.warn("⏳ Google Sheets 暂时限流/服务异常，"+wait+"ms 后重试:",method);
+      await sleep(wait);
+    }catch(e){
+      if(attempt>=maxAttempts-1) throw e;
+      if(/Google Sheets 4(?!29)\d/.test(String(e?.message||""))) throw e;
+      await sleep(Math.min(10000,1000*Math.pow(2,attempt)));
+    }
+  }
+  throw new Error("Google Sheets 请求失败");
 }
 
 const DEFAULT_SHEET_FIELDS=["名称","文件夹","类型","网址","标签","上传日期","所有者","聊天ID","消息ID","描述","文件ID","下载"];
@@ -1523,6 +1541,19 @@ function saveDb() {
       fs.renameSync(backupTmp, BACKUP_FILE);
     }
     writeLocalTables();
+    try{
+      const hourKey=new Date().toISOString().slice(0,13).replace(/[:T]/g,"-");
+      fs.mkdirSync(BACKUP_SNAPSHOT_DIR,{recursive:true});
+      const snapshotFile=path.join(BACKUP_SNAPSHOT_DIR,"database-"+hourKey+".json");
+      if(!fs.existsSync(snapshotFile)) fs.writeFileSync(snapshotFile,json);
+      const snapshots=fs.readdirSync(BACKUP_SNAPSHOT_DIR)
+        .filter(x=>/^database-.*\.json$/.test(x))
+        .sort();
+      while(snapshots.length>24){
+        const old=snapshots.shift();
+        try{fs.rmSync(path.join(BACKUP_SNAPSHOT_DIR,old),{force:true});}catch{}
+      }
+    }catch(e){ console.warn("⚠️ 数据快照备份失败:",String(e?.message||e)); }
     lastSavedJson = json;
     // MySQL 是正式数据层；JSON 仅保留为本地兼容/应急快照。
     persistMySQL(db);
@@ -1534,6 +1565,21 @@ function saveDb() {
 }
 const db = loadDb();
 await initializeMySQL(db);
+
+let gracefulStopping=false;
+async function gracefulShutdown(signal){
+  if(gracefulStopping) return;
+  gracefulStopping=true;
+  console.log("🛑 收到 "+signal+"，正在保存本地数据并等待 MySQL 写入完成...");
+  try{ saveDb(); }catch(e){ console.error("❌ 退出前保存失败:",String(e?.message||e)); }
+  try{ await flushMySQL(); }catch(e){ console.error("❌ 退出前 MySQL flush 失败:",String(e?.message||e)); }
+  try{ server.close(); }catch{}
+  process.exit(0);
+}
+process.once("SIGTERM",()=>{ gracefulShutdown("SIGTERM").catch(e=>{console.error("❌ SIGTERM:",e);process.exit(1);}); });
+process.once("SIGINT",()=>{ gracefulShutdown("SIGINT").catch(e=>{console.error("❌ SIGINT:",e);process.exit(1);}); });
+const mysqlFlushTimer=setInterval(()=>flushMySQL().catch(e=>console.error("❌ MySQL 定时 flush:",String(e?.message||e))),30000);
+mysqlFlushTimer.unref?.();
 if (!db.settings) db.settings = emptyDb().settings;
 if (!Array.isArray(db.settings.admins)) db.settings.admins = [];
 if (!Array.isArray(db.settings.logs)) db.settings.logs = [];
@@ -2969,7 +3015,7 @@ async function repositoryMigration(uid, sourceValue, targetValue) {
 
     let lastUi=0;
     for(let i=0;i<ordered.length;i+=10){
-      const batch=ordered.slice(i,i+5);
+      const batch=ordered.slice(i,i+10);
       state.current=Math.min(i+batch.length,ordered.length);
       state.queued=Math.max(0,ordered.length-completed.size);
       state.completedKeys=[...completed].slice(-Math.max(MAX_RESOURCES,25000));
