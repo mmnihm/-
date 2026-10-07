@@ -29,7 +29,7 @@ function patchSource() {
             "📊 成功："+success+"  | 失败："+fail+"  | 跳过："+skip+"\\n"+
             "📤 当前传输："+mb(sentBytes)+" / "+mb(totalBytes)+" MB\\n"+
             "⚡ 小文件最多 5 个并发\\n📦 单批总量 ≤ 1GB",
-          parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+          parse_mode:"HTML"
         });
       } catch {} finally { progressEditing=false; }
     };
@@ -360,7 +360,7 @@ async function cloud123ScanAndUpload(uid) {
         text:"<b>✅ Telegram 扫描账号连接成功</b>\\n\\n"+
           "🔎 正在读取资源仓库历史消息...\\n"+
           "📁 正在检查待上传资源，请稍候...",
-        parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+        parse_mode:"HTML"
       }); } catch {}
     }
     const entity=await findHistoryEntity(clientHistory);
@@ -514,6 +514,22 @@ async function cloud123ScanAndUpload(uid) {
         }
         batchNumber++;
       }
+    }
+
+    // 失败文件在同一次任务内自动重试最多2轮；已经成功的资源不会重复上传。
+    for(let retryRound=1;retryRound<=2;retryRound++){
+      const retryList=[...db.resources].filter(x=>!x.cloud123?.uploaded && x.cloud123?.error);
+      if(!retryList.length) break;
+      const failedBefore=retryList.length;
+      const successBefore=success;
+      for(const item of retryList){
+        const before=item.cloud123?.error;
+        await uploadOne(item);
+        if(item.cloud123?.uploaded && before) fail=Math.max(0,fail-1);
+      }
+      saveDb();
+      console.log("🔁 123云盘失败重试轮次",retryRound,"处理",retryList.length,"个");
+      if(success===successBefore && failedBefore===retryList.length) break;
     }
 
     saveDb();
