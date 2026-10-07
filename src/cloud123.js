@@ -149,10 +149,11 @@ export function createWebDavClient(config = {}) {
         } catch (e) {
           lastError = e;
           const message = String(e?.message || e);
-          const retryable = /content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network/i.test(message);
+          const locked = /423|Locked/.test(message);
+          const retryable = locked || /content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network/i.test(message);
           console.warn("⚠️ 123云盘上传重试:", fileName, attempt + "/3", message);
           if (!retryable || attempt === 3) break;
-          await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
+          await new Promise(resolve => setTimeout(resolve, locked ? 20000 * attempt : 3000 * attempt));
         }
       }
       throw lastError || new Error("123云盘上传失败");

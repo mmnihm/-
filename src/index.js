@@ -3440,7 +3440,7 @@ async function cloud123ScanAndUpload(uid) {
     }
 
     const BATCH_LIMIT = 1024 * 1024 * 1024;
-    const SMALL_CONCURRENCY = 2;
+    const SMALL_CONCURRENCY = 1;
     let batchNumber = 1;
     let batchBytes = 0;
 
