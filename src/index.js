@@ -3717,7 +3717,7 @@ function userFeatureListText(title,items,extra=""){return"<b>"+title+"</b>\n━�
 function adminMaintenanceMenu(){return{inline_keyboard:[
  [{text:"🔄 重复资源检查",callback_data:"admin:dupes"},{text:"🧹 仓库健康检查",callback_data:"admin:health"}],
  [{text:"🏷️ 标签统计",callback_data:"admin:tags"}],
- [{text:"🗃️ 备份恢复",callback_data:"admin:backup"}],
+ [{text:"🗃️ 备份恢复",callback_data:"admin:backupbot"}],
  [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
 ]};}
 function backupBotConfig(){
@@ -3737,6 +3737,33 @@ async function backupResourceFile(item){
   item.backupFileId=file?.file_id||item.fileId;
   item.backupMessageId=sent?.message_id||0;
   saveDb();
+}
+
+async function restoreFromBackupBot(uid){
+  const cfg=backupBotConfig();
+  const r=repo();
+  if(!cfg.token) throw new Error("未配置备份机器人");
+  if(!r) throw new Error("未绑定资源仓库");
+  let ok=0, fail=0;
+  for(const item of db.resources||[]){
+    if(!item.backupFileId) continue;
+    try{
+      const info=await backupBotApi("getFile",{file_id:item.backupFileId});
+      const filePath=info?.file_path;
+      if(!filePath) throw new Error("备份文件不存在");
+      const url="https://api.telegram.org/file/bot"+cfg.token+"/"+filePath;
+      const sent=await tg(TOKEN,"sendDocument",{chat_id:r.chatId, document:url, caption:String(item.caption||item.title||"").slice(0,200)});
+      if(sent?.message_id){
+        item.chatId=String(r.chatId);
+        item.messageId=sent.message_id;
+        item.fileId=sent.document?.file_id||item.fileId;
+        ok++;
+        if(ok%20===0) saveDb();
+      }
+    }catch(e){ fail++; console.warn("⚠️ 备份复制失败:",String(e?.message||e)); }
+  }
+  saveDb();
+  await sendHtml(TOKEN,uid,"<b>✅ 备份复制完成</b>\n\n成功：<b>"+ok+"</b>\n失败：<b>"+fail+"</b>",adminMenu());
 }
 function adminStatusText(){
   const auth=db.settings.historyAuth||{};
@@ -7061,11 +7088,16 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
     const key=uploadStateKey(uid,child,token);
-    if(data==="admin:backup"){
+    if(data==="admin:backupbot"){
       const cfg=backupBotConfig();
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 备份机器人</b>\n━━━━━━━━━━━━━━\n\n状态："+(cfg.token?"✅ 已配置":"❌ 未配置")+"\n\n主机器人入库后，会把文件再发给备份机器人保存编号。主机器人被封后，可从备份复制回来。\n\n请先给备份机器人发 /start。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"➕ 设置备份 Token",callback_data:"admin:backup_set"}],[{text:"⬅️ 返回管理",callback_data:"admin:root"}]]}});
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 备份机器人</b>\n━━━━━━━━━━━━━━\n\n状态："+(cfg.token?"✅ 已配置":"❌ 未配置")+"\n\n主机器人入库后，会把文件再发给备份机器人保存编号。主机器人被封后，可从备份复制回来。\n\n请先给备份机器人发 /start。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"➕ 设置备份 Token",callback_data:"admin:backupbot_set"}],[{text:"📥 从备份复制回来",callback_data:"admin:backup_copy"}],[{text:"⬅️ 返回管理",callback_data:"admin:root"}]]}});
     }
-    if(data==="admin:backup_set"){
+    if(data==="admin:backup_copy"){
+      await answer("开始从备份复制");
+      restoreFromBackupBot(uid).catch(e=>sendHtml(TOKEN,uid,"❌ 从备份复制失败：\n"+escapeHtml(String(e?.message||e)),adminMenu()));
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 正在从备份机器人复制</b>\n\n文件会重新发给当前机器人并放入原文件夹。数量多时会在后台继续。",parse_mode:"HTML",reply_markup:adminRootInline()});
+    }
+    if(data==="admin:backupbot_set"){
       states.set("m:"+uid,{step:"backup_token"});
       await answer("请发送 Token");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 设置备份机器人</b>\n\n请发送备份机器人的 Token。\n发送 0 可清除。\n\n设置后请先给备份机器人发一次 /start。",parse_mode:"HTML"});
