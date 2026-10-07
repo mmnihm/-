@@ -280,6 +280,7 @@ async function cloud123ScanAndUpload(uid) {
   let success=0, fail=0, skip=0;
   let activeBatchBytes=0, totalUploadedBytes=0;
   let currentFileName="";
+  let tick=null;
   const uploadProgress = new Map();
   let lastProgressEdit = 0;
   let progressEditing = false;
