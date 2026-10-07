@@ -3720,6 +3720,24 @@ function adminMaintenanceMenu(){return{inline_keyboard:[
  [{text:"🗃️ 备份恢复",callback_data:"admin:backup"}],
  [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
 ]};}
+function backupBotConfig(){
+  const row=db.settings.backupBot||{};
+  return {token:String(row.token||process.env.BACKUP_BOT_TOKEN||"").trim(), chatId:String(row.chatId||[...ADMIN_IDS][0]||"").trim(), username:String(row.username||"")};
+}
+async function backupBotApi(method, body){
+  const cfg=backupBotConfig();
+  if(!cfg.token) throw new Error("未配置备份机器人");
+  return tg(cfg.token, method, body);
+}
+async function backupResourceFile(item){
+  const cfg=backupBotConfig();
+  if(!cfg.token || !cfg.chatId || !item?.fileId || item.backupFileId) return;
+  const sent=await backupBotApi("send"+String(item.fileType||"Document"), {chat_id:cfg.chatId, [String(item.fileType||"Document").toLowerCase()]:item.fileId, caption:String(item.caption||item.title||"").slice(0,200)});
+  const file=sent?.document||sent?.video||sent?.photo?.[0]||sent?.audio;
+  item.backupFileId=file?.file_id||item.fileId;
+  item.backupMessageId=sent?.message_id||0;
+  saveDb();
+}
 function adminStatusText(){
   const auth=db.settings.historyAuth||{};
   const cloud=cloud123Config();
@@ -3738,6 +3756,7 @@ function adminStatusText(){
     "☁️ 123云盘："+(cloud.url&&cloud.username?"✅ 正常":"❌ 未配置")+(failed?"，失败 "+failed+" 个":""),
     "⚡ 自动同步："+(sync.enabled?"✅ 运行中":sync.sourceId?"⏸️ 已绑定未运行":"❌ 未绑定"),
     "📊 表格："+(sheets?"✅ 已配置":"❌ 未配置"),
+    "🛟 备份机器人："+(backupBotConfig().token?"✅ 已配置":"❌ 未配置"),
     "💬 客服待处理："+supportCount+" 个",
     "",
     "👇 常用功能在下面"
@@ -3747,7 +3766,8 @@ function adminRootInline(){return{inline_keyboard:[
  [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"🔐 扫描账号",callback_data:"adm:scan_auth"}],
  [{text:"⚡ 自动同步",callback_data:"adm:auto"},{text:"☁️ 123云盘",callback_data:"adm:cloud123"}],
  [{text:"📦 资源目录",callback_data:"admin:resource"},{text:"💬 客服",callback_data:"support:admin"}],
- [{text:"✅ 平台状态",callback_data:"admin:root"},{text:"更多",callback_data:"admin:more"}],
+ [{text:"🛟 备份机器人",callback_data:"admin:backup"},{text:"✅ 平台状态",callback_data:"admin:root"}],
+ [{text:"更多",callback_data:"admin:more"}],
  [{text:"🏠 返回首页",callback_data:"admin:home"}]
 ]};}
 function adminMoreInline(){return{inline_keyboard:[
@@ -4404,6 +4424,7 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
     waitBaserowSyncQueue().catch(e=>console.warn("⚠️ 上传后的表格同步失败：",String(e?.message||e)));
   }
   recordStat(uid,"upload",1);
+  if(backupBotConfig().token) { for(const item of db.resources.slice(0,stored)) backupResourceFile(item).catch(e=>console.warn("⚠️ 备份文件失败:",String(e?.message||e))); }
   recordStat(uid,"uploadedResource",stored);
   touchSharedData(uid);
   saveDb();
@@ -5444,6 +5465,15 @@ async function mainMessage(msg) {
 
 
 
+  if(admin && s?.step==="backup_token") {
+    const value=String(t||"").trim();
+    if(value==="0") { db.settings.backupBot={}; saveDb(); states.delete(key); return sendHtml(TOKEN,uid,"✅ 已清除备份机器人。",adminMenu()); }
+    if(!/^\d+:[A-Za-z0-9_-]+$/.test(value)) return sendHtml(TOKEN,uid,"⚠️ Token 格式不对。请从 BotFather 复制，或发送 0 清除。");
+    const me=await tg(value,"getMe",{});
+    db.settings.backupBot={token:value, username:me.username||"", chatId:String(uid)};
+    saveDb(); states.delete(key);
+    return sendHtml(TOKEN,uid,"✅ 备份机器人已保存：@"+escapeHtml(me.username||"")+"\n\n请先给它发一次 /start。之后新入库的文件会静默备份。",adminMenu());
+  }
   if(admin && s?.step==="support_link") {
     const value=String(t||"").trim();
     if(value==="0") db.settings.supportLink="";
@@ -7031,6 +7061,15 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
     const key=uploadStateKey(uid,child,token);
+    if(data==="admin:backup"){
+      const cfg=backupBotConfig();
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 备份机器人</b>\n━━━━━━━━━━━━━━\n\n状态："+(cfg.token?"✅ 已配置":"❌ 未配置")+"\n\n主机器人入库后，会把文件再发给备份机器人保存编号。主机器人被封后，可从备份复制回来。\n\n请先给备份机器人发 /start。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"➕ 设置备份 Token",callback_data:"admin:backup_set"}],[{text:"⬅️ 返回管理",callback_data:"admin:root"}]]}});
+    }
+    if(data==="admin:backup_set"){
+      states.set("m:"+uid,{step:"backup_token"});
+      await answer("请发送 Token");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🛟 设置备份机器人</b>\n\n请发送备份机器人的 Token。\n发送 0 可清除。\n\n设置后请先给备份机器人发一次 /start。",parse_mode:"HTML"});
+    }
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:adminStatusText(),parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
     if(data==="adm:cloud_retry"){
