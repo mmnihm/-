@@ -394,7 +394,7 @@ async function cloud123ScanAndUpload(uid) {
     const BATCH_LIMIT = 1024 * 1024 * 1024;
     // Telegram MTProto 媒体下载容易触发 DC deadline；稳定优先，最多同时处理 2 个文件。
 // 单个文件失败仍会自动重试，不让高并发把扫描账号整体拖进 TIMEOUT。
-const SMALL_CONCURRENCY = Math.max(1,Math.min(2,Number(process.env.CLOUD123_CONCURRENCY||2)));
+const SMALL_CONCURRENCY = Math.max(1,Math.min(2,Number(process.env.CLOUD123_CONCURRENCY||1)));
     let batchNumber = 1;
     let batchBytes = 0;
 
