@@ -2571,18 +2571,6 @@ async function repositoryAutoSyncBatch(batch){
   saveDb();
 
   console.log("✅ AUTO SYNC 批量完成:",messageIds.length+" 条","剩余="+state.queue.length,"断点="+state.lastMessageId);
-  const ownerId=String(state.ownerId||"");
-  const copied=Number(state.copied||0);
-  if(ownerId && (state.queue.length===0 || copied%20===0)) {
-    sendHtml(TOKEN, ownerId,
-      "<b>📌 自动同步断点</b>\n━━━━━━━━━━━━━━\n\n"+
-      "已复制到消息：<code>"+Number(state.lastMessageId||0)+"</code>\n"+
-      "✅ 已复制："+copied+"\n"+
-      "⏭️ 已跳过："+Number(state.skipped||0)+"\n"+
-      "⏳ 剩余："+state.queue.length+"\n\n"+
-      (state.queue.length?"中断后会从这条之后继续，已复制的会跳过。":"本轮已复制完成。")
-    ).catch(()=>{});
-  }
   return true;
 }
 
