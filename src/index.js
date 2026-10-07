@@ -3752,6 +3752,22 @@ function childAdminMenu() {
     [{text:"🏠 返回首页",callback_data:"admin:home"}]
   ]}};
 }
+
+function restoreUploadState(key) {
+  const current = states.get(key);
+  if (current?.step === "upload_file") return current;
+  const saved = db.settings?.uploadSessions?.[key];
+  if (!saved || !["upload_file","upload_folder"].includes(String(saved.step))) return current || null;
+  const restored = {
+    step: "upload_file",
+    directoryId: String(saved.directoryId || ""),
+    directoryName: String(saved.directoryName || ""),
+    pendingUploads: (Array.isArray(saved.pendingMessageIds) ? saved.pendingMessageIds : []).map(id => ({messageId: Number(id)})).filter(x => Number.isFinite(x.messageId)),
+    controlMessageId: Number(saved.controlMessageId || 0)
+  };
+  states.set(key, restored);
+  return restored;
+}
 function uploadStateKey(uid, child=false, token="") {
   return child ? "c:"+tokenFingerprint(token)+":"+String(uid) : "m:"+String(uid);
 }
@@ -6778,7 +6794,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   // 上传结束必须最高优先级处理：先立即给按钮一个可见结果，再后台转存，避免任何共享同步/菜单逻辑拦截。
   if(isAdmin(uid) && data==="upload_finish") {
     const finishKey=uploadStateKey(uid,child,token);
-    const finishState=states.get(finishKey);
+    const finishState=restoreUploadState(finishKey);
     if(!finishState || finishState.step!=="upload_file") {
       await answer("当前没有进行中的上传",true);
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"⚠️ <b>当前没有进行中的上传</b>\n\n请重新点击「📤 上传资源」开始。",parse_mode:"HTML",reply_markup:uploadFolderInlineMenu()});
@@ -7439,7 +7455,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
   if(isAdmin(uid) && (data==="upload_continue" || data==="upload_finish")) {
     const key=uploadStateKey(uid,child,token);
-    const s=states.get(key);
+    const s=restoreUploadState(key);
     if(!s || s.step!=="upload_file") {
       void answer("当前没有进行中的上传",true);
       return;
