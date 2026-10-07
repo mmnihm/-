@@ -4637,6 +4637,7 @@ async function sendResourceAlbum(token, chatId, items) {
     groups.get(key).push(item);
   }
   let sent=0;
+  let lastMessageId=0;
   for(const [fromChat, group] of groups) {
     const ids=group.map(x=>Number(x.messageId)).slice(0,10);
     try {
@@ -4646,18 +4647,24 @@ async function sendResourceAlbum(token, chatId, items) {
         message_ids:ids,
         ...(contentProtectionEnabled()?{protect_content:true}:{})
       });
-      sent += Array.isArray(copied) ? copied.filter(x=>x&&x.message_id).length : 0;
-      if(!Array.isArray(copied) || !copied.length) throw new Error("相册复制没有返回结果");
+      const ids=Array.isArray(copied)?copied.filter(x=>x&&x.message_id):[];
+      sent += ids.length;
+      if(ids.length) lastMessageId=ids[ids.length-1].message_id;
+      if(!ids.length) throw new Error("相册复制没有返回结果");
     } catch(e) {
       console.warn("⚠️ 相册发送失败，改为逐条发送:", String(e?.message||e));
       for(const item of group.slice(0,10)) {
-        try { await sendIndexedResource(token, chatId, item); sent++; } catch(err) {
+        try {
+          const one=await sendIndexedResource(token, chatId, item);
+          sent++;
+          if(one?.message_id) lastMessageId=one.message_id;
+        } catch(err) {
           console.error("ALBUM ITEM:", String(err?.message||err));
         }
       }
     }
   }
-  return sent;
+  return {sent, lastMessageId};
 }
 async function sendIndexedResource(token, chatId, item) {
   // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
@@ -4938,11 +4945,13 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   let fail=0;
   let lastError="";
 
-  // 不再使用 copyMessages 作为用户随机/最新批次的主发送方式。
-  // Telegram 批量复制只要碰到一条失效消息，整批可能失败或返回不完整结果，
-  // 从而造成“数据库有记录、用户却收不到”。现在固定按本批逐条发送：
-  // 一条失败不会影响其他资源；确认永久失效的记录立即清理。
-  for(const item of valid) {
+  let albumReplyId=0;
+  if(options.mode==="random" || options.mode==="latest") {
+    const album=await sendResourceAlbum(sourceToken,chatId,valid);
+    ok=Number(album?.sent||0);
+    albumReplyId=Number(album?.lastMessageId||0);
+    fail=Math.max(0,valid.length-ok);
+  } else for(const item of valid) {
     try {
       await sendIndexedResource(sourceToken,chatId,item);
       ok++;
@@ -4993,7 +5002,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
   const extraMessage = postResourceMessage();
   const finalSummary = extraMessage ? summary+"\n\n"+extraMessage : summary;
-  await sendHtml(token,chatId,finalSummary,navigation);
+  await sendHtml(token,chatId,finalSummary,{...navigation,...(albumReplyId?{reply_to_message_id:albumReplyId}:{})});
   return;
 }
 const states=new Map();
@@ -7813,7 +7822,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     await answer("正在发送相册");
     const first=all.slice(0,10);
-    const sent=await sendResourceAlbum(token,chatId,first);
+    const album=await sendResourceAlbum(token,chatId,first);
+    const sent=Number(album?.sent||0);
     const next=first.length;
     return sendHtml(token,chatId,
       "📁 <b>"+safe+"</b>\n━━━━━━━━━━━━━━\n📦 已发送：<b>"+sent+"</b> / "+first.length+"\n📚 文件夹共：<b>"+all.length+"</b> 个\n\n👇 可继续获取下一组",
@@ -7833,7 +7843,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     batch=batch.slice(0,remaining);
   }
-  const sent=await sendResourceAlbum(token,chatId,batch);
+  const album=await sendResourceAlbum(token,chatId,batch);
+  const sent=Number(album?.sent||0);
   if(sent) recordStat(uid,"download",sent);
 
   const next=Math.min(offset+batch.length,all.length);
