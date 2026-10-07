@@ -3358,7 +3358,7 @@ async function cloud123ScanAndUpload(uid) {
   try {
     const client=cloud123Client();
     let phase="正在连接 Telegram 扫描账号";
-    let planned=0;
+    let planned=db.resources.filter(x=>!x.cloud123?.uploaded && !x.cloud123?.skipped && Number(x.cloud123?.attempts||0) < 3).length;
     const render=()=>"<b>🚀 123云盘扫描上传</b>\n━━━━━━━━━━━━━━\n"+
       "⏱ 已运行：<b>"+Math.floor((Date.now()-started)/1000)+"</b> 秒\n"+
       "📍 当前：<b>"+phase+"</b>\n"+
@@ -3429,7 +3429,6 @@ async function cloud123ScanAndUpload(uid) {
     }
     const repoId=String(repo()?.chatId||"");
     const resources=[...db.resources].filter(x=>(!repoId || String(x.chatId)===repoId) && !x.cloud123?.uploaded && !x.cloud123?.skipped && Number(x.cloud123?.attempts||0) < 3);
-    planned=resources.length;
     if(statusMessage?.message_id) {
       try {
         await tg(TOKEN,"editMessageText",{
