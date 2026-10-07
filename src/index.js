@@ -909,10 +909,23 @@ async function baserowSyncResource(item) {
   }
 }
 
+async function runSheetWrite(job) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await sleep(2000);
+      return await job();
+    } catch (e) {
+      const message = String(e?.message || e);
+      if (!/429|Quota exceeded|限流/.test(message) || attempt === 3) throw e;
+      console.warn("⏳ Google Sheets 写入限流，60 秒后重试", attempt + "/3");
+      await sleep(60000);
+    }
+  }
+}
 function queueBaserowResourceSync(item) {
   if (!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !item) return;
   baserowSyncQueue = baserowSyncQueue
-    .then(async () => { await sleep(1200); return baserowSyncResource(item); })
+    .then(() => runSheetWrite(() => baserowSyncResource(item)))
     .catch(e => console.error("❌ Google Sheets 同步队列:", e.message));
 }
 
@@ -1008,7 +1021,7 @@ function queueBaserowDirectorySync(directory) {
   if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || !directory) return;
   // 文件夹必须优先于资源批量写入，否则历史扫描/迁移后的大量资源会把目录同步堵住。
   baserowDirectorySyncQueue=baserowDirectorySyncQueue
-    .then(async()=>{ await sleep(1200); return baserowSyncDirectory(directory); })
+    .then(() => runSheetWrite(() => baserowSyncDirectory(directory)))
     .catch(e=>console.error("❌ Google Sheets 文件夹队列:",e.message));
 }
 
