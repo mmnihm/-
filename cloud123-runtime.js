@@ -185,7 +185,7 @@ function cloud123Menu() {
     reply_markup:{
       inline_keyboard:[
         [{text:"🔗 配置123云盘",callback_data:"adm:cloud_setup"},{text:"🧪 测试连接",callback_data:"adm:cloud_test"}],
-        [{text:"📁 同步机器人目录",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
+        [{text:"📁 同步目录+文件",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
         [{text:"🔐 授权账号",callback_data:"adm:cloud_account"},{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
       ]
     }
@@ -204,7 +204,7 @@ function cloud123StatusText() {
     "📚 已上传：" + uploaded + " 个",
     "⚠️ 失败记录：" + failed + " 个",
     "",
-    "📌 当前：小文件最多 5 个并发，单批总传输 ≤1GB",
+    "📌 一键同步：先建立目录，再上传文件；小文件最多 5 个并发，单批 ≤1GB",
     "💾 每个文件完成后立即删除服务器临时文件",
     "",
     "👇 请选择操作"
@@ -622,7 +622,7 @@ async function cloud123ScanAndUpload(uid) {
       return client.test().then(() => sendHtml(TOKEN,uid,
         "<b>✅ 123云盘连接正常</b>\n\n"+
         "WebDAV 已可以访问。\n\n"+
-        "下一步可以先点击「📁 同步机器人目录」。",
+        "下一步可以点击「📁 同步目录+文件」。",
         cloud123Menu()
       ));
     } catch(e) {
@@ -632,16 +632,18 @@ async function cloud123ScanAndUpload(uid) {
   if(t==="📁 同步机器人目录"&&admin) {
     try {
       const result=await cloud123SyncDirectories(uid);
-      return send(TOKEN,uid,
-        "📁 <b>目录同步完成</b>\n\n"+
+      const syncedFolders=Number(result.created||0)+Number(result.existing||0);
+      await send(TOKEN,uid,
+        "📁 <b>目录同步完成，开始同步文件</b>\n\n"+
         "📚 机器人目录："+result.total+" 个\n"+
-        "✅ 已同步："+result.ok+" 个\n"+
-        "⚠️ 失败："+result.fail+" 个\n\n"+
-        "如果失败，请检查123云盘 WebDAV 是否允许创建目录。",
+        "✅ 目录已就绪："+syncedFolders+" 个\n"+
+        "⚠️ 目录失败："+result.fail+" 个\n\n"+
+        "🚀 现在继续读取 Telegram 资源并上传文件。",
         {parse_mode:"HTML",...cloud123Menu()}
       );
+      return cloud123ScanAndUpload(uid);
     } catch(e) {
-      return send(TOKEN,uid,"❌ 目录同步失败：\n\n"+String(e.message||e),cloud123Menu());
+      return send(TOKEN,uid,"❌ 123云盘同步失败：\n\n"+String(e.message||e),cloud123Menu());
     }
   }
   if(t==="🚀 扫描并上传"&&admin) {
