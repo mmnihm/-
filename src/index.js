@@ -5103,19 +5103,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     ? batchNavigation(options.mode,options.offset||0,options.total||valid.length)
     : {};
 
-  const summary =
-    "<b>"+(fail ? "⚠️ 本批获取完成" : "✅ 本批获取完成")+"</b>\\n"+
-    "━━━━━━━━━━━━━━\\n\\n"+
-    "📦 本批资源：<b>"+valid.length+"</b> 个\\n"+
-    "📤 成功发送：<b>"+ok+"</b> 个\\n"+
-    (fail ? "⚠️ 发送失败：<b>"+fail+"</b> 个\\n" : "")+
-    (fail && lastError ? "\\n<i>失效记录会自动清理，下次随机获取不会再重复抽到。</i>\\n" : "")+
-    "\\n━━━━━━━━━━━━━━\\n"+
-    (options.mode==="latest"
-      ? "🆕 <i>这是最新资源的一批</i>"
-      : options.mode==="random"
-        ? "🎲 <i>这是本次随机获取的一批</i>"
-        : "✨ <i>资源已发送完成</i>");
+  const summary = (fail ? "⚠️ 本批 "+ok+"/"+valid.length : "✅ 本批 "+ok+" 个");
 
   // 无论本批是否有失败，都必须保留“再来一组”按钮。
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
@@ -8007,8 +7995,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     const sent=Number(album?.sent||0);
     const next=first.length;
     return sendHtml(token,chatId,
-      "📁 <b>"+safe+"</b>\n━━━━━━━━━━━━━━\n📦 已发送：<b>"+sent+"</b> / "+first.length+"\n📚 文件夹共：<b>"+all.length+"</b> 个\n\n👇 可继续获取下一组",
-      {reply_markup:folderProgressKeyboard(d.id,all.length,next)}
+      "📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length,
+      {reply_markup:folderProgressKeyboard(d.id,all.length,next),...(album?.lastMessageId?{reply_to_message_id:album.lastMessageId}:{})}
     );
   }
 
@@ -8038,9 +8026,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(next < all.length) {
     return tg(token,"sendMessage",{
       chat_id:chatId,
-      text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n👇 下面还有 <b>"+(all.length-next)+"</b> 个资源",
+      text:"📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length,
       parse_mode:"HTML",
-      reply_markup:folderProgressKeyboard(d.id,all.length,next)
+      reply_markup:folderProgressKeyboard(d.id,all.length,next),
+      ...(album?.lastMessageId?{reply_to_message_id:album.lastMessageId}:{})
     });
   }
   return tg(token,"sendMessage",{
