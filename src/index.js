@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import dns from "node:dns";
+import { createWebDavClient } from "./cloud123.js";
 import { initializeMySQL, persistMySQL, flushMySQL, isMySQLReady } from "../mysql-store.js";
 
 function loadEnvFile() {
@@ -3053,6 +3054,409 @@ const isAdmin = id => isSuperAdmin(id) || db.settings.admins.includes(String(id)
 const group = () => db.settings.requiredGroup;
 const repo = () => db.settings.repository;
 
+/* CLOUD123_RUNTIME_V1 */
+const cloud123State = new Map();
+let cloud123Syncing = false;
+
+function cloud123Config() {
+  const c = db.settings.cloud123 || {};
+  try {
+    return {
+      url: c.url ? decrypt(c.url) : "",
+      username: c.username ? decrypt(c.username) : "",
+      password: c.password ? decrypt(c.password) : "",
+      configuredAt: c.configuredAt || null
+    };
+  } catch (e) {
+    console.error("123 CLOUD CONFIG:", e.message);
+    return {url:"",username:"",password:"",configuredAt:null};
+  }
+}
+
+function cloud123Client() {
+  const c = cloud123Config();
+  if (!c.url || !c.username || !c.password) {
+    throw new Error("尚未配置123云盘 WebDAV。请先点击「🔗 配置123云盘」。");
+  }
+  return createWebDavClient(c);
+}
+
+function cloud123Menu() {
+  const c = cloud123Config();
+  const ready = Boolean(c.url && c.username && c.password);
+  return {
+    reply_markup:{
+      inline_keyboard:[
+        [{text:"🔗 配置123云盘",callback_data:"adm:cloud_setup"},{text:"🧪 测试连接",callback_data:"adm:cloud_test"}],
+        [{text:"📁 同步目录+文件",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
+        [{text:"🔐 授权账号",callback_data:"adm:cloud_account"},{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
+      ]
+    }
+  };
+}
+
+function cloud123StatusText() {
+  const c = cloud123Config();
+  const uploaded = db.resources.filter(x=>x.cloud123?.uploaded).length;
+  const failed = db.resources.filter(x=>x.cloud123?.error).length;
+  return [
+    "☁️ <b>123云盘</b>",
+    "",
+    "🔗 WebDAV：" + (c.url ? "✅ 已配置" : "❌ 未配置"),
+    "👤 Telegram 扫描仓库账号：" + ((db.settings.historyAuth||{}).session ? "✅ 已授权" : "❌ 未授权"),
+    "📚 已上传：" + uploaded + " 个",
+    "⚠️ 失败记录：" + failed + " 个",
+    "",
+    "📌 一键同步：先建立目录，再上传文件；小文件最多 5 个并发，单批 ≤1GB",
+    "💾 每个文件完成后立即删除服务器临时文件",
+    "",
+    "👇 请选择操作"
+  ].join("\n");
+}
+
+function cloud123RemoteName(name) {
+  return String(name || "未命名").replace(/[\\/:*?"<>|]/g,"_").trim().slice(0,80) || "未命名";
+}
+
+async function cloud123SyncDirectories(uid) {
+  const client = cloud123Client();
+  const dirs = Array.isArray(db.directories) ? db.directories : [];
+  const unique = new Map();
+  for (const d of dirs) {
+    const name = cloud123RemoteName(d?.name);
+    if (!unique.has(name)) unique.set(name,d);
+  }
+  const list = [...unique.entries()];
+  let created=0, existing=0, fail=0;
+  const duplicate = Math.max(0,dirs.length-list.length);
+
+  let progressMessage = null;
+  try {
+    progressMessage = await send(TOKEN,uid,
+      "⏳ 正在同步机器人目录...\n\n📁 共 "+list.length+" 个唯一目录\n⚙️ 正在检查 123 云盘目录，请稍候。",
+      cloud123Menu()
+    );
+  } catch {}
+
+  for (let i=0; i<list.length; i++) {
+    const [remoteName,d] = list[i];
+    try {
+      const result = await client.ensureDirectory(remoteName);
+      d.cloud123Path=remoteName;
+      d.cloud123SyncedAt=Date.now();
+      if (result?.created === false || result?.exists === true || result?.alreadyExists === true) existing++;
+      else created++;
+    } catch(e) {
+      fail++;
+      console.error("123 DIR:", d.name, e.message);
+    }
+
+    if (progressMessage?.message_id && ((i+1)%3===0 || i===list.length-1)) {
+      try {
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:progressMessage.message_id,
+          text:"⏳ <b>正在同步机器人目录</b>\n\n"+
+            "📁 进度："+(i+1)+" / "+list.length+"\n"+
+            "🆕 新建："+created+"\n"+
+            "✅ 已存在："+existing+"\n"+
+            "♻️ 重复目录："+duplicate+"\n"+
+            "⚠️ 失败："+fail,
+          parse_mode:"HTML",
+          reply_markup:cloud123Menu().reply_markup
+        });
+      } catch {}
+    }
+  }
+
+  saveDb();
+  return {created,existing,fail,duplicate,total:dirs.length,unique:list.length,progressMessage};
+}
+
+async function cloud123ScanAndUpload(uid) {
+  if (cloud123Syncing) return send(TOKEN,uid,"⏳ 123云盘同步已经在进行中，请不要重复启动。",adminMenu());
+  const r = repo();
+  if (!r) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。",adminMenu());
+  cloud123Syncing=true;
+  const started=Date.now();
+  let statusMessage=null;
+  let success=0, fail=0, skip=0;
+  let activeBatchBytes=0, totalUploadedBytes=0;
+  let currentFileName="";
+  let tick=null;
+  const uploadProgress = new Map();
+  let lastProgressEdit = 0;
+  let progressEditing = false;
+  const refreshUploadProgress = async () => {
+    if(!statusMessage?.message_id || progressEditing) return;
+    const now=Date.now();
+    if(now-lastProgressEdit<1000) return;
+    lastProgressEdit=now;
+    progressEditing=true;
+    try {
+      let sentBytes=0,totalBytes=0;
+      for(const p of uploadProgress.values()){sentBytes+=Number(p.sent||0);totalBytes+=Number(p.total||0);}
+      const mb=n=>(n/1024/1024).toFixed(1);
+      await tg(TOKEN,"editMessageText",{
+        chat_id:uid,message_id:statusMessage.message_id,
+        text:"🚀 <b>123云盘实时上传</b>\\n\\n"+
+          "📁 当前文件："+escapeHtml(currentFileName||"准备中")+"\\n"+
+          "📊 成功："+success+"  | 失败："+fail+"  | 跳过："+skip+"\\n"+
+          "📤 当前传输："+mb(sentBytes)+" / "+mb(totalBytes)+" MB\\n"+
+          "⚡ 小文件最多 5 个并发\\n📦 单批总量 ≤ 1GB",
+        parse_mode:"HTML"
+      });
+    } catch {} finally { progressEditing=false; }
+  };
+  try {
+    const client=cloud123Client();
+    let phase="正在连接 Telegram 扫描账号";
+    const render=()=>"<b>🚀 123云盘扫描上传</b>\n━━━━━━━━━━━━━━\n"+
+      "⏱ 已运行：<b>"+Math.floor((Date.now()-started)/1000)+"</b> 秒\n"+
+      "📍 当前：<b>"+phase+"</b>\n"+
+      "✅ 成功："+success+"  ⚠️ 失败："+fail+"  ⏭️ 跳过："+skip+"\n"+
+      (currentFileName?"📄 当前文件："+escapeHtml(currentFileName)+"\n":"")+
+      "📁 按现有文件夹建立目录\n"+
+      "📦 每批最多 1GB";
+    statusMessage=await sendHtml(TOKEN,uid, render(), cloud123Menu());
+    tick=setInterval(()=>{
+      if(!statusMessage?.message_id) return;
+      tg(TOKEN,"editMessageText",{chat_id:uid,message_id:statusMessage.message_id,text:render(),parse_mode:"HTML"}).catch(()=>{});
+    },5000);
+    const savedHistoryAuth = db.settings.historyAuth || {};
+    if (!savedHistoryAuth.session) {
+      phase="扫描账号未授权，请先点击「🔐 扫描账号」";
+      if(statusMessage?.message_id) {
+        try { await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:statusMessage.message_id,
+          text:render()+"\\n\\n<b>👉 请先点击「🔐 扫描账号」完成授权</b>",
+          parse_mode:"HTML",
+          reply_markup:cloud123Menu().reply_markup
+        }); } catch {}
+      }
+      return;
+    }
+
+    phase="连接已保存的 Telegram 扫描账号";
+    let clientHistory;
+    try {
+      clientHistory = await Promise.race([
+        ensureHistoryClient(uid),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Telegram 扫描账号连接超时（超过 20 秒）")), 20000))
+      ]);
+    } catch(e) {
+      phase="连接失败";
+      if(statusMessage?.message_id) {
+        try { await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:statusMessage.message_id,
+          text:render()+"\\n\\n❌ <b>连接失败：</b>"+escapeHtml(String(e?.message||e)),
+          parse_mode:"HTML"
+        }); } catch {}
+      }
+      return;
+    }
+    if(statusMessage?.message_id) {
+      try { await tg(TOKEN,"editMessageText",{
+        chat_id:uid,message_id:statusMessage.message_id,
+        text:"<b>✅ Telegram 扫描账号连接成功</b>\\n\\n"+
+          "🔎 正在读取资源仓库历史消息...\\n"+
+          "📁 正在检查待上传资源，请稍候...",
+        parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+      }); } catch {}
+    }
+    const entity=await findHistoryEntity(clientHistory);
+    if(statusMessage?.message_id) {
+      try { await tg(TOKEN,"editMessageText",{
+        chat_id:uid,message_id:statusMessage.message_id,
+        text:"<b>✅ 扫描账号已连接</b>\\n\\n"+
+          "📚 正在统计待上传资源...\\n"+
+          "⏳ 很快开始上传，请稍候...",
+        parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+      }); } catch {}
+    }
+    const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded);
+    if(statusMessage?.message_id) {
+      try {
+        await tg(TOKEN,"editMessageText",{
+          chat_id:uid,
+          message_id:statusMessage.message_id,
+          text:"<b>🚀 开始扫描并上传123云盘</b>\n\n"+
+            "📚 待处理："+resources.length+" 个\n"+
+            "📁 将按机器人现有文件夹建立目录\n"+
+            "📦 当前批次最多 1GB，超出自动进入下一批。",
+          parse_mode:"HTML",
+          reply_markup:cloud123Menu().reply_markup
+        });
+      } catch {}
+    }
+
+    const BATCH_LIMIT = 1024 * 1024 * 1024;
+    const SMALL_CONCURRENCY = 5;
+    let batchNumber = 1;
+    let batchBytes = 0;
+
+    const uploadOne = async (item) => {
+      if(!item || !Number(item.messageId)) { skip++; return 0; }
+      if(item.cloud123?.uploaded) { skip++; return 0; }
+      if(item.textOnly) {
+        item.cloud123={uploaded:false,skipped:true,reason:"text-only",at:Date.now()};
+        skip++;
+        return 0;
+      }
+
+      const d=db.directories.find(x=>String(x.id)===String(item.directoryId));
+      const remoteDir=cloud123RemoteName(d?.name || "未分类");
+      const found=await clientHistory.getMessages(entity,{ids:[Number(item.messageId)]});
+      const message=Array.isArray(found)?found[0]:found;
+      if(!message || !message.media) {
+        item.cloud123={uploaded:false,error:"Telegram 历史消息/媒体不存在",at:Date.now()};
+        fail++;
+        return 0;
+      }
+
+      const originalName=cloud123RemoteName(message.file?.name || item.title || ("resource-"+item.messageId));
+      const tempDir=path.join("/tmp","cloud123-upload");
+      fs.mkdirSync(tempDir,{recursive:true});
+      const tempPath=path.join(tempDir,String(item.messageId)+"-"+crypto.randomUUID()+"-"+originalName);
+      try {
+        await clientHistory.downloadMedia(message,{outputFile:tempPath});
+        const stat=await fs.promises.stat(tempPath);
+        currentFileName=originalName;
+        uploadProgress.set(String(item.messageId),{sent:0,total:stat.size,name:originalName});
+        await client.uploadFile(tempPath,remoteDir,originalName,(sent,total)=>{
+          uploadProgress.set(String(item.messageId),{sent,total,name:originalName});
+          if (typeof refreshUploadProgress === "function") refreshUploadProgress();
+        });
+        uploadProgress.delete(String(item.messageId));
+        item.cloud123={
+          uploaded:true,
+          path:remoteDir+"/"+originalName,
+          size:stat.size,
+          uploadedAt:Date.now()
+        };
+        success++;
+        totalUploadedBytes += stat.size;
+        return stat.size;
+      } catch(e) {
+        uploadProgress.delete(String(item.messageId));
+        item.cloud123={uploaded:false,error:String(e.message||e).slice(0,500),at:Date.now()};
+        fail++;
+        console.error("123 UPLOAD:", item.title, e);
+        return 0;
+      } finally {
+        try { await fs.promises.rm(tempPath,{force:true}); } catch {}
+        currentFileName="";
+        if (typeof refreshUploadProgress === "function") await refreshUploadProgress();
+      }
+    };
+
+    for(let i=0;i<resources.length;) {
+      const batch=[];
+      let plannedBytes=0;
+
+      while(i<resources.length && batch.length<SMALL_CONCURRENCY) {
+        const item=resources[i];
+        const estimatedSize=Number(item?.size || item?.fileSize || item?.bytes || 0);
+
+        if(batch.length===0) {
+          batch.push(item);
+          plannedBytes=estimatedSize>0 ? estimatedSize : BATCH_LIMIT;
+          i++;
+          continue;
+        }
+
+        if(estimatedSize>0 && plannedBytes+estimatedSize<=BATCH_LIMIT) {
+          batch.push(item);
+          plannedBytes+=estimatedSize;
+          i++;
+          continue;
+        }
+
+        break;
+      }
+
+      if(batch.length===0) continue;
+
+      const displayGB=(plannedBytes/1024/1024/1024).toFixed(2);
+      if(statusMessage?.message_id) {
+        try { await tg(TOKEN,"editMessageText",{
+          chat_id:uid,message_id:statusMessage.message_id,
+          text:"🚀 <b>123云盘同步中</b>\\n\\n"+
+            "📦 第 "+batchNumber+" 批\\n"+
+            "📁 本批文件："+batch.length+" 个\\n"+
+            "💾 预计传输："+displayGB+" GB\\n"+
+            "⚡ 最多 "+SMALL_CONCURRENCY+" 个小文件并发\\n"+
+            "📊 已完成："+success+" / "+resources.length,
+          parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+        }); } catch {}
+      }
+
+      batchBytes=0;
+      const results=await Promise.all(batch.map(async item=>{
+        const bytes=await uploadOne(item);
+        batchBytes+=bytes;
+        return bytes;
+      }));
+      batchBytes=results.reduce((a,b)=>a+b,0);
+
+      saveDb();
+      await refreshUploadProgress();
+
+      if(i<resources.length) {
+        if(statusMessage?.message_id) {
+          try { await tg(TOKEN,"editMessageText",{
+            chat_id:uid,message_id:statusMessage.message_id,
+            text:"✅ <b>第 "+batchNumber+" 批完成</b>\\n\\n"+
+              "📦 本批实际传输："+(batchBytes/1024/1024/1024).toFixed(2)+" GB\\n"+
+              "📊 总进度："+i+" / "+resources.length+"\\n"+
+              "⏭️ 下一批将继续，单批上限 1GB。",
+            parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
+          }); } catch {}
+        }
+        batchNumber++;
+      }
+    }
+
+    saveDb();
+    logAdmin(uid,"123云盘扫描上传","成功"+success+" / 失败"+fail+" / 跳过"+skip);
+    if(statusMessage?.message_id) {
+      try { await tg(TOKEN,"editMessageText",{
+        chat_id:uid,
+        message_id:statusMessage.message_id,
+        text:"✅ <b>123云盘同步完成</b>\n\n"+
+          "📚 本次处理："+resources.length+" 个\n"+
+          "✅ 成功："+success+"\n"+
+          "⚠️ 失败："+fail+"\n"+
+          "⏭️ 跳过："+skip+"\n"+
+          "⏱️ 用时："+Math.max(1,Math.round((Date.now()-started)/1000))+" 秒\n\n"+
+          "📁 目录按照机器人现有文件夹整理。",
+        parse_mode:"HTML",
+        reply_markup:cloud123Menu().reply_markup
+      }); } catch {}
+    }
+  } catch(e) {
+    console.error("123 SYNC:",e);
+    if(statusMessage?.message_id) {
+      try { await tg(TOKEN,"editMessageText",{
+        chat_id:uid,
+        message_id:statusMessage.message_id,
+        text:"❌ <b>123云盘同步中断</b>\n\n"+escapeHtml(e.message||String(e))+"\n\n"+
+          "已完成的文件会保留上传记录，下次可以继续。",
+        parse_mode:"HTML",
+        reply_markup:cloud123Menu().reply_markup
+      }); } catch {}
+    } else {
+      await send(TOKEN,uid,"❌ 123云盘同步失败：\n"+String(e.message||e),adminMenu());
+    }
+  } finally {
+    if(tick) clearInterval(tick);
+    cloud123Syncing=false;
+  }
+}
+
+
 function encrypt(value) {
   const key = crypto.createHash("sha256").update(SECRET).digest();
   const iv = crypto.randomBytes(12);
@@ -4916,6 +5320,43 @@ async function mainMessage(msg) {
   }
 
   if(t==="⭐ 我的资源") return sendHtml(TOKEN,uid,userFeatureText(),{reply_markup:userFeatureKeyboard()});
+
+  if(admin && cloud123State.has(String(uid))) {
+    const cs=cloud123State.get(String(uid));
+    if(t==="/cancel") {
+      cloud123State.delete(String(uid));
+      return send(TOKEN,uid,"❌ 已取消123云盘配置。",adminMenu());
+    }
+    if(cs.step==="url") {
+      if(!/^https?:\/\//i.test(t.trim())) return send(TOKEN,uid,"⚠️ WebDAV 地址格式不正确，请以 http:// 或 https:// 开头。");
+      cloud123State.set(String(uid),{step:"username",url:t.trim()});
+      return send(TOKEN,uid,"👤 请输入123云盘 WebDAV 用户名。\n\n发送 /cancel 可取消。");
+    }
+    if(cs.step==="username") {
+      if(!t.trim()) return send(TOKEN,uid,"⚠️ 用户名不能为空，请重新发送。");
+      cloud123State.set(String(uid),{step:"password",url:cs.url,username:t.trim()});
+      return send(TOKEN,uid,"🔑 请输入123云盘 WebDAV 密码。\n\n发送 /cancel 可取消。");
+    }
+    if(cs.step==="password") {
+      if(!t.trim()) return send(TOKEN,uid,"⚠️ 密码不能为空，请重新发送。");
+      db.settings.cloud123={
+        url:encrypt(cs.url),
+        username:encrypt(cs.username),
+        password:encrypt(t.trim()),
+        configuredAt:Date.now()
+      };
+      saveDb();
+      cloud123State.delete(String(uid));
+      return sendHtml(TOKEN,uid,
+        "<b>✅ 123云盘配置已保存</b>\n\n"+
+        "🔗 WebDAV：已保存\n"+
+        "👤 账号："+escapeHtml(cs.username)+"\n\n"+
+        "下一步点击「🧪 测试连接」。",
+        cloud123Menu()
+      );
+    }
+  }
+
   if(t==="/start" || t==="🏠 开始" || t==="开始使用" || t==="🏠 开始使用") {
     const welcomeStore=db.settings||{};
     if(!welcomeStore.welcomeUsers || typeof welcomeStore.welcomeUsers!=="object") welcomeStore.welcomeUsers={};
@@ -5515,6 +5956,56 @@ async function mainMessage(msg) {
     if(typeof cloud123StatusText==="function" && typeof cloud123Menu==="function") return sendHtml(TOKEN,uid,cloud123StatusText(),cloud123Menu());
     return sendHtml(TOKEN,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n已收到「"+escapeHtml(t)+"」。\n扫描上传还没加载，所以不会开始。\n请先在服务器执行 <code>node cloud123-runtime.js</code> 后重启。",adminResourceMenu());
   }
+
+  if(t==="☁️ 123云盘"&&admin) {
+    return sendHtml(TOKEN,uid,cloud123StatusText(),cloud123Menu());
+  }
+  if(t==="🔗 配置123云盘"&&admin) {
+    cloud123State.set(String(uid),{step:"url"});
+    return send(TOKEN,uid,
+      "🔗 <b>配置123云盘 WebDAV</b>\n\n"+
+      "请发送123云盘提供的 WebDAV 地址。\n\n"+
+      "⚠️ 不要发送 Telegram Bot Token。\n"+
+      "发送 /cancel 可取消。",
+      {parse_mode:"HTML"});
+  }
+  if(t==="🧪 测试连接"&&admin) {
+    try {
+      const client=cloud123Client();
+      return client.test().then(() => sendHtml(TOKEN,uid,
+        "<b>✅ 123云盘连接正常</b>\n\n"+
+        "WebDAV 已可以访问。\n\n"+
+        "下一步可以点击「📁 同步目录+文件」。",
+        cloud123Menu()
+      ));
+    } catch(e) {
+      return send(TOKEN,uid,"❌ 123云盘连接失败：\n\n"+String(e.message||e),cloud123Menu());
+    }
+  }
+  if(t==="📁 同步机器人目录"&&admin) {
+    try {
+      const result=await cloud123SyncDirectories(uid);
+      const syncedFolders=Number(result.created||0)+Number(result.existing||0);
+      await send(TOKEN,uid,
+        "📁 <b>目录同步完成，开始同步文件</b>\n\n"+
+        "📚 机器人目录："+result.total+" 个\n"+
+        "✅ 目录已就绪："+syncedFolders+" 个\n"+
+        "⚠️ 目录失败："+result.fail+" 个\n\n"+
+        "🚀 现在继续读取 Telegram 资源并上传文件。",
+        {parse_mode:"HTML",...cloud123Menu()}
+      );
+      return cloud123ScanAndUpload(uid);
+    } catch(e) {
+      return send(TOKEN,uid,"❌ 123云盘同步失败：\n\n"+String(e.message||e),cloud123Menu());
+    }
+  }
+  if(t==="🚀 扫描并上传"&&admin) {
+    return cloud123ScanAndUpload(uid);
+  }
+  if(t==="🔄 云盘同步"&&admin) {
+    return sendHtml(TOKEN,uid,cloud123StatusText(),cloud123Menu());
+  }
+
   if(t==="📦 资源管理"&&admin) return send(TOKEN,uid,"📦 <b>资源管理</b>\\n\\n上传资源、管理文件夹、资源仓库和历史扫描。\\n\\n👇 <i>请选择操作</i>",{parse_mode:"HTML",...adminResourceMenu()});
   if(t==="⚙️ 系统设置"&&admin) return send(TOKEN,uid,"⚙️ <b>平台设置</b>\\n\\n指定访问群、管理员和系统参数。\\n\\n👇 <i>请选择设置</i>",{parse_mode:"HTML",...adminSettingsMenu()});
   if(t==="📊 数据与运营"&&admin) return send(TOKEN,uid,"📊 <b>数据与运营</b>\\n\\n查看平台数据、操作记录和广播设置。\\n\\n👇 <i>请选择功能</i>",{parse_mode:"HTML",...adminOpsMenu()});
@@ -6255,7 +6746,22 @@ async function handleDirectoryCallback(token, q, child=false) {
       }
       return sendHtml(token,uid,"<b>☁️ 123云盘</b>\n━━━━━━━━━━━━━━\n\n扫描上传功能还没加载，所以刚才点了没有开始。\n\n先配置 WebDAV 后，再在服务器执行：\n<code>node cloud123-runtime.js</code>\n然后重启机器人。",{reply_markup:{inline_keyboard:[[{text:"🔄 再试一次扫描上传",callback_data:"adm:cloud_scan"}],[{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]]}});
     }
-    if(data==="adm:cloud_account"){\n      await answer("打开123云盘账号");\n      const auth=db.settings.historyAuth||{};\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔐 123云盘账号</b>\\n━━━━━━━━━━━━━━\\n\\n"+\n        "📌 与扫描仓库账号共用同一个 Telegram 账号。\\n\\n"+\n        "授权状态："+(auth.session?"✅ 已授权":"❌ 未授权")+"\\n\\n"+\n        (auth.session?"123云盘将直接使用当前扫描仓库账号。":"请先完成扫描仓库账号授权。"),\n        parse_mode:"HTML",reply_markup:{inline_keyboard:[\n          [{text:"🔐 开始授权",callback_data:"adm:scan_auth_start"}],\n          [{text:"📚 查看扫描账号",callback_data:"adm:scan_auth"}],\n          [{text:"⬅️ 返回123云盘",callback_data:"adm:cloud123"}]\n        ]}});\n    }\n    if(data==="adm:scan_auth"){
+    if(data==="adm:cloud_account"){
+      await answer("打开123云盘账号");
+      const auth=db.settings.historyAuth||{};
+      return safeEdit(token,{
+        chat_id:chatId,
+        message_id:messageId,
+        text:"<b>🔐 123云盘账号</b>\n━━━━━━━━━━━━━━\n\n📌 与扫描仓库账号共用同一个 Telegram 账号。\n\n授权状态："+(auth.session?"✅ 已授权":"❌ 未授权"),
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[
+          [{text:"🔐 开始授权",callback_data:"adm:scan_auth_start"}],
+          [{text:"📚 查看扫描账号",callback_data:"adm:scan_auth"}],
+          [{text:"⬅️ 返回123云盘",callback_data:"adm:cloud123"}]
+        ]}
+      });
+    }
+    if(data==="adm:scan_auth"){
       await answer("打开扫描账号");
       const auth=db.settings.historyAuth||{};
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔐 扫描账号</b>\n━━━━━━━━━━━━━━\n\n"+
