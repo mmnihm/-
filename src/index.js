@@ -3731,11 +3731,20 @@ async function backupBotApi(method, body){
 }
 async function backupResourceFile(item){
   const cfg=backupBotConfig();
-  if(!cfg.token || !cfg.chatId || !item?.fileId || item.backupFileId) return;
-  const info=await tg(TOKEN,"getFile",{file_id:item.fileId});
+  if(!cfg.token || !cfg.chatId || item?.backupFileId) return;
+  let fileId=item.fileId||"";
+  let type=item.fileType||"Document";
+  if(!fileId && item.chatId && item.messageId){
+    const forwarded=await tg(TOKEN,"forwardMessage",{chat_id:cfg.chatId, from_chat_id:item.chatId, message_id:item.messageId});
+    const media=forwarded?.document||forwarded?.video||forwarded?.audio||forwarded?.animation||forwarded?.voice||forwarded?.photo?.at?.(-1);
+    fileId=media?.file_id||"";
+    type=forwarded?.document?"Document":forwarded?.video?"Video":forwarded?.audio?"Audio":forwarded?.animation?"Animation":forwarded?.photo?"Photo":"Document";
+    if(forwarded?.message_id) tg(TOKEN,"deleteMessage",{chat_id:cfg.chatId, message_id:forwarded.message_id}).catch(()=>{});
+  }
+  if(!fileId) throw new Error("仓库消息里没有可备份的文件");
+  const info=await tg(TOKEN,"getFile",{file_id:fileId});
   if(!info?.file_path) throw new Error("主机器人取不到原文件");
   const url="https://api.telegram.org/file/bot"+TOKEN+"/"+info.file_path;
-  const type=String(item.fileType||"Document");
   const sent=await backupBotApi("send"+type, {chat_id:cfg.chatId, [type.toLowerCase()]:url, caption:String(item.caption||item.title||"").slice(0,200)});
   const file=sent?.document||sent?.video||sent?.audio||sent?.animation||sent?.photo?.at?.(-1)||sent?.photo?.[sent.photo.length-1];
   item.backupFileId=file?.file_id||"";
@@ -3746,18 +3755,18 @@ async function backupResourceFile(item){
 async function backfillBackupBot(uid){
   if(globalThis.backupBackfillRunning) return;
   globalThis.backupBackfillRunning=true;
-  let ok=0, fail=0, skip=0;
+  let ok=0, fail=0, skip=0, lastError="";
   try{
     for(const item of db.resources||[]){
       if(item.backupFileId){ skip++; continue; }
-      if(!item.fileId){ skip++; continue; }
+      if(!item.fileId && !(item.chatId && item.messageId)){ skip++; continue; }
       try{ await backupResourceFile(item); ok++; }
-      catch(e){ fail++; console.warn("⚠️ 补备份失败:",String(e?.message||e)); }
+      catch(e){ fail++; lastError=String(e?.message||e); console.warn("⚠️ 补备份失败:",lastError); }
       if((ok+fail)%10===0) saveDb();
       await sleep(400);
     }
     saveDb();
-    await sendHtml(TOKEN,uid,"<b>✅ 现有文件补备份完成</b>\n\n成功：<b>"+ok+"</b>\n失败：<b>"+fail+"</b>\n跳过：<b>"+skip+"</b>",adminMenu());
+    await sendHtml(TOKEN,uid,"<b>✅ 现有文件补备份完成</b>\n\n成功：<b>"+ok+"</b>\n失败：<b>"+fail+"</b>\n跳过：<b>"+skip+"</b>"+(lastError?"\n\n最后错误："+escapeHtml(lastError):""),adminMenu());
   } finally { globalThis.backupBackfillRunning=false; }
 }
 
