@@ -1493,7 +1493,7 @@ const sendHtml = (token, chat_id, text, extra = {}) =>
   tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
 
 function emptyDb() {
-  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[],resourceSources:[],repositoryMigration:{status:"idle",taskKey:"",ownerId:"",source:null,target:null,sourceId:null,targetId:null,sourceTitle:"",targetTitle:"",scanned:0,queued:0,migrated:0,skipped:0,failed:0,current:0,total:0,startedAt:null,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[],progressMessageId:null,autoSync:false},repositoryAutoSync:{enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:0,batchSize:5,perMessageDelay:2500,batchDelay:8000}}};
+  return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[],resourceSources:[],repositoryMigration:{status:"idle",taskKey:"",ownerId:"",source:null,target:null,sourceId:null,targetId:null,sourceTitle:"",targetTitle:"",scanned:0,queued:0,migrated:0,skipped:0,failed:0,current:0,total:0,startedAt:null,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[],progressMessageId:null,autoSync:false},repositoryAutoSync:{enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:0,batchSize:40,perMessageDelay:0,batchDelay:0}}};
 }
 function logAdmin(uid,action,detail="") {
   if(!db.settings.logs) db.settings.logs=[];
@@ -2609,7 +2609,7 @@ async function processRepositoryAutoSyncQueue(){
       // 原生 media_group_id 对应的相册分组；因此只要把连续消息一起提交即可。
       // 单次最多 100 条，仍严格保持旧仓库顺序。
       let batch=state.queue
-        .slice(0,100)
+        .slice(0,40)
         .filter(x=>Number(x?.messageId||0)>0)
         .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
 
@@ -3446,7 +3446,7 @@ async function cloud123ScanAndUpload(uid) {
     }
 
     const BATCH_LIMIT = 1024 * 1024 * 1024;
-    const SMALL_CONCURRENCY = 1;
+    const SMALL_CONCURRENCY = 3;
     let batchNumber = 1;
     let batchBytes = 0;
 
@@ -3535,14 +3535,17 @@ async function cloud123ScanAndUpload(uid) {
         const item=resources[i];
         const estimatedSize=Number(item?.size || item?.fileSize || item?.bytes || 0);
 
+        const large=estimatedSize>=20*1024*1024;
         if(batch.length===0) {
           batch.push(item);
-          plannedBytes=estimatedSize>0 ? estimatedSize : BATCH_LIMIT;
+          plannedBytes=estimatedSize>0 ? estimatedSize : 1;
           i++;
+          if(large) break;
           continue;
         }
+        if(large || batch.length>=SMALL_CONCURRENCY) break;
 
-        if(estimatedSize>0 && plannedBytes+estimatedSize<=BATCH_LIMIT) {
+        if(plannedBytes+Math.max(estimatedSize,1)<=BATCH_LIMIT) {
           batch.push(item);
           plannedBytes+=estimatedSize;
           i++;
@@ -3893,13 +3896,15 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
         if(current.statusSending) return;
         current.statusSending=true;
         states.set(key,current);
-        const oldId=Number(current.controlMessageId||0);
+        const controlId=Number(current.controlMessageId||0);
+        if(controlId>0) {
+          const edited=await safeEdit(token,{chat_id:uid,message_id:controlId,text,parse_mode:"HTML",reply_markup:statusMarkup});
+          current.statusSending=false;
+          if(edited) return;
+        }
         const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
         current.statusSending=false;
         await saveUploadControlMessage(sent);
-        if(oldId>0 && oldId!==Number(sent?.message_id||0)) {
-          tg(token,"deleteMessage",{chat_id:uid,message_id:oldId}).catch(()=>{});
-        }
       } catch(e) {
         console.warn("⚠️ 上传进度更新失败:",String(e?.message||e));
       }
@@ -6384,7 +6389,7 @@ async function mainMessage(msg) {
         "⏳ <b>已结束上传</b>\n━━━━━━━━━━━━━━\n\n"+
         "📁 文件夹：<b>"+escapeHtml(finishState.directoryName||"未命名")+"</b>\n"+
         "📥 本批收到：<b>"+count+"</b> 个\n\n"+
-        "📦 正在后台转存资源，请稍候……",
+        "📥 已收到，正在后台转入仓库群，你可以继续操作。",
         {reply_markup:{remove_keyboard:true}}
       ).catch(()=>{});
       void finalizeUpload(uid,finishState,TOKEN,key,adminMenu()).catch(e=>{
@@ -6841,7 +6846,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     await answer(count?"已结束，正在整理资源":"当前批次没有文件",false);
     // 先编辑当前按钮消息，确保用户立即看到响应。
     await safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"⏳ <b>已结束上传</b>\n━━━━━━━━━━━━━━\n\n📁 文件夹：<b>"+escapeHtml(finishState.directoryName||"未命名")+"</b>\n📥 本批收到：<b>"+count+"</b> 个\n\n📦 正在后台转存资源，请稍候……",
+      text:"⏳ <b>已结束上传</b>\n━━━━━━━━━━━━━━\n\n📁 文件夹：<b>"+escapeHtml(finishState.directoryName||"未命名")+"</b>\n📥 本批收到：<b>"+count+"</b> 个\n\n📥 已收到，正在后台转入仓库群，你可以继续操作。",
       parse_mode:"HTML",reply_markup:{inline_keyboard:[]}});
     if(!count){
       states.delete(finishKey);
@@ -7545,7 +7550,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
-      text:"⏳ <b>已结束上传</b>\n\n📦 正在后台转存资源，请稍候……\n\n完成后会自动发送整理结果。",
+      text:"⏳ <b>已结束上传</b>\n\n📥 已收到，正在后台转入仓库群，你可以继续操作。\n\n完成后会自动发送整理结果。",
       parse_mode:"HTML",
       reply_markup:{inline_keyboard:[]}
     });
