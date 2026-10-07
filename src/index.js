@@ -7933,6 +7933,27 @@ async function boot(){
   }
 
   console.log("🛡️ 内容保护：", contentProtectionEnabled() ? "开启" : "关闭", "自动删除：", autoDeleteText());
+  if (!globalThis.cloud123AutoStarted) {
+    globalThis.cloud123AutoStarted = true;
+    const runCloud123Auto = async () => {
+      try {
+        if (cloud123Syncing) return;
+        const cfg = cloud123Config();
+        if (!cfg.url || !cfg.username || !cfg.password) return;
+        if (!repo()) return;
+        if (!db.settings?.historyAuth?.session) return;
+        const adminId = [...ADMIN_IDS][0];
+        if (!adminId) return;
+        console.log("☁️ 123云盘自动上传开始");
+        await cloud123ScanAndUpload(adminId);
+      } catch (e) {
+        console.error("❌ 123云盘自动上传失败:", String(e?.message || e));
+      }
+    };
+    setTimeout(() => runCloud123Auto().catch(()=>{}), 60000);
+    setInterval(() => runCloud123Auto().catch(()=>{}), 10 * 60 * 1000);
+    console.log("☁️ 123云盘自动上传已开启，每 10 分钟检查一次");
+  }
   if (!backgroundTimersStarted) {
     backgroundTimersStarted = true;
     setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
