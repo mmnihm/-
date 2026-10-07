@@ -142,7 +142,12 @@ function callbackSelfCheck(){
     if(duplicates.length) console.warn("⚠️ 重复 callback_data:",duplicates.slice(0,20));
     const required=["admin:health","adm:cloud_account","adm:auto_add","adm:auto_start"];
     for(const value of required){
-      if(!source.includes('data==="'+value+'"') && !source.includes('data.startsWith("'+value+'")')){
+      const explicit =
+        source.includes('data==="'+value+'"') ||
+        source.includes('data.startsWith("'+value+'")') ||
+        (value==="adm:auto_add" && source.includes('route==="auto_add"')) ||
+        (value==="adm:auto_start" && source.includes('route==="auto_start"'));
+      if(!explicit){
         console.warn("⚠️ CALLBACK ROUTE CHECK: 未找到显式路由 "+value);
       }
     }
