@@ -3427,7 +3427,8 @@ async function cloud123ScanAndUpload(uid) {
         parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup
       }); } catch {}
     }
-    const resources=[...db.resources].filter(x=>!x.cloud123?.uploaded && !x.cloud123?.skipped && Number(x.cloud123?.attempts||0) < 3);
+    const repoId=String(repo()?.chatId||"");
+    const resources=[...db.resources].filter(x=>(!repoId || String(x.chatId)===repoId) && !x.cloud123?.uploaded && !x.cloud123?.skipped && Number(x.cloud123?.attempts||0) < 3);
     planned=resources.length;
     if(statusMessage?.message_id) {
       try {
@@ -6197,12 +6198,14 @@ async function mainMessage(msg) {
     try {
       const result=await cloud123SyncDirectories(uid);
       const syncedFolders=Number(result.created||0)+Number(result.existing||0);
+      const repoCount=db.resources.filter(x=>repo() && String(x.chatId)===String(repo().chatId)).length;
       await send(TOKEN,uid,
-        "📁 <b>目录同步完成，开始同步文件</b>\n\n"+
+        "📁 <b>目录同步完成，开始同步仓库群文件</b>\n\n"+
         "📚 机器人目录："+result.total+" 个\n"+
         "✅ 目录已就绪："+syncedFolders+" 个\n"+
+        "📦 仓库群文件："+repoCount+" 个\n"+
         "⚠️ 目录失败："+result.fail+" 个\n\n"+
-        "🚀 现在继续读取 Telegram 资源并上传文件。",
+        "🚀 现在上传仓库群里的文件，不只同步文件夹。",
         {parse_mode:"HTML",...cloud123Menu()}
       );
       return cloud123ScanAndUpload(uid);
