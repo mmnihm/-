@@ -3227,6 +3227,7 @@ function cloud123Menu() {
         [{text:"🔗 配置123云盘",callback_data:"adm:cloud_setup"},{text:"🧪 测试连接",callback_data:"adm:cloud_test"}],
         [{text:"📁 同步目录+文件",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
         [{text:"🔄 刷新进度",callback_data:"adm:cloud123"}],
+        [{text:"🔁 重试失败文件",callback_data:"adm:cloud_retry"}],
         [{text:"🔐 授权账号",callback_data:"adm:cloud_account"},{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
       ]
     }
@@ -3731,9 +3732,27 @@ function adminMaintenanceMenu(){return{inline_keyboard:[
  [{text:"🗃️ 备份恢复",callback_data:"admin:backup"}],
  [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
 ]};}
+function adminStatusText(){
+  const auth=db.settings.historyAuth||{};
+  const cloud=cloud123Config();
+  const supportCount=supportActiveSessions().length;
+  const failed=db.resources.filter(x=>x.cloud123?.error && !x.cloud123?.uploaded).length;
+  return [
+    "<b>⚙️ 管理中心</b>",
+    "━━━━━━━━━━━━━━",
+    "",
+    "📦 仓库："+(repo()?"✅ 已绑定":"❌ 未绑定"),
+    "🔐 扫描账号："+(auth.session?"✅ 已登录":"❌ 未登录"),
+    "☁️ 123云盘："+(cloud.url&&cloud.username?"✅ 已配置":"❌ 未配置")+(failed?"，失败 "+failed+" 个":""),
+    "💬 客服待处理："+supportCount+" 个",
+    "",
+    "👇 常用功能在下面"
+  ].join("\n");
+}
 function adminRootInline(){return{inline_keyboard:[
- [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"📦 资源目录",callback_data:"admin:resource"}],
+ [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"🔐 扫描账号",callback_data:"adm:scan_auth"}],
  [{text:"⚡ 自动同步",callback_data:"adm:auto"},{text:"☁️ 123云盘",callback_data:"adm:cloud123"}],
+ [{text:"📦 资源目录",callback_data:"admin:resource"},{text:"💬 客服",callback_data:"support:admin"}],
  [{text:"更多",callback_data:"admin:more"}],
  [{text:"🏠 返回首页",callback_data:"admin:home"}]
 ]};}
@@ -6990,8 +7009,21 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(!isAdmin(uid) || (child && data!=="admin:upload" && data!=="admin:home")){void answer("无权限",true);return;}
     const route=data.slice(data.indexOf(":")+1);
     const key=uploadStateKey(uid,child,token);
-    if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 管理中心</b>\n━━━━━━━━━━━━━━\n\n👇 请选择管理功能",parse_mode:"HTML",reply_markup:adminRootInline()});
+    if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:adminStatusText(),parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
+    if(data==="adm:cloud_retry"){
+      let reset=0;
+      for(const item of db.resources){
+        if(item.cloud123?.error && !item.cloud123?.uploaded){
+          item.cloud123.attempts=0;
+          item.cloud123.error="";
+          reset++;
+        }
+      }
+      saveDb();
+      await answer("已加入重试");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔁 已重新加入失败文件</b>\n\n数量：<b>"+reset+"</b> 个\n\n后台会静默重试，点刷新可看剩余。",parse_mode:"HTML",reply_markup:cloud123Menu().reply_markup});
+    }
     if(data==="adm:cloud123" || data==="adm:cloud_sync" || data==="adm:cloud_scan" || data==="adm:cloud_setup" || data==="adm:cloud_test"){
       await answer(data==="adm:cloud_scan" ? "开始扫描上传" : "打开123云盘");
       if(data==="adm:cloud_scan" && typeof cloud123ScanAndUpload==="function") return cloud123ScanAndUpload(uid);
