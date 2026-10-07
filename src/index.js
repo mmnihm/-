@@ -6924,14 +6924,21 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="adm:scan_auth"){
       await answer("打开扫描账号");
       const auth=db.settings.historyAuth||{};
+      const missing=[];
+      if(!auth.apiId) missing.push("API ID");
+      if(!auth.apiHash) missing.push("API HASH");
+      if(!auth.phone) missing.push("手机号");
+      if(!auth.session) missing.push("登录会话");
+      const next=missing.length ? "还缺："+missing.join("、")+"。点「开始授权」，按提示发送。" : "扫描账号已登录，123云盘可以直接使用。";
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🔐 扫描账号</b>\n━━━━━━━━━━━━━━\n\n"+
-        "API："+(auth.apiId?"已填写":"未填写")+"\n"+
-        "HASH："+(auth.apiHash?"已填写":"未填写")+"\n"+
-        "手机号："+(auth.phone?"已填写":"未填写")+"\n"+
-        "登录："+(auth.session?"已授权":"未授权")+"\n\n"+
-        "点下面按钮开始授权。按提示发送 API ID、API HASH、手机号和验证码。",
+        "API ID："+(auth.apiId?"✅ 已保存":"❌ 未保存")+"\n"+
+        "API HASH："+(auth.apiHash?"✅ 已保存":"❌ 未保存")+"\n"+
+        "手机号："+(auth.phone?"✅ 已保存":"❌ 未保存")+"\n"+
+        "登录会话："+(auth.session?"✅ 已保存":"❌ 未保存")+"\n\n"+
+        next,
         parse_mode:"HTML",reply_markup:{inline_keyboard:[
           [{text:"🔐 开始授权",callback_data:"adm:scan_auth_start"}],
+          [{text:"🔄 刷新状态",callback_data:"adm:scan_auth"}],
           [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
         ]}});
     }
