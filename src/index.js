@@ -3723,15 +3723,21 @@ function adminMaintenanceMenu(){return{inline_keyboard:[
 function adminStatusText(){
   const auth=db.settings.historyAuth||{};
   const cloud=cloud123Config();
+  const sync=repositoryAutoSyncState();
   const supportCount=supportActiveSessions().length;
   const failed=db.resources.filter(x=>x.cloud123?.error && !x.cloud123?.uploaded).length;
+  const sheets=Boolean(process.env.GOOGLE_SHEETS_WEBHOOK_URL||process.env.GOOGLE_SHEETS_ID);
   return [
-    "<b>⚙️ 管理中心</b>",
+    "<b>⚙️ 平台状态</b>",
     "━━━━━━━━━━━━━━",
     "",
-    "📦 仓库："+(repo()?"✅ 已绑定":"❌ 未绑定"),
-    "🔐 扫描账号："+(auth.session?"✅ 已登录":"❌ 未登录"),
-    "☁️ 123云盘："+(cloud.url&&cloud.username?"✅ 已配置":"❌ 未配置")+(failed?"，失败 "+failed+" 个":""),
+    "📦 仓库："+(repo()?"✅ 正常":"❌ 未绑定"),
+    "📁 文件夹："+db.directories.length+" 个",
+    "📚 资源："+db.resources.length+" 个",
+    "🔐 扫描账号："+(auth.session?"✅ 正常":"❌ 未登录"),
+    "☁️ 123云盘："+(cloud.url&&cloud.username?"✅ 正常":"❌ 未配置")+(failed?"，失败 "+failed+" 个":""),
+    "⚡ 自动同步："+(sync.enabled?"✅ 运行中":sync.sourceId?"⏸️ 已绑定未运行":"❌ 未绑定"),
+    "📊 表格："+(sheets?"✅ 已配置":"❌ 未配置"),
     "💬 客服待处理："+supportCount+" 个",
     "",
     "👇 常用功能在下面"
@@ -3741,7 +3747,7 @@ function adminRootInline(){return{inline_keyboard:[
  [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"🔐 扫描账号",callback_data:"adm:scan_auth"}],
  [{text:"⚡ 自动同步",callback_data:"adm:auto"},{text:"☁️ 123云盘",callback_data:"adm:cloud123"}],
  [{text:"📦 资源目录",callback_data:"admin:resource"},{text:"💬 客服",callback_data:"support:admin"}],
- [{text:"更多",callback_data:"admin:more"}],
+ [{text:"✅ 平台状态",callback_data:"admin:root"},{text:"更多",callback_data:"admin:more"}],
  [{text:"🏠 返回首页",callback_data:"admin:home"}]
 ]};}
 function adminMoreInline(){return{inline_keyboard:[
