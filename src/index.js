@@ -3197,28 +3197,35 @@ function cloud123Menu() {
       inline_keyboard:[
         [{text:"🔗 配置123云盘",callback_data:"adm:cloud_setup"},{text:"🧪 测试连接",callback_data:"adm:cloud_test"}],
         [{text:"📁 同步目录+文件",callback_data:"adm:cloud_sync"},{text:"🚀 扫描并上传",callback_data:"adm:cloud_scan"}],
+        [{text:"🔄 刷新进度",callback_data:"adm:cloud123"}],
         [{text:"🔐 授权账号",callback_data:"adm:cloud_account"},{text:"⬅️ 返回管理",callback_data:"admin:resource"}]
       ]
     }
   };
 }
 
+function cloud123RunStats() {
+  return globalThis.cloud123Run || {running:false, success:0, fail:0, skip:0, total:0};
+}
 function cloud123StatusText() {
   const c = cloud123Config();
   const uploaded = db.resources.filter(x=>x.cloud123?.uploaded).length;
-  const failed = db.resources.filter(x=>x.cloud123?.error).length;
+  const failed = db.resources.filter(x=>x.cloud123?.error && !x.cloud123?.uploaded).length;
+  const run = cloud123RunStats();
   return [
     "☁️ <b>123云盘</b>",
     "",
     "🔗 WebDAV：" + (c.url ? "✅ 已配置" : "❌ 未配置"),
-    "👤 Telegram 扫描仓库账号：" + ((db.settings.historyAuth||{}).session ? "✅ 已授权" : "❌ 未授权"),
-    "📚 已上传：" + uploaded + " 个",
-    "⚠️ 失败记录：" + failed + " 个",
+    "👤 扫描账号：" + ((db.settings.historyAuth||{}).session ? "✅ 已授权" : "❌ 未授权"),
+    "⚙️ 后台：" + (run.running || cloud123Syncing ? "正在上传" : "自动检查中"),
     "",
-    "📌 一键同步：先建立目录，再上传文件；小文件最多 5 个并发，单批 ≤1GB",
-    "💾 每个文件完成后立即删除服务器临时文件",
+    "📚 累计已上传：" + uploaded + " 个",
+    "⚠️ 累计失败：" + failed + " 个",
+    "📤 本次已上传：" + Number(run.success||0) + " 个",
+    "❌ 本次失败：" + Number(run.fail||0) + " 个",
+    "⏭️ 本次跳过：" + Number(run.skip||0) + " 个",
     "",
-    "👇 请选择操作"
+    "👇 点刷新可看最新数量"
   ].join("\n");
 }
 
@@ -3286,6 +3293,7 @@ async function cloud123ScanAndUpload(uid) {
   const r = repo();
   if (!r) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。",adminMenu());
   cloud123Syncing=true;
+  globalThis.cloud123Run={running:true,success:0,fail:0,skip:0,total:0};
   const started=Date.now();
   let statusMessage=null;
   let success=0, fail=0, skip=0;
@@ -3465,12 +3473,14 @@ async function cloud123ScanAndUpload(uid) {
           uploadedAt:Date.now()
         };
         success++;
+        globalThis.cloud123Run={running:true,success,fail,skip,total:resources.length};
         totalUploadedBytes += stat.size;
         return stat.size;
       } catch(e) {
         uploadProgress.delete(String(item.messageId));
         item.cloud123={uploaded:false,error:String(e.message||e).slice(0,500),at:Date.now()};
         fail++;
+        globalThis.cloud123Run={running:true,success,fail,skip,total:resources.length};
         console.error("123 UPLOAD:", item.title, e);
         return 0;
       } finally {
@@ -3581,6 +3591,7 @@ async function cloud123ScanAndUpload(uid) {
   } finally {
     if(tick) clearInterval(tick);
     cloud123Syncing=false;
+    if(globalThis.cloud123Run) globalThis.cloud123Run.running=false;
   }
 }
 
