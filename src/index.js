@@ -4033,13 +4033,13 @@ function platformMenu() {
 }
 function getDirectoryByName(name) { const n=String(name||"").replace(/^📁\s*/,"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return db.directories.find(d=>{ const dn=String(d.name||"").replace(/[（(]\s*\d+\s*[）)]\s*$/,"").replace(/\s+/g," ").trim().toLowerCase(); return dn===n || String(d.name||"").trim().toLowerCase()===n; })||null; }
 function extractResourceTags(item) {
-  const text=String(item?.caption||"")+" "+String(item?.title||"");
+  const text=String(item?.caption||"")+" "+String(item?.title||"")+" "+(Array.isArray(item?.tags)?item.tags.join(" "):"");
   const tags=[];
-  const re=/#([\\p{L}\\p{N}_-]{1,40})/gu;
+  const re=/[#＃]?([\u4e00-\u9fff]{2,20})/g;
   let m;
   while((m=re.exec(text))) {
     const tag=String(m[1]||"").trim();
-    if(!tag || !/[\\p{L}]/u.test(tag) || tags.includes(tag)) continue;
+    if(!tag || tags.includes(tag)) continue;
     tags.push(tag);
   }
   return tags.slice(0,10);
