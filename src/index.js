@@ -53,7 +53,7 @@ const LOCAL_RESOURCES_TABLE = path.join(LOCAL_TABLE_DIR, "resources.csv");
 const LOCAL_DIRECTORIES_TABLE = path.join(LOCAL_TABLE_DIR, "directories.csv");
 const SECRET = process.env.STORAGE_KEY || "telegram-clone-platform-v2";
 const MAX_RESOURCES = Number(process.env.MAX_RESOURCES || 20000);
-const UPLOAD_IDLE_SECONDS = Math.max(15, Number(process.env.UPLOAD_IDLE_SECONDS || 180));
+const UPLOAD_IDLE_SECONDS = Math.max(60, Number(process.env.UPLOAD_IDLE_SECONDS || 300));
 const TG_API_ID = Number(process.env.TG_API_ID || 0);
 const TG_API_HASH = process.env.TG_API_HASH || "";
 
@@ -3788,6 +3788,14 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
   const pending=Array.isArray(state.pendingUploads)?state.pendingUploads:[];
   pending.push({messageId:Number(msg.message_id),msg});
   if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
+  uploadTimers.set(key,setTimeout(()=>{
+    uploadTimers.delete(key);
+    const current=states.get(key);
+    if(current?.step==="upload_file" && current.pendingUploads?.length) {
+      sendHtml(token,uid,"⏳ <b>5 分钟没有新文件，开始入库</b>\n\n📁 "+escapeHtml(current.directoryName)+"\n📥 已收到：<b>"+current.pendingUploads.length+"</b> 个",{reply_markup:{inline_keyboard:[]}}).catch(()=>{});
+      finalizeUpload(uid,current,token,key,child?childAdminMenu():adminMenu()).catch(e=>console.error("❌ 5分钟自动入库失败:",String(e?.message||e)));
+    }
+  },5*60*1000));
 
   const nextUploadState={
     step:"upload_file",
