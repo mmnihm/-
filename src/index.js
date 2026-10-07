@@ -3793,7 +3793,7 @@ async function backupResourceFile(item){
   saveDb();
 }
 
-async function backfillBackupBot(uid)async function backfillBackupBot(uid){
+async function backfillBackupBot(uid){
   if(globalThis.backupBackfillRunning) return;
   globalThis.backupBackfillRunning=true;
   let ok=0, fail=0, skip=0, lastError="";
@@ -3837,7 +3837,7 @@ async function restoreFromBackupBot(uid){
   saveDb();
   await sendHtml(TOKEN,uid,"<b>✅ 备份复制完成</b>\n\n成功：<b>"+ok+"</b>\n失败：<b>"+fail+"</b>",adminMenu());
 }
-function adminStatusText()function adminStatusText(){
+function adminStatusText(){
   const auth=db.settings.historyAuth||{};
   const cloud=cloud123Config();
   const sync=repositoryAutoSyncState();
@@ -4826,7 +4826,7 @@ async function sendResourceAlbum(token, chatId, items) {
   }
   return {sent, lastMessageId};
 }
-async function sendIndexedResource(token, chatId, item)async function sendIndexedResource(token, chatId, item) {
+async function sendIndexedResource(token, chatId, item) {
   // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
   // 子机器人没有加入资源仓库时，优先让主机器人代发资源。
   const sendWith = async (sendToken) => {
