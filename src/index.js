@@ -3761,6 +3761,7 @@ function adminResourceInline(){return{inline_keyboard:[
  [{text:"📦 资源仓库",callback_data:"adm:repo"},{text:"🔍 仓库扫描",callback_data:"adm:scan"}],
  [{text:"🔐 扫描账号",callback_data:"adm:scan_auth"},{text:"☁️ 123云盘",callback_data:"adm:cloud123"}],
  [{text:"⚡ 自动同步任务",callback_data:"adm:auto"}],
+ [{text:"🏷️ 标签生成文件夹",callback_data:"adm:tagfolders"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
 function adminSettingsInline(){return{inline_keyboard:[
