@@ -2788,6 +2788,7 @@ async function startRepositoryAutoSyncNow(uid){
   for(const item of existing){
     const messageId=Number(item.messageId);
     const already=db.resources.some(x=>String(x.chatId)===targetId&&Number(x.migratedFrom?.chatId||0)===Number(sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
+    if(messageId<Number(state.startMessageId||0))continue;
     if(already||pendingKeys.has(String(messageId)))continue;
     state.queue.push({messageId,mediaGroupId:String(item?.mediaGroupId||""),historical:true,syncType:repositoryAutoSyncItemType(item),queuedAt:Date.now()});
     pendingKeys.add(String(messageId));
@@ -2875,6 +2876,7 @@ async function showRepositoryAutoSyncStatus(uid){
     "\n📤 旧仓库："+escapeHtml(state.sourceTitle||"-")+
     "\n📥 新仓库："+escapeHtml(state.targetTitle||"-")+
     "\n📌 断点消息："+Number(state.lastMessageId||0)+
+    "\n🎯 起始 ID："+(Number(state.startMessageId||0)||"从头")+ 
     "\n📦 已同步："+Number(state.copied||0)+
     "\n⏭️ 已跳过："+Number(state.skipped||0)+
     "\n⏳ 待处理："+state.queue.length+
@@ -2882,7 +2884,8 @@ async function showRepositoryAutoSyncStatus(uid){
   const rows=[];
   if(running) rows.push([{text:"⏸️ 暂停同步",callback_data:"adm:auto_pause"}]);
   else if(bound) rows.push([{text:"▶️ 开始同步",callback_data:"adm:auto_start"}]);
-  rows.push([{text:"⚙️ 同步内容",callback_data:"adm:auto_content"},{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}]);
+  rows.push([{text:"⚙️ 同步内容",callback_data:"adm:auto_content"},{text:"🎯 从指定 ID 开始",callback_data:"adm:auto_from"}]);
+  rows.push([{text:"➕ 添加同步任务",callback_data:"adm:auto_add"}]);
   if(bound) rows.push([{text:"🗑️ 删除任务并解绑仓库",callback_data:"adm:auto_delete"}]);
   rows.push([{text:"🔄 重新绑定",callback_data:"adm:auto_reset"}]);
   rows.push([{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]);
@@ -5376,6 +5379,18 @@ async function mainMessage(msg) {
 
 
 
+  if(admin && s?.step==="auto_start_id") {
+    const startId=Number(String(t||"").trim());
+    if(!Number.isInteger(startId) || startId<0) return sendHtml(TOKEN,uid,"⚠️ 请发送数字消息 ID。发送 0 表示从头复制。");
+    const state=repositoryAutoSyncState();
+    state.startMessageId=startId;
+    state.lastMessageId=startId;
+    state.queue=state.queue.filter(x=>Number(x.messageId)>=startId);
+    state.updatedAt=Date.now();
+    saveDb();
+    states.delete(key);
+    return sendHtml(TOKEN,uid,"<b>✅ 已设置起始 ID</b>\n\n从消息 <code>"+startId+"</code> 开始复制，更早的会跳过。\n\n点「开始同步」后生效。",{reply_markup:{inline_keyboard:[[{text:"▶️ 开始同步",callback_data:"adm:auto_start"}],[{text:"⬅️ 返回自动同步",callback_data:"adm:auto_status"}]]}});
+  }
   if(admin && s?.step==="bind_repository") {
     if(t==="/cancel" || t==="/start" || t==="🏠 开始" || t==="🏠 返回首页" || t==="⬅️ 返回首页" || t==="⬅️ 返回管理" || t==="⚙️ 管理中心") {
       states.delete(key);
@@ -6951,6 +6966,11 @@ async function handleDirectoryCallback(token, q, child=false) {
           [{text:"⬅️ 返回123云盘",callback_data:"adm:cloud123"}]
         ]}
       });
+    }
+    if(data==="adm:auto_from"){
+      await answer("请发送起始消息 ID");
+      states.set("m:"+uid,{step:"auto_start_id"});
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🎯 从指定消息 ID 开始</b>\n━━━━━━━━━━━━━━\n\n请发送旧仓库的消息 ID。\n这条和之后的才会复制，更早的会跳过。\n\n发送 0 表示从头复制。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"⬅️ 返回自动同步",callback_data:"adm:auto_status"}]]}});
     }
     if(data==="adm:scan_auth"){
       await answer("打开扫描账号");
