@@ -3732,10 +3732,15 @@ function adminMaintenanceMenu(){return{inline_keyboard:[
  [{text:"⬅️ 返回资源管理",callback_data:"admin:resource"}]
 ]};}
 function adminRootInline(){return{inline_keyboard:[
- [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"📦 资源管理",callback_data:"admin:resource"}],
- [{text:"📊 数据与运营",callback_data:"admin:ops"},{text:"⚙️ 系统设置",callback_data:"admin:settings"}],
- [{text:"🤖 机器人管理",callback_data:"admin:bot"}],
+ [{text:"📤 上传资源",callback_data:"admin:upload"},{text:"📦 资源目录",callback_data:"admin:resource"}],
+ [{text:"⚡ 自动同步",callback_data:"adm:auto"},{text:"☁️ 123云盘",callback_data:"adm:cloud123"}],
+ [{text:"更多",callback_data:"admin:more"}],
  [{text:"🏠 返回首页",callback_data:"admin:home"}]
+]};}
+function adminMoreInline(){return{inline_keyboard:[
+ [{text:"📊 数据与运营",callback_data:"admin:ops"},{text:"⚙️ 系统设置",callback_data:"admin:settings"}],
+ [{text:"🤖 机器人管理",callback_data:"admin:bot"},{text:"💬 在线客服",callback_data:"support:admin"}],
+ [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
 function adminResourceInline(){return{inline_keyboard:[
  [{text:"✏️ 修改文件夹",callback_data:"adm:rename"},{text:"🗑️ 删除资源",callback_data:"adm:delete"}],
@@ -3767,7 +3772,6 @@ function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
     [{text:"📂 资源目录",callback_data:"user:dirs"},{text:"🔎 搜索资源",callback_data:"user:search"}],
     [{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}],
-    [{text:"⭐ 我的资源",callback_data:"hub"},{text:"🤖 克隆机器人",callback_data:"user:clone"}],
     [{text:"💬 联系客服",callback_data:"support:start"}]
   ]}};
 }
@@ -5330,11 +5334,8 @@ async function mainMessage(msg) {
     if(!results.length) {
       states.set(key,{step:"search"});
       return sendHtml(TOKEN,uid,
-        "<b>📭 没有找到相关资源</b>\n\n关键词：<code>"+escapeHtml(query)+"</code>\n\n💡 仓库里没有匹配内容，请换一个关键词重新搜索。",
-        {reply_markup:{inline_keyboard:[
-          [{text:"🔎 重新搜索",callback_data:"user:search"}],
-          [{text:"⬅️ 返回首页",callback_data:"user:home"}]
-        ]}});
+        "<b>📭 没有找到相关资源</b>\n\n关键词：<code>"+escapeHtml(query)+"</code>\n\n💡 可以换一个更短的关键词。",
+        {reply_markup:{inline_keyboard:[[{text:"🔎 换个词",callback_data:"user:search"}],[{text:"⬅️ 返回首页",callback_data:"user:home"}]]}});
     }
     states.set(key,{step:"search_results",query,results,page:0});
     return sendHtml(TOKEN,uid,
@@ -6612,7 +6613,17 @@ async function childMessage(child,msg,token) {
     return;
   }
 
-  if(!(await allowed(TOKEN,uid))) return sendHtml(token,uid,"<b>🔐 请先加入指定群</b>\n\n加入后即可继续使用资源功能。",childMenu());
+  if(!(await allowed(TOKEN,uid))) {
+    const gateKey="gate:"+String(uid);
+    const last=Number(db.settings.memberGateAt?.[uid]||0);
+    if(Date.now()-last>24*60*60*1000) {
+      if(!db.settings.memberGateAt) db.settings.memberGateAt={};
+      db.settings.memberGateAt[uid]=Date.now();
+      saveDb();
+      return sendHtml(token,uid,"<b>🔐 请先加入指定群</b>\n\n加入后即可继续使用资源功能。",childMenu());
+    }
+    return;
+  }
 
   if(t==="📂 资源目录") {
     if(!db.directories.length) return sendHtml(token,uid,"<b>📂 暂无资源目录</b>\n\n管理员创建目录后，所有机器人会自动同步看到。",childMenu());
@@ -7020,6 +7031,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       await answer("开始授权");
       return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔐 扫描授权"});
     }
+    if(data==="admin:more")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>更多管理</b>\n━━━━━━━━━━━━━━\n\n👇 不常用功能在这里",parse_mode:"HTML",reply_markup:adminMoreInline()});
     if(data==="admin:resource")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📦 资源管理</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminResourceInline()});
     if(data==="admin:ops")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>📊 数据与运营</b>\n━━━━━━━━━━━━━━\n\n👇 请选择操作",parse_mode:"HTML",reply_markup:adminOpsInline()});
     if(data==="admin:settings")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>⚙️ 系统设置</b>\n━━━━━━━━━━━━━━\n\n👇 请选择设置",parse_mode:"HTML",reply_markup:adminSettingsInline()});
