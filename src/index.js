@@ -4211,7 +4211,7 @@ async function processResourceFolderTagQueue(){
       const parts=String(key).split(":");
       const item=db.resources.find(x=>String(x.chatId)===String(parts[0])&&String(x.messageId)===String(parts[1]));
       if(item){
-        try{ queueResourceFolderTag(item); }
+        try{ syncResourceFolderTag(item); queueBaserowResourceSync(item); }
         catch(e){ console.warn("⚠️ 后台文件夹标签处理失败:",String(e?.message||e)); }
       }
       processed++;
@@ -8103,6 +8103,7 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   const all=directoryItems(d.id);
   const safe=String(d.name).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const safeDescription=String(d.description||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   if(data.startsWith("dir:")) {
     if(!all.length) {
@@ -8120,7 +8121,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const sent=Number(album?.sent||0);
     const next=first.length;
     return sendHtml(token,chatId,
-      "📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length,
+      "📁 <b>"+safe+"</b>"+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length,
       {reply_markup:folderProgressKeyboard(d.id,all.length,next),...(album?.lastMessageId?{reply_to_message_id:album.lastMessageId}:{})}
     );
   }
@@ -8159,7 +8160,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
   return tg(token,"sendMessage",{
     chat_id:chatId,
-    text:"📁 <b>"+safe+"</b>\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"\\n\\n✅ 已全部获取完成",
+    text:"📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"\\n\\n✅ 已全部获取完成",
     parse_mode:"HTML",
     reply_markup:folderProgressKeyboard(d.id,all.length,next)
   });
