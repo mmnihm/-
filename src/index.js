@@ -3699,12 +3699,9 @@ async function allowed(token, userId) {
   }
 }
 async function requireMemberAccess(token, chatId, userId, menu=null) {
-  if (isAdmin(userId)) return true;
-  const member = await allowed(TOKEN, userId);
-  if (member) return true;
-  const notice = nonMemberMessage(menu || userMenu());
-  await sendHtml(token, chatId, notice.text, notice.extra).catch(()=>{});
-  return false;
+  // 指定群只负责会员身份与非会员额度判断；是否强制入群由额度设置决定。
+  // 保留此函数兼容旧入口，但不再把“未入群”直接拦截。
+  return true;
 }
 function quotaDateKey() {
   const d=new Date();
@@ -5082,9 +5079,6 @@ function escapeHtml(value) {
 
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const member=await allowed(TOKEN,userId);
-  if (!member && !isAdmin(userId)) {
-    return sendHtml(token,chatId,String(db.settings.nonMemberMessage||"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。"),{reply_markup:childMenu().reply_markup});
-  }
   if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\n\n暂时没有找到可用内容。",childMenu());
   if(!member && !isAdmin(userId)) {
     const remaining=nonMemberDailyRemaining(userId);
@@ -5164,11 +5158,6 @@ function batchNavigation(mode,offset,total){
 
 async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   const member=await allowed(TOKEN,userId);
-  if (!member && !isAdmin(userId)) {
-    return sendHtml(token,chatId,String(db.settings.nonMemberMessage||"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。"),{
-      reply_markup: options.mode ? batchNavigation(options.mode,options.offset||0,options.total||0).reply_markup : userMenu().reply_markup
-    });
-  }
   if(!Array.isArray(items) || !items.length) {
     return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",{
       ...(options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0)} : {})
@@ -6846,18 +6835,6 @@ async function childMessage(child,msg,token) {
     }
     const handled=await withUploadLock(key,()=>receiveUploadMedia(token,uid,key,states.get(key)||s,msg,true));
     if(handled) return;
-  }
-
-  if(!(await allowed(TOKEN,uid))) {
-    const gateKey="gate:"+String(uid);
-    const last=Number(db.settings.memberGateAt?.[uid]||0);
-    if(Date.now()-last>24*60*60*1000) {
-      if(!db.settings.memberGateAt) db.settings.memberGateAt={};
-      db.settings.memberGateAt[uid]=Date.now();
-      saveDb();
-      return sendHtml(token,uid,"<b>🔐 请先加入指定群</b>\n\n加入后即可继续使用资源功能。",childMenu());
-    }
-    return;
   }
 
   if(t==="📂 资源目录") {
