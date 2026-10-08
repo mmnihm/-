@@ -4024,6 +4024,7 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
       saveDb();
     }
   };
+  // 动态上传进度：整批只保留一条状态消息，每收到文件就编辑同一条消息。
   if(!globalThis.uploadStatusTimers) globalThis.uploadStatusTimers=new Map();
   if(globalThis.uploadStatusTimers.has(key)) clearTimeout(globalThis.uploadStatusTimers.get(key));
   globalThis.uploadStatusTimers.set(key,setTimeout(()=>{
@@ -4037,30 +4038,36 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
       "可以继续发送，数量会自动更新。全部发完后点「✅ 结束上传」。";
     void (async()=>{
       try {
-        if(current.statusSending) return;
-        current.statusSending=true;
+        if(current.statusUpdating) return;
+        current.statusUpdating=true;
         states.set(key,current);
-
-        // Telegram 编辑消息不会把消息移动到聊天最底部。
-        // 因此每次更新时删除旧状态消息，再在最后重新发送一条，
-        // 确保“正在上传”始终位于最新文件的下面。
-        const oldControlId=Number(current.controlMessageId||0);
-        if(oldControlId>0) {
+        const controlId=Number(current.controlMessageId||0);
+        let edited=false;
+        if(controlId>0) {
           try {
-            await tg(token,"deleteMessage",{chat_id:uid,message_id:oldControlId});
+            await tg(token,"editMessageText",{
+              chat_id:uid,
+              message_id:controlId,
+              text,
+              parse_mode:"HTML",
+              reply_markup:statusMarkup
+            });
+            edited=true;
           } catch(e) {
             const msg=String(e?.message||e);
-            if(!/message to delete not found|message can't be deleted|message not found/i.test(msg)) {
-              console.warn("⚠️ 删除旧上传提示失败，继续发送新提示：",msg);
+            if(!/message is not modified/i.test(msg)) {
+              console.warn("⚠️ 编辑上传进度失败，将重新创建状态消息：",msg);
             }
           }
         }
-
-        const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
-        current.statusSending=false;
-        await saveUploadControlMessage(sent);
+        if(!edited) {
+          const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
+          await saveUploadControlMessage(sent);
+        }
+        current.statusUpdating=false;
+        states.set(key,current);
       } catch(e) {
-        current.statusSending=false;
+        current.statusUpdating=false;
         states.set(key,current);
         console.warn("⚠️ 上传进度更新失败:",String(e?.message||e));
       }
