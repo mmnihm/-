@@ -3945,7 +3945,7 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
   const media=msg?.document||msg?.video||msg?.audio||msg?.animation||msg?.photo?.at(-1)||msg?.voice||msg?.video_note;
   if(!media || !msg?.message_id) return false;
   if(!isAdmin(uid)) return false;
-  if(!state || !["upload_folder","upload_file"].includes(String(state.step))) return false;
+  if(!state || String(state.step)!=="upload_file") return false;
   if(!repo()) {
     states.delete(key);
     await sendHtml(token,uid,"<b>❌ 资源仓库未绑定</b>\n\n请先绑定资源仓库。",child?childAdminMenu():adminMenu()).catch(()=>{});
@@ -4038,6 +4038,7 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
       "可以继续发送，数量会自动更新。全部发完后点「✅ 结束上传」。";
     void (async()=>{
       try {
+        // 同一批上传始终只允许一个进度更新任务运行，避免快速连发造成重复提示。
         if(current.statusUpdating) return;
         current.statusUpdating=true;
         states.set(key,current);
@@ -4055,14 +4056,18 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
             edited=true;
           } catch(e) {
             const msg=String(e?.message||e);
-            if(!/message is not modified/i.test(msg)) {
-              console.warn("⚠️ 编辑上传进度失败，将重新创建状态消息：",msg);
+            // “内容未改变”代表当前这条就是最新提示，绝不能再发新消息。
+            if(/message is not modified/i.test(msg)) {
+              edited=true;
+            } else {
+              console.warn("⚠️ 编辑上传进度失败，将创建唯一的新状态消息：",msg);
             }
           }
         }
         if(!edited) {
           const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
           await saveUploadControlMessage(sent);
+          // 新消息成功后，旧 controlMessageId 已被替换；后续只编辑这一条。
         }
         current.statusUpdating=false;
         states.set(key,current);
