@@ -3926,7 +3926,7 @@ function restoreUploadState(key) {
   const current = states.get(key);
   if (current?.step === "upload_file") return current;
   const saved = db.settings?.uploadSessions?.[key];
-  if (!saved || !["upload_file","upload_folder"].includes(String(saved.step))) return current || null;
+  if (!saved || String(saved.step)!=="upload_file") return current || null;
   const restored = {
     step: "upload_file",
     directoryId: String(saved.directoryId || ""),
@@ -4036,33 +4036,28 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
         if(current.statusUpdating) return;
         current.statusUpdating=true;
         states.set(key,current);
-        const controlId=Number(current.controlMessageId||0);
-        let edited=false;
-        if(controlId>0) {
+        // 重要规则：上传进度提示始终跟随“最后一条文件”。
+        // 因此不能只编辑原消息；每收到新文件，就删除旧进度消息，
+        // 再把唯一的新进度消息作为回复挂在最新文件下面。
+        const latestMessageId=Number(current.pendingUploads?.at(-1)?.messageId||0);
+        const oldControlId=Number(current.controlMessageId||0);
+        if(oldControlId>0 && oldControlId!==latestMessageId) {
           try {
-            await tg(token,"editMessageText",{
-              chat_id:uid,
-              message_id:controlId,
-              text,
-              parse_mode:"HTML",
-              reply_markup:statusMarkup
-            });
-            edited=true;
+            await tg(token,"deleteMessage",{chat_id:uid,message_id:oldControlId});
           } catch(e) {
-            const msg=String(e?.message||e);
-            // “内容未改变”代表当前这条就是最新提示，绝不能再发新消息。
-            if(/message is not modified/i.test(msg)) {
-              edited=true;
-            } else {
-              console.warn("⚠️ 编辑上传进度失败，将创建唯一的新状态消息：",msg);
-            }
+            console.warn("⚠️ 删除旧上传进度消息失败，继续创建新位置：",String(e?.message||e));
           }
         }
-        if(!edited) {
-          const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
-          await saveUploadControlMessage(sent);
-          // 新消息成功后，旧 controlMessageId 已被替换；后续只编辑这一条。
+        let sent=null;
+        try {
+          sent=await sendHtml(token,uid,text,{
+            reply_markup:statusMarkup,
+            ...(latestMessageId>0 ? {reply_to_message_id:latestMessageId} : {})
+          });
+        } catch(e) {
+          console.warn("⚠️ 创建跟随最后文件的上传进度消息失败：",String(e?.message||e));
         }
+        if(sent) await saveUploadControlMessage(sent);
         current.statusUpdating=false;
         states.set(key,current);
       } catch(e) {
@@ -6737,7 +6732,7 @@ async function childMessage(child,msg,token) {
   const t=msg.text||"",s=states.get(key);
 
   // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
-  if(isAdmin(uid) && (s?.step==="upload_file" || s?.step==="upload_folder")) {
+  if(isAdmin(uid) && s?.step==="upload_file") {
     const handled=await receiveUploadMedia(token,uid,key,s,msg,true);
     if(handled) return;
   }
@@ -7769,58 +7764,28 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
   }
 
-  // 管理员上传资源使用内联按钮，不要求额外点击底部键盘。
-  if(isAdmin(uid) && (data==="upload_continue" || data==="upload_finish")) {
+  // 上传继续只负责恢复当前上传界面，不再创建第二套“已收到 N 个”提醒。
+  if(isAdmin(uid) && data==="upload_continue") {
     const key=uploadStateKey(uid,child,token);
     const s=restoreUploadState(key);
     if(!s || s.step!=="upload_file") {
       void answer("当前没有进行中的上传",true);
       return;
     }
-    if(data==="upload_continue") {
-      if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
-      uploadTimers.set(key,setTimeout(()=>{
-        uploadTimers.delete(key);
-        const current=states.get(key);
-        if(current?.step==="upload_file") {
-          send(token,uid,
-            "⏸️ <b>暂时没有收到新文件</b>\n\n"+
-            "📁 文件夹："+escapeHtml(current.directoryName)+"\n"+
-            "📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\n\n"+
-            "还要继续上传吗？",
-            {parse_mode:"HTML",reply_markup:{inline_keyboard:[[
-              {text:"▶️ 继续上传",callback_data:"upload_continue"},
-              {text:"✅ 结束上传",callback_data:"upload_finish"}
-            ]]}}
-          ).catch(()=>{});
-        }
-      },24*60*60*1000));
-      void sendHtml(token,uid,"📤 <b>上传控制</b>\n\n可继续发送文件；底部固定按钮可直接结束上传。",uploadBottomKeyboard()).catch(()=>{});
-      void answer("可以继续上传");
-      return safeEdit(token,{
-        chat_id:chatId,
-        message_id:messageId,
-        text:"📁 <b>"+escapeHtml(s.directoryName)+"</b>\n\n📤 <b>继续发送文件</b>\n收到的文件都会自动归入当前文件夹。",
-        parse_mode:"HTML",
-        reply_markup:{inline_keyboard:[[
-          {text:"▶️ 继续上传",callback_data:"upload_continue"},
-          {text:"✅ 结束上传",callback_data:"upload_finish"}
-        ]]}
-      });
+    if(uploadTimers.has(key)) {
+      clearTimeout(uploadTimers.get(key));
+      uploadTimers.delete(key);
     }
-    if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
-    if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-    void sendHtml(token,uid,"🔄 <b>正在结束上传</b>\n\n正在统一转存本批资源，请稍候……",{reply_markup:{remove_keyboard:true}}).catch(()=>{});
-    void answer("已结束，正在后台转存");
-    void finalizeUpload(uid,s,token,key,child ? childAdminMenu() : adminMenu()).catch(e=>{
-      console.error("❌ UPLOAD FINALIZE BACKGROUND:",e?.message||e);
-    });
+    void answer("可以继续上传");
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
-      text:"⏳ <b>已结束上传</b>\n\n📥 已收到，正在后台转入仓库群，你可以继续操作。\n\n完成后会自动发送整理结果。",
+      text:"📁 <b>"+escapeHtml(s.directoryName)+"</b>\n\n📤 <b>继续发送文件</b>\n收到的文件都会自动归入当前文件夹。\n\n完成后点击「✅ 结束上传」。",
       parse_mode:"HTML",
-      reply_markup:{inline_keyboard:[]}
+      reply_markup:{inline_keyboard:[[
+        {text:"▶️ 继续上传",callback_data:"upload_continue"},
+        {text:"✅ 结束上传",callback_data:"upload_finish"}
+      ]]}
     });
   }
 
