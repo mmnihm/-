@@ -8016,6 +8016,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="noop" || data==="done") return;
 
   if(data.startsWith("dirsp:")) {
+    if(!(await requireMemberAccess(token,chatId,uid,userMenu()))) {
+      void answer("请先加入指定会员群",true);
+      return;
+    }
     const page=Math.max(0,Number(data.slice(6))||0);
     return safeEdit(token,{
       chat_id:chatId,
@@ -8027,6 +8031,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   if(data==="dirs") {
+    if(!(await requireMemberAccess(token,chatId,uid,userMenu()))) {
+      void answer("请先加入指定会员群",true);
+      return;
+    }
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
