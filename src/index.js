@@ -3972,15 +3972,9 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
 
   const pending=Array.isArray(state.pendingUploads)?state.pendingUploads:[];
   pending.push({messageId:Number(msg.message_id),msg});
+  // 上传过程中不再使用“5分钟自动入库/已收到”第二条提醒。
+  // 本批只由下面唯一的动态状态消息显示“已接收 N 个”，用户点击「结束上传」后才入库。
   if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
-  uploadTimers.set(key,setTimeout(()=>{
-    uploadTimers.delete(key);
-    const current=states.get(key);
-    if(current?.step==="upload_file" && current.pendingUploads?.length) {
-      sendHtml(token,uid,"⏳ <b>5 分钟没有新文件，开始入库</b>\n\n📁 "+escapeHtml(current.directoryName)+"\n📥 已收到：<b>"+current.pendingUploads.length+"</b> 个",{reply_markup:{inline_keyboard:[]}}).catch(()=>{});
-      finalizeUpload(uid,current,token,key,child?childAdminMenu():adminMenu()).catch(e=>console.error("❌ 5分钟自动入库失败:",String(e?.message||e)));
-    }
-  },5*60*1000));
 
   const nextUploadState={
     step:"upload_file",
