@@ -5401,7 +5401,7 @@ async function binding(msg) {
   // 上传期间管理员转发/发送的文件属于待上传资源，绝不能被当成绑定仓库消息。
   if(msg.chat?.type==="private") {
     const uploadState=states.get("m:"+String(msg.from?.id||""));
-    if(["upload_folder","upload_file","folder_create"].includes(String(uploadState?.step||""))) return false;
+    if(["upload_select","upload_file","folder_create","folder_create_description"].includes(String(uploadState?.step||""))) return false;
   }
 
   const bindCommands=["/绑定指定群","/绑定仓库","/解绑指定群","/解绑仓库"];
@@ -5575,9 +5575,9 @@ async function mainMessage(msg) {
   // 主机器人重启后恢复未完成的上传会话，避免文件消息因内存状态丢失而被静默忽略。
   const savedUpload=db.settings?.uploadSessions?.[key];
   const savedFresh=savedUpload && Date.now()-Number(savedUpload.updatedAt||0) < 5*60*1000;
-  if(admin && savedFresh && (!s || !["upload_file","upload_folder"].includes(String(s.step)))){
+  if(admin && savedFresh && (!s || !["upload_file","upload_select"].includes(String(s.step)))){
     const saved=savedUpload;
-    if(saved.step==="upload_file" || saved.step==="upload_folder" || saved.step==="folder_create"){
+    if(saved.step==="upload_file" || saved.step==="upload_select" || saved.step==="folder_create"){
       s={
         step:String(saved.step),
         directoryId:String(saved.directoryId||""),
@@ -5591,7 +5591,7 @@ async function mainMessage(msg) {
   }
 
   // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
-  if(admin && (s?.step==="upload_file" || s?.step==="upload_folder")) {
+  if(admin && s?.step==="upload_file") {
     const handled=await withUploadLock(key,()=>receiveUploadMedia(TOKEN,uid,key,states.get(key)||s,msg,false));
     if(handled) return;
   }
@@ -6577,7 +6577,7 @@ async function mainMessage(msg) {
     if(!repo()) return send(TOKEN,uid,"❌ 尚未绑定资源仓库。请先绑定资源仓库。",adminMenu());
     if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
     if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-    states.set(key,{step:"upload_folder",pendingUploads:[]});
+    states.set(key,{step:"upload_select",pendingUploads:[]});
     return sendHtml(TOKEN,uid,
       "<b>📤 上传资源</b>\\n\\n"+
       "请选择要使用的文件夹：\\n"+
@@ -6873,41 +6873,28 @@ async function childMessage(child,msg,token) {
     return sendHtml(token,uid,"<b>📁 文件夹："+escapeHtml(existing.name)+"</b>\\n\\n现在请发送文件、图片、视频、音频或其他资源。\\n\\n发送 /cancel 可取消。");
   }
 
+  // 子机器人与主机器人统一走同一个媒体上传处理器，避免两套“已收到/批量入库”逻辑互相抢消息。
   if(isAdmin(uid) && s?.step==="upload_file") {
-    if(t==="/cancel") {
+    if(t==="/cancel" || t==="❌ 取消上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
       states.delete(key);
-      return sendHtml(token,uid,"<b>❌ 已取消本次上传</b>\\n\\n未入库的资源不会保存。",childAdminMenu());
+      return sendHtml(token,uid,"<b>❌ 已取消本次上传</b>\n\n未入库的资源不会保存。",childAdminMenu());
     }
     if(t==="▶️ 继续上传") {
-      if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
-      uploadTimers.set(key,setTimeout(()=>{
-        uploadTimers.delete(key);
-        const current=states.get(key);
-        if(current?.step==="upload_file") send(token,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-      },24*60*60*1000));
+      void sendHtml(token,uid,"📤 <b>继续上传</b>\n\n请直接发送文件，系统会自动累计本批数量。",{reply_markup:uploadBottomKeyboard()});
       return;
     }
     if(t==="✅ 结束上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-      return finalizeUpload(uid,s,token,key,childAdminMenu());
+      void sendHtml(token,uid,"🔄 <b>正在结束上传</b>\n\n正在统一转存本批资源，请稍候……",{reply_markup:{remove_keyboard:true}}).catch(()=>{});
+      void finalizeUpload(uid,s,token,key,childAdminMenu()).catch(e=>console.error("❌ CHILD UPLOAD FINALIZE:",String(e?.message||e)));
+      states.delete(key);
+      return;
     }
-    if(!repo()) { states.delete(key); return sendHtml(token,uid,"<b>❌ 资源仓库未绑定</b>\\n\\n请先完成仓库绑定。",childAdminMenu()); }
-    const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
-    if(!media && !msg.text) return sendHtml(token,uid,"⚠️ 请发送文件、图片、视频、音频或带文字的资源。");
-    const pending=Array.isArray(s.pendingUploads)?s.pendingUploads:[];
-    pending.push({messageId:Number(msg.message_id),msg});
-    if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
-    uploadTimers.set(key,setTimeout(()=>{
-      uploadTimers.delete(key);
-      const current=states.get(key);
-      if(current?.step==="upload_file") send(token,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-    },24*60*60*1000));
-    states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
-    console.log("📥 CHILD RESOURCE RECEIVED:", "bot="+tokenFingerprint(token), "folder="+s.directoryName, "message="+msg.message_id, "pending="+pending.length);
-    return;
+    const handled=await withUploadLock(key,()=>receiveUploadMedia(token,uid,key,states.get(key)||s,msg,true));
+    if(handled) return;
   }
 
   if(!(await allowed(TOKEN,uid))) {
@@ -7388,7 +7375,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const key=uploadStateKey(uid,child,token);
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
-      states.set(key,{step:"upload_folder",pendingUploads:[],controlMessageId:Number(messageId)});
+      states.set(key,{step:"upload_select",pendingUploads:[],controlMessageId:Number(messageId)});
       void answer("已进入上传模式");
       return safeEdit(token,{
         chat_id:chatId,
