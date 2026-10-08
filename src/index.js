@@ -5614,7 +5614,7 @@ async function mainMessage(msg) {
       return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
     }
     const folderName=String(s.folderName||"").trim().slice(0,80);
-    const description=String(t||"").trim()==="无" ? "" : String(t||"").trim().slice(0,300);
+    const description=String(rawText||t||"").trim()==="无" ? "" : String(rawText||t||"").trim().slice(0,300);
     if(!folderName) {
       states.delete(key);
       return sendHtml(TOKEN,uid,"⚠️ 文件夹名称丢失，请重新创建。",{reply_markup:uploadFolderInlineMenu()});
