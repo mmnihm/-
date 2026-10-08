@@ -4372,9 +4372,18 @@ function repairLocalFolders() {
 function ensureDirectory(name, description="") {
   const clean=String(name||"").trim().slice(0,80);
   if(!clean)return null;
+  const cleanDescription=String(description||"").trim().slice(0,300);
   let d=getDirectoryByName(clean);
-  if(d) return d;
-  d={id:sharedDirectoryId(clean),name:clean,description:String(description||"").trim().slice(0,300),createdAt:Date.now()};
+  if(d) {
+    if(cleanDescription && String(d.description||"").trim()!==cleanDescription) {
+      d.description=cleanDescription;
+      touchSharedData("system");
+      queueBaserowDirectorySync(d);
+      saveDb();
+    }
+    return d;
+  }
+  d={id:sharedDirectoryId(clean),name:clean,description:cleanDescription,createdAt:Date.now()};
   db.directories.push(d);
   touchSharedData("system");
   saveDb();
