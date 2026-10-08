@@ -4040,20 +4040,32 @@ async function receiveUploadMedia(token, uid, key, state, msg, child=false) {
         if(current.statusSending) return;
         current.statusSending=true;
         states.set(key,current);
-        const controlId=Number(current.controlMessageId||0);
-        if(controlId>0) {
-          const edited=await safeEdit(token,{chat_id:uid,message_id:controlId,text,parse_mode:"HTML",reply_markup:statusMarkup});
-          current.statusSending=false;
-          if(edited) return;
+
+        // Telegram 编辑消息不会把消息移动到聊天最底部。
+        // 因此每次更新时删除旧状态消息，再在最后重新发送一条，
+        // 确保“正在上传”始终位于最新文件的下面。
+        const oldControlId=Number(current.controlMessageId||0);
+        if(oldControlId>0) {
+          try {
+            await tg(token,"deleteMessage",{chat_id:uid,message_id:oldControlId});
+          } catch(e) {
+            const msg=String(e?.message||e);
+            if(!/message to delete not found|message can't be deleted|message not found/i.test(msg)) {
+              console.warn("⚠️ 删除旧上传提示失败，继续发送新提示：",msg);
+            }
+          }
         }
+
         const sent=await sendHtml(token,uid,text,{reply_markup:statusMarkup});
         current.statusSending=false;
         await saveUploadControlMessage(sent);
       } catch(e) {
+        current.statusSending=false;
+        states.set(key,current);
         console.warn("⚠️ 上传进度更新失败:",String(e?.message||e));
       }
     })();
-  },600));
+  },300));
   console.log("📥 UPLOAD MEDIA ACCEPTED:",{
     bot:child?"child":"main",
     uid:String(uid),
