@@ -5534,6 +5534,7 @@ async function mainMessage(msg) {
   if(!db.users.includes(uid)) { db.users.push(uid); saveDb(); }
   recordUserActivity(uid);
   const t=msg.text||"";
+  const rawText=String(msg.text||"").trim();
   const admin=isAdmin(uid);
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
@@ -5614,7 +5615,7 @@ async function mainMessage(msg) {
       return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
     }
     const folderName=String(s.folderName||"").trim().slice(0,80);
-    const description=String(rawText||t||"").trim()==="无" ? "" : String(rawText||t||"").trim().slice(0,300);
+    const description=rawText==="无" ? "" : rawText.slice(0,300);
     if(!folderName) {
       states.delete(key);
       return sendHtml(TOKEN,uid,"⚠️ 文件夹名称丢失，请重新创建。",{reply_markup:uploadFolderInlineMenu()});
