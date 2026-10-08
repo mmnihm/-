@@ -6614,75 +6614,19 @@ async function mainMessage(msg) {
     logAdmin(uid,"修改文件夹名称",oldName+" → "+newName);
     return sendHtml(TOKEN,uid,"✅ <b>文件夹名称已修改</b>\\n\\n📁 原名称："+escapeHtml(oldName)+"\\n📁 新名称："+escapeHtml(newName),{reply_markup:uploadFolderInlineMenu()});
   }
-  if(s?.step==="upload_folder"&&admin) {
-    if(t==="❌ 取消") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
-    if(t==="/cancel") { states.delete(key); return send(TOKEN,uid,"❌ <b>已取消上传</b>\\n\\n本次上传没有入库。",adminMenu()); }
-
-    const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
-    let folder=t.trim().slice(0,80);
-    if(folder.startsWith("📁 ")) folder=folder.slice(2).replace(/（\d+）$/,"").trim();
-    if(t==="➕ 新建文件夹") folder="";
-    
-    // 如果管理员没有输入文件夹名称，而是直接发送第一个文件，则自动创建随机文件夹。
-    if(!folder && media) {
-      folder="未命名-"+Math.random().toString(36).slice(2,8);
-    }
-    if(!folder && t==="➕ 新建文件夹") {
-      return send(TOKEN,uid,"📁 <b>新建文件夹</b>\\n\\n请发送新的文件夹名称。\\n\\n发送 /cancel 可取消。",{parse_mode:"HTML",reply_markup:{remove_keyboard:true}});
-    }
-    if(!folder) return send(TOKEN,uid,"⚠️ 请选择已有文件夹、发送新的文件夹名称，或者直接发送第一个文件。");
-
-    const cleanFolder=folder;
-    // 文件夹名称一旦确认就立即创建并保存，后续文件直接绑定到这个目录。
-    let existing=getDirectoryByName(cleanFolder);
-    if(!existing) {
-      existing=ensureDirectory(cleanFolder);
-      if(existing) {
-        touchSharedData(uid);
-        saveDb();
-        console.log("📁 UPLOAD FOLDER CREATED:", "uid="+uid, "folder="+existing.name, "id="+existing.id);
-      }
-    }
-    if(!existing) {
-      states.delete(key);
-      return send(TOKEN,uid,"❌ <b>文件夹创建失败</b>\n\n请重新点击「📤 上传资源」再试。",adminMenu());
-    }
-
-    const uploadKey=key;
-    if(uploadTimers.has(uploadKey)) clearTimeout(uploadTimers.get(uploadKey));
-    uploadTimers.set(uploadKey,setTimeout(()=>{
-      uploadTimers.delete(uploadKey);
-      const current=states.get(uploadKey);
-      if(current?.step==="upload_file") {
-        send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\n\n📁 文件夹："+escapeHtml(current.directoryName)+"\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\n\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-      }
-    },24*60*60*1000));
-
-    const firstPending = media ? [{messageId:Number(msg.message_id),msg}] : [];
-    states.set(key,{step:"upload_file",directoryId:existing.id,directoryName:existing.name,pendingUploads:firstPending,controlMessageId:Number(s?.controlMessageId||0)});
-    console.log("📤 UPLOAD SESSION START:", "uid="+uid, "folder="+existing.name, "id="+existing.id, "first="+(media?"yes":"no"), "pending="+firstPending.length);
-    if(media) {
-      return;
-    }
-    return send(TOKEN,uid,"📁 文件夹：<b>"+escapeHtml(existing.name)+"</b>\n\n现在请发送要上传的文件、图片、视频、音频或其他资源。\n\n📥 可以连续发送多个文件，完成后点击「✅ 结束上传」。\n\n发送 /cancel 可取消。",{parse_mode:"HTML"});
-  }
+  // 旧的主机器人 upload_folder 处理线已删除；文件夹选择只由 inline callback 负责。
+  // upload_file 这里只处理文字控制按钮；文件/媒体统一由 receiveUploadMedia() 处理。
   if(s?.step==="upload_file"&&admin) {
-    if(t==="/cancel") {
+    if(t==="/cancel" || t==="❌ 取消上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
       if(uploadAckTimers.has(key)) { clearTimeout(uploadAckTimers.get(key)); uploadAckTimers.delete(key); }
       states.delete(key);
-      return send(TOKEN,uid,"❌ <b>已取消本次上传</b>\\n\\n未入库的资源不会保存。",adminMenu());
+      if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
+      return send(TOKEN,uid,"❌ <b>已取消本次上传</b>\n\n未入库的资源不会保存。",adminMenu());
     }
     if(t==="▶️ 继续上传") {
       if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
-      uploadTimers.set(key,setTimeout(()=>{
-        uploadTimers.delete(key);
-        const current=states.get(key);
-        if(current?.step==="upload_file") {
-          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-        }
-      },24*60*60*1000));
-      return;
+      return sendHtml(TOKEN,uid,"📤 <b>继续上传</b>\n\n请直接发送文件，系统会自动累计本批数量。",uploadBottomKeyboard());
     }
     if(t==="✅ 结束上传") {
       if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
@@ -6690,6 +6634,8 @@ async function mainMessage(msg) {
       const finishState=states.get(key)||s;
       const count=Array.isArray(finishState?.pendingUploads)?finishState.pendingUploads.length:0;
       if(!count) return sendHtml(TOKEN,uid,"⚠️ <b>当前批次没有收到文件</b>\n\n请先发送文件，再点击「✅ 结束上传」。",adminMenu());
+      states.delete(key);
+      if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
       await sendHtml(TOKEN,uid,
         "⏳ <b>已结束上传</b>\n━━━━━━━━━━━━━━\n\n"+
         "📁 文件夹：<b>"+escapeHtml(finishState.directoryName||"未命名")+"</b>\n"+
@@ -6702,31 +6648,6 @@ async function mainMessage(msg) {
         sendHtml(TOKEN,uid,"❌ <b>上传整理失败</b>\n\n<code>"+escapeHtml(String(e?.message||e))+"</code>",adminMenu()).catch(()=>{});
       });
       return;
-    }
-    if(!repo()) {
-      if(uploadTimers.has(key)) { clearTimeout(uploadTimers.get(key)); uploadTimers.delete(key); }
-      states.delete(key);
-      return send(TOKEN,uid,"❌ <b>资源仓库未绑定</b>\\n\\n请先完成仓库绑定。",adminMenu());
-    }
-    const media=msg.document||msg.video||msg.audio||msg.animation||msg.photo?.at(-1)||msg.voice||msg.video_note;
-    if(!media && !msg.text) return send(TOKEN,uid,"⚠️ <b>内容格式不正确</b>\\n\\n请发送文件、图片、视频、音频或带文字的资源。");
-    try {
-      const pending=Array.isArray(s.pendingUploads)?s.pendingUploads:[];
-      pending.push({messageId:Number(msg.message_id),msg});
-      if(uploadTimers.has(key)) clearTimeout(uploadTimers.get(key));
-      uploadTimers.set(key,setTimeout(()=>{
-        uploadTimers.delete(key);
-        const current=states.get(key);
-        if(current?.step==="upload_file") {
-          send(TOKEN,uid,"⏸️ <b>暂时没有收到新文件</b>\\n\\n📁 文件夹："+escapeHtml(current.directoryName)+"\\n📥 已收到：<b>"+(current.pendingUploads?.length||0)+"</b> 个资源\\n⏱️ 已等待 "+UPLOAD_IDLE_SECONDS+" 秒。\\n\\n还要继续上传吗？",{parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}]]}}).catch(()=>{});
-        }
-      },24*60*60*1000));
-      states.set(key,{step:"upload_file",directoryId:s.directoryId,directoryName:s.directoryName,pendingUploads:pending});
-      console.log("📥 RESOURCE RECEIVED:", "folder=",s.directoryName, "message=",msg.message_id, "pending=",pending.length);
-      // 每收到一个文件立即确认，但不立即转存；所有文件继续留在当前批次，点击结束后统一批量处理。
-      return;
-    } catch(e) {
-      return send(TOKEN,uid,"❌ 接收资源失败：\\n"+String(e.message||e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),{parse_mode:"HTML"});
     }
   }
 
