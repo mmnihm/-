@@ -5598,24 +5598,37 @@ async function mainMessage(msg) {
       if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
       return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
     }
-    const folderName=String(t||"").trim().replace(/^📁\\s*/,"").slice(0,80);
+    const folderName=String(t||"").trim().replace(/^📁\s*/,"").slice(0,80);
     if(!folderName) return sendHtml(TOKEN,uid,"⚠️ <b>文件夹名称不能为空</b>\\n\\n请重新发送名称。");
     const same=db.directories.find(x=>String(x.name||"").trim().toLowerCase()===folderName.toLowerCase());
     if(same) {
-      states.set(key,{step:"upload_file",directoryId:same.id,directoryName:same.name,pendingUploads:[]});
-      return sendHtml(TOKEN,uid,"⚠️ <b>这个文件夹已经存在</b>\\n\\n📁 "+escapeHtml(same.name)+"\\n\\n已切换到这个文件夹，现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
+      states.set(key,{step:"upload_file",directoryId:same.id,directoryName:same.name,directoryDescription:same.description||"",pendingUploads:[]});
+      return sendHtml(TOKEN,uid,"⚠️ <b>这个文件夹已经存在</b>\\n\\n📁 "+escapeHtml(same.name)+(same.description?"\\n📝 "+escapeHtml(same.description):"")+"\\n\\n已切换到这个文件夹，现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
     }
-    const d=ensureDirectory(folderName);
-    if(!d) return sendHtml(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请换一个名称再试。");
+    states.set(key,{step:"folder_create_description",folderName});
+    return sendHtml(TOKEN,uid,"📝 <b>设置文件夹说明</b>\\n\\n📁 "+escapeHtml(folderName)+"\\n\\n请输入说明（可选，最多300字）。\\n不需要说明请发送「无」。\\n发送 /cancel 可取消。");
+  }
+  if(s?.step==="folder_create_description"&&admin) {
+    if(t==="/cancel" || t==="❌ 取消") {
+      states.delete(key);
+      return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
+    }
+    const folderName=String(s.folderName||"").trim().slice(0,80);
+    const description=String(t||"").trim()==="无" ? "" : String(t||"").trim().slice(0,300);
+    if(!folderName) {
+      states.delete(key);
+      return sendHtml(TOKEN,uid,"⚠️ 文件夹名称丢失，请重新创建。",{reply_markup:uploadFolderInlineMenu()});
+    }
+    const d=ensureDirectory(folderName,description);
+    if(!d) return sendHtml(TOKEN,uid,"❌ <b>文件夹创建失败</b>\\n\\n请重新创建。");
     touchSharedData(uid);
     queueBaserowDirectorySync(d);
     saveDb();
-    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,pendingUploads:[]});
-    if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; }
-    logAdmin(uid,"新建文件夹",d.name);
-    return sendHtml(TOKEN,uid,"✅ <b>文件夹创建成功</b>\\n\\n📁 "+escapeHtml(d.name)+"\\n\\n现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
+    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,directoryDescription:d.description||"",pendingUploads:[]});
+    if(db.settings?.uploadSessions?.[key]) delete db.settings.uploadSessions[key];
+    logAdmin(uid,"新建文件夹",d.name+(d.description?"："+d.description:""));
+    return sendHtml(TOKEN,uid,"✅ <b>文件夹创建成功</b>\\n\\n📁 "+escapeHtml(d.name)+(d.description?"\\n📝 "+escapeHtml(d.description):"")+"\\n\\n现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
   }
-
 
 
   if(admin && s?.step==="backup_token") {
