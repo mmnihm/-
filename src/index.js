@@ -4188,10 +4188,39 @@ function syncResourceFolderTag(item) {
     const content=String(item.caption||"")+" "+String(item.title||"");
     if(!content.includes("#"+previousAuto) && !content.includes("＃"+previousAuto)) tags=tags.filter(x=>x!==previousAuto);
   }
-  if(currentName && !tags.includes(currentName)) tags.unshift(currentName);
-  item.tags=tags.slice(0,10);
+  if(currentName && !tags.some(x=>String(x).trim()===currentName)) tags.unshift(currentName);
+  item.tags=[...new Set(tags)].slice(0,10);
   item.autoTagFolder=currentName || "";
   return item;
+}
+const resourceTagQueue=new Set();
+let resourceTagWorkerRunning=false;
+function queueResourceFolderTag(item){
+  if(!item) return;
+  const chatId=String(item.chatId||"").trim(), messageId=String(item.messageId||"").trim();
+  if(!chatId||!messageId) return;
+  resourceTagQueue.add(chatId+":"+messageId);
+  if(!resourceTagWorkerRunning){ resourceTagWorkerRunning=true; setImmediate(processResourceFolderTagQueue); }
+}
+async function processResourceFolderTagQueue(){
+  try{
+    let processed=0;
+    while(resourceTagQueue.size && processed<50){
+      const key=resourceTagQueue.values().next().value;
+      resourceTagQueue.delete(key);
+      const parts=String(key).split(":");
+      const item=db.resources.find(x=>String(x.chatId)===String(parts[0])&&String(x.messageId)===String(parts[1]));
+      if(item){
+        try{ queueResourceFolderTag(item); }
+        catch(e){ console.warn("⚠️ 后台文件夹标签处理失败:",String(e?.message||e)); }
+      }
+      processed++;
+      await new Promise(resolve=>setImmediate(resolve));
+    }
+  }finally{
+    if(resourceTagQueue.size) setImmediate(processResourceFolderTagQueue);
+    else resourceTagWorkerRunning=false;
+  }
 }
 function autoAssignResourceTagFolder(item) {
   if(!item) return null;
@@ -4199,19 +4228,19 @@ function autoAssignResourceTagFolder(item) {
   if(tags.length) item.tags=tags;
   const tag=chineseFolderTag(tags);
   if(!tag) {
-    syncResourceFolderTag(item);
+    queueResourceFolderTag(item);
     return item.directoryId ? (db.directories.find(d=>String(d.id)===String(item.directoryId)) || null) : null;
   }
   const current=db.directories.find(d=>String(d.id)===String(item.directoryId));
   if(current && String(current.name||"")===tag) {
-    syncResourceFolderTag(item);
+    queueResourceFolderTag(item);
     return current;
   }
   const folder=ensureDirectory(tag);
   if(folder) {
     item.directoryId=String(folder.id);
     item.autoTagFolder=tag;
-    syncResourceFolderTag(item);
+    queueResourceFolderTag(item);
   }
   return folder;
 }
@@ -4340,12 +4369,12 @@ function repairLocalFolders() {
   if(linked) saveDb();
   console.log("本地文件夹归类完成: 归入="+linked+" 有资源的文件夹="+folders.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id))).length);
 }
-function ensureDirectory(name) {
+function ensureDirectory(name, description="") {
   const clean=String(name||"").trim().slice(0,80);
   if(!clean)return null;
   let d=getDirectoryByName(clean);
-  if(d)return d;
-  d={id:sharedDirectoryId(clean),name:clean,createdAt:Date.now()};
+  if(d) return d;
+  d={id:sharedDirectoryId(clean),name:clean,description:String(description||"").trim().slice(0,300),createdAt:Date.now()};
   db.directories.push(d);
   touchSharedData("system");
   saveDb();
@@ -4514,7 +4543,7 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
             message_id:copiedId
           };
           const item={...(entry.msg||{}),chatId:String(r.chatId),messageId:copiedId,title:String(entry.msg?.document?.file_name||entry.msg?.video?.file_name||entry.msg?.audio?.file_name||entry.msg?.caption||entry.msg?.text||"未命名资源").slice(0,200),caption:String(entry.msg?.caption||entry.msg?.text||"").slice(0,500),date:entry.msg?.date||Math.floor(Date.now()/1000),indexedAt:Date.now(),directoryId:d.id,repositoryMessageId:copiedId,sourceUserId:String(uid),mediaGroupId:entry.msg?.media_group_id?String(entry.msg.media_group_id):"",downloads:0};
-          syncResourceFolderTag(item);
+          queueResourceFolderTag(item);
           const existingIndex=db.resources.findIndex(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
           if(existingIndex>=0) db.resources[existingIndex]={...db.resources[existingIndex],...item,directoryId:d.id}; else db.resources.unshift(item);
           db.resources=db.resources.slice(0,MAX_RESOURCES);
@@ -4536,7 +4565,7 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
           message_id:copiedId
         };
         const item={...(batch[n].msg||{}),chatId:String(r.chatId),messageId:copiedId,title:String(batch[n].msg?.document?.file_name||batch[n].msg?.video?.file_name||batch[n].msg?.audio?.file_name||batch[n].msg?.caption||batch[n].msg?.text||"未命名资源").slice(0,200),caption:String(batch[n].msg?.caption||batch[n].msg?.text||"").slice(0,500),date:batch[n].msg?.date||Math.floor(Date.now()/1000),indexedAt:Date.now(),directoryId:d.id,repositoryMessageId:copiedId,sourceUserId:String(uid),mediaGroupId:batch[n].msg?.media_group_id?String(batch[n].msg.media_group_id):"",downloads:0};
-        syncResourceFolderTag(item);
+        queueResourceFolderTag(item);
         const existingIndex=db.resources.findIndex(x=>String(x.chatId)===String(r.chatId)&&Number(x.messageId)===copiedId);
         if(existingIndex>=0) db.resources[existingIndex]={...db.resources[existingIndex],...item,directoryId:d.id}; else db.resources.unshift(item);
         db.resources=db.resources.slice(0,MAX_RESOURCES);
@@ -4740,7 +4769,7 @@ function indexResource(msg) {
   }
   db.resources=db.resources.slice(0,MAX_RESOURCES);
   const savedResource=db.resources.find(x=>x.chatId===item.chatId&&x.messageId===item.messageId) || item;
-  syncResourceFolderTag(savedResource);
+  queueResourceFolderTag(savedResource);
   queueBaserowResourceSync(savedResource);
   saveDb();
 }
@@ -6520,8 +6549,7 @@ async function mainMessage(msg) {
     const oldName=d.name;
     d.name=newName;
     for(const item of db.resources.filter(r=>String(r.directoryId)===String(d.id))) {
-      syncResourceFolderTag(item);
-      queueBaserowResourceSync(item);
+      queueResourceFolderTag(item);
     }
     queueBaserowDirectorySync(d);
     touchSharedData(uid);
@@ -7565,8 +7593,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const item=db.resources.find(r=>Number(r.messageId)===Number(st.itemId)&&String(r.directoryId)===String(st.sourceId));
     if(!target||!item) { void answer("资源或目标文件夹不存在",true); return; }
     item.directoryId=target.id;
-    syncResourceFolderTag(item);
-    queueBaserowResourceSync(item);
+    queueResourceFolderTag(item);
     saveDb();
     logAdmin(uid,"移动资源",(item.title||"未命名")+" → "+target.name);
     states.delete(key);
@@ -7889,8 +7916,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const items=db.resources.filter(r=>String(r.directoryId)===String(source.id));
     for(const item of items){
       item.directoryId=target.id;
-      syncResourceFolderTag(item);
-      queueBaserowResourceSync(item);
+      queueResourceFolderTag(item);
     }
     touchSharedData(uid);saveDb();states.delete("m:"+uid);
     void answer("已移动 "+items.length+" 个资源");
