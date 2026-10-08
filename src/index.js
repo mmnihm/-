@@ -3693,7 +3693,18 @@ async function allowed(token, userId) {
   try {
     const m = await tg(token, "getChatMember", {chat_id:g.chatId, user_id:userId});
     return ["creator","administrator","member"].includes(m.status) || (m.status === "restricted" && m.is_member === true);
-  } catch { return false; }
+  } catch(e) {
+    console.warn("⚠️ 指定群会员检查失败:", String(e?.telegramDescription || e?.message || e));
+    return false;
+  }
+}
+async function requireMemberAccess(token, chatId, userId, menu=null) {
+  if (isAdmin(userId)) return true;
+  const member = await allowed(TOKEN, userId);
+  if (member) return true;
+  const notice = nonMemberMessage(menu || userMenu());
+  await sendHtml(token, chatId, notice.text, notice.extra).catch(()=>{});
+  return false;
 }
 function quotaDateKey() {
   const d=new Date();
@@ -5071,6 +5082,9 @@ function escapeHtml(value) {
 
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const member=await allowed(TOKEN,userId);
+  if (!member && !isAdmin(userId)) {
+    return sendHtml(token,chatId,String(db.settings.nonMemberMessage||"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。"),{reply_markup:childMenu().reply_markup});
+  }
   if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\n\n暂时没有找到可用内容。",childMenu());
   if(!member && !isAdmin(userId)) {
     const remaining=nonMemberDailyRemaining(userId);
@@ -5150,6 +5164,11 @@ function batchNavigation(mode,offset,total){
 
 async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   const member=await allowed(TOKEN,userId);
+  if (!member && !isAdmin(userId)) {
+    return sendHtml(token,chatId,String(db.settings.nonMemberMessage||"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。"),{
+      reply_markup: options.mode ? batchNavigation(options.mode,options.offset||0,options.total||0).reply_markup : userMenu().reply_markup
+    });
+  }
   if(!Array.isArray(items) || !items.length) {
     return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",{
       ...(options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0)} : {})
@@ -6129,6 +6148,7 @@ async function mainMessage(msg) {
   }
 
   if(t==="📂 资源目录") {
+    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) return;
     states.delete(key);
     console.log("📂 资源目录：用户="+uid+" 文件夹="+db.directories.length+" 资源="+db.resources.length);
     try {
@@ -6144,6 +6164,7 @@ async function mainMessage(msg) {
   }
 
   if(s?.step==="directory_page") {
+    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) { states.delete(key); return; }
     if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
     if(t==="📂 返回文件夹") { states.set(key,{step:"directory"}); return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard()); }
     if(t!=="➡️ 下一步") return send(TOKEN,uid,"⚠️ 请点击「➡️ 下一步」继续。");
@@ -6172,6 +6193,7 @@ async function mainMessage(msg) {
   }
 
   if(t==="🔎 搜索资源") {
+    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) return;
 
     states.set(key,{step:"search"});
     return sendHtml(TOKEN,uid,
@@ -6182,9 +6204,16 @@ async function mainMessage(msg) {
       {reply_markup:{keyboard:[["❌ 取消搜索"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"请输入搜索关键词"}}
     );
   }
-  if(t==="🎲 随机获取") return deliver(TOKEN,uid,uid,random10(uid),TOKEN,{mode:"random",offset:0,total:db.resources.length});
-  if(t==="🆕 最新资源") return deliver(TOKEN,uid,uid,db.resources.slice(0,10),TOKEN,{mode:"latest",offset:0,total:db.resources.length});
+  if(t==="🎲 随机获取") {
+    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) return;
+    return deliver(TOKEN,uid,uid,random10(uid),TOKEN,{mode:"random",offset:0,total:db.resources.length});
+  }
+  if(t==="🆕 最新资源") {
+    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) return;
+    return deliver(TOKEN,uid,uid,db.resources.slice(0,10),TOKEN,{mode:"latest",offset:0,total:db.resources.length});
+  }
   if(s?.step==="search") {
+    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) { states.delete(key); return; }
     if(t==="/cancel" || t==="❌ 取消搜索" || t==="🏠 开始") {
       states.delete(key);
       if(t==="🏠 开始") {
@@ -7647,6 +7676,10 @@ async function handleDirectoryCallback(token, q, child=false) {
       void answer("返回首页");
       return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
     }
+    if(!(await requireMemberAccess(token,chatId,uid,child ? childMenu() : userMenu()))) {
+      void answer("请先加入指定会员群",true);
+      return;
+    }
     if(child){
       if(data==="batch:random"){
         void answer("正在随机获取…");
@@ -7675,6 +7708,10 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   // 用户搜索结果使用内联按钮：两列排列，结果多时分页，不再占用底部键盘。
   if(data==="src" || data.startsWith("srp:") || data.startsWith("sr:")) {
+    if(data!=="src" && !(await requireMemberAccess(token,chatId,uid,child ? childMenu() : userMenu()))) {
+      void answer("请先加入指定会员群",true);
+      return;
+    }
     const key=(child ? "c:" : "m:")+uid;
     const s=states.get(key);
     if(!s || s.step!=="search_results") {
@@ -8028,6 +8065,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   const safeDescription=String(d.description||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   if(data.startsWith("dir:")) {
+    if(!(await requireMemberAccess(token,chatId,uid,userMenu()))) {
+      void answer("请先加入指定会员群",true);
+      return;
+    }
     if(!all.length) {
       return safeEdit(token,{
         chat_id:chatId,
@@ -8050,7 +8091,11 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(offset>=all.length) return;
 
-  const member=await allowed(TOKEN,uid);
+  if(!(await requireMemberAccess(token,chatId,uid,userMenu()))) {
+    void answer("请先加入指定会员群",true);
+    return;
+  }
+  const member=true;
   let batch=all.slice(offset,offset+10);
   if(!member && !isAdmin(uid)) {
     const remaining=nonMemberDailyRemaining(uid);
