@@ -5601,8 +5601,41 @@ async function mainMessage(msg) {
   // 用户处于客服会话时，普通消息直接转交客服。
   if(!admin && await supportHandleUserMessage(TOKEN,msg)) return;
 
-  // 新建文件夹名称必须在所有客服/普通状态处理之前优先消费，避免被其他状态机截走。
-  if(s?.step==="folder_create"&&admin) {
+  // 文件夹创建流程最高优先级：名称和说明必须连续走同一个状态机，不能被客服/上传/其他状态截走。
+  if(admin && (s?.step==="folder_create" || s?.step==="folder_create_description")) {
+    if(t==="/cancel" || t==="❌ 取消") {
+      states.delete(key);
+      if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
+      return sendHtml(TOKEN,uid,"❌ <b>已取消新建文件夹</b>",{reply_markup:uploadFolderInlineMenu()});
+    }
+    if(s.step==="folder_create") {
+      const folderName=String(t||"").trim().replace(/^📁\s*/,"").slice(0,80);
+      if(!folderName) return sendHtml(TOKEN,uid,"⚠️ <b>文件夹名称不能为空</b>\n\n请重新发送名称。");
+      const same=db.directories.find(x=>String(x.name||"").trim().toLowerCase()===folderName.toLowerCase());
+      if(same) {
+        states.set(key,{step:"folder_create_description",folderName:same.name,directoryId:same.id});
+        if(db.settings?.uploadSessions?.[key]) { db.settings.uploadSessions[key]={...db.settings.uploadSessions[key],step:"folder_create_description",folderName:same.name,directoryId:same.id,updatedAt:Date.now()}; saveDb(); }
+        return sendHtml(TOKEN,uid,"📝 <b>设置文件夹说明</b>\n\n📁 "+escapeHtml(same.name)+"\n\n请输入新的说明（可选，最多300字）。\n不需要说明请发送「无」。\n发送 /cancel 可取消。");
+      }
+      states.set(key,{step:"folder_create_description",folderName});
+      if(db.settings?.uploadSessions?.[key]) { db.settings.uploadSessions[key]={...db.settings.uploadSessions[key],step:"folder_create_description",folderName,updatedAt:Date.now()}; saveDb(); }
+      return sendHtml(TOKEN,uid,"📝 <b>设置文件夹说明</b>\n\n📁 "+escapeHtml(folderName)+"\n\n请输入说明（可选，最多300字）。\n不需要说明请发送「无」。\n发送 /cancel 可取消。");
+    }
+    const folderName=String(s.folderName||"").trim().slice(0,80);
+    const description=String(rawText||"").trim()==="无" ? "" : String(rawText||"").trim().slice(0,300);
+    if(!folderName) { states.delete(key); return sendHtml(TOKEN,uid,"⚠️ <b>文件夹名称丢失，请重新创建。</b>",{reply_markup:uploadFolderInlineMenu()}); }
+    const d=ensureDirectory(folderName,description);
+    if(!d) return sendHtml(TOKEN,uid,"❌ <b>文件夹创建失败</b>\n\n请重新创建。");
+    d.description=description;
+    touchSharedData(uid); queueBaserowDirectorySync(d); saveDb();
+    states.set(key,{step:"upload_file",directoryId:d.id,directoryName:d.name,directoryDescription:d.description||"",pendingUploads:[]});
+    if(db.settings?.uploadSessions?.[key]) delete db.settings.uploadSessions[key];
+    logAdmin(uid,"新建文件夹",d.name+(d.description?"："+d.description:""));
+    return sendHtml(TOKEN,uid,"✅ <b>文件夹创建成功</b>\n\n📁 "+escapeHtml(d.name)+(d.description?"\n📝 "+escapeHtml(d.description):"")+"\n\n现在可以直接发送文件。",{reply_markup:{inline_keyboard:[[{text:"▶️ 继续上传",callback_data:"upload_continue"},{text:"✅ 结束上传",callback_data:"upload_finish"}],[{text:"❌ 取消上传",callback_data:"upload_cancel"}]]}});
+  }
+
+  // 旧的 folder_create 分支已合并到上面的最高优先级状态机。
+  if(false && s?.step==="folder_create"&&admin) {
     if(t==="/cancel" || t==="❌ 取消") {
       states.delete(key);
       if(db.settings?.uploadSessions?.[key]) { delete db.settings.uploadSessions[key]; saveDb(); }
