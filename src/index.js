@@ -5093,6 +5093,7 @@ function search(q) {
 
 function withoutVideosForGuest(items, member, uid, expandAlbums=true) {
   const raw=Array.isArray(items)?items:[];
+  // random 模式明确允许单条发送；其他模式继续保留原有相册成组逻辑。
   const expanded=expandAlbums?expandOriginalAlbumItems(raw):raw;
   if(member || isAdmin(uid) || hasActivePremiumMembership(uid)) return {items:expanded,blocked:0,allowed:expanded.length};
   const remaining=nonMemberDailyRemaining(uid);
@@ -5133,8 +5134,8 @@ function randomVideos(userId,limit=10){
   return arr.slice(0,limit);
 }
 function random10(userId) {
-  // 随机获取只从“可定位到 Telegram 原消息”的记录中抽取。
-  // 真正失效的仓库消息会在 deliver() 发送失败后自动清理。
+  // 随机获取每次最多抽取 10 条原始资源记录；不在这里扩展相册。
+  // 允许相册中的照片/视频单个发送，避免一次点击扩展成几十条。
   const arr=[...db.resources].filter(x =>
     x &&
     x.chatId !== undefined &&
