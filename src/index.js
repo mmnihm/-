@@ -7809,7 +7809,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       recordStat(uid,"download",1);
       recordResourceDownload(item);
       recordRecent(uid,item);
-      if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
+      if(!member && !isAdmin(uid) && isVideoResource(item)) consumeNonMemberQuota(uid,1); else saveDb();
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
@@ -8115,10 +8115,16 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
       const album=await sendResourceAlbum(token,chatId,first);
       const sent=Number(album?.sent||0);
+      if(sent>0){
+        recordStat(uid,"download",sent);
+        for(const item of first.slice(0,sent)){recordResourceDownload(item);recordRecent(uid,item);}
+        if(!member&&!isAdmin(uid)) consumeVideoQuota(uid,first.slice(0,sent)); else saveDb();
+      }
       // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
       const next=sent>0?selectedBatch.nextOffset:0;
+      const quotaReminder=(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0)?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
       const summary=sent>0
-        ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"
+        ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"+quotaReminder
         : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。";
       return tg(token,"editMessageText",{
         chat_id:chatId,
@@ -8143,7 +8149,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     void answer("请先加入指定会员群",true);
     return;
   }
-  const member=true;
+  const member=await allowed(TOKEN,uid);
   const selectedBatch=directoryBatchItems(all,offset,10);
   let batch=selectedBatch.items;
   const guest=withoutVideosForGuest(batch, member, uid);
@@ -8166,14 +8172,15 @@ async function handleDirectoryCallback(token, q, child=false) {
   // 只有至少发送成功一条，才推进到下一批；0 条成功时保留当前 offset 供重试。
   const next=Math.min(sent>0?selectedBatch.nextOffset:offset,all.length);
   if(sent) {
-    if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,sent);
+    if(!member && !isAdmin(uid)) consumeVideoQuota(uid,batch.slice(0,sent));
     else saveDb();
   }
   // 批量发送完成后单独发送一个控制消息，避免编辑原文件夹消息失败导致“下面没有按钮”。
   // 下一批仍然从 next 位置开始，不重复发送已经处理过的资源。
-  const finalText=next < all.length
+  const quotaReminder=(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0)?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+  const finalText=(next < all.length
     ? "📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length+"\\n📤 本组已发送：<b>"+sent+"</b> 个"
-    : "📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n✅ 已全部获取完成";
+    : "📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n✅ 已全部获取完成")+quotaReminder;
   return tg(token,"editMessageText",{
     chat_id:chatId,
     message_id:progressMessage?.message_id,
