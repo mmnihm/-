@@ -4949,10 +4949,21 @@ function expandOriginalAlbumItems(items) {
     if(seen.has(key)) continue;
     const groupId=String(item.mediaGroupId||"");
     if(groupId) {
+      // Telegram 原生相册最多 10 条；不要只凭 mediaGroupId 把整个仓库里
+      // 所有同标记记录都扩展开。必须与所选消息处于同一频道、消息 ID 连续，
+      // 并且最多扩展 10 条，避免脏分组数据导致一次随机获取发出几十条。
       const members=db.resources
-        .filter(x=>String(x?.chatId||"")===String(item.chatId||"")&&String(x?.mediaGroupId||"")===groupId)
+        .filter(x=>String(x?.chatId||"")===String(item.chatId||"")&&String(x?.mediaGroupId||"")===groupId&&Number(x?.messageId)>0)
         .sort((a,b)=>Number(a.messageId)-Number(b.messageId));
-      for(const member of (members.length?members:[item])) {
+      const selectedIndex=members.findIndex(x=>resourceKey(x)===key);
+      let album=[];
+      if(selectedIndex>=0) {
+        let left=selectedIndex,right=selectedIndex;
+        while(left>0 && Number(members[left].messageId)===Number(members[left-1].messageId)+1 && right-left+1<10) left--;
+        while(right+1<members.length && Number(members[right+1].messageId)===Number(members[right].messageId)+1 && right-left+1<10) right++;
+        album=members.slice(left,right+1);
+      }
+      for(const member of (album.length?album:[item])) {
         const memberKey=resourceKey(member);
         if(!seen.has(memberKey)){seen.add(memberKey);out.push(member);}
       }
