@@ -4885,7 +4885,7 @@ function autoDeleteText() {
 }
 function scheduleAutoDelete(token, chatId, messageIds) {
   const mins=autoDeleteMinutes();
-  if(!contentProtectionEnabled() || mins<=0) return;
+  if(mins<=0) return;
   const ids=(Array.isArray(messageIds)?messageIds:[messageIds]).map(Number).filter(Number.isFinite);
   if(!ids.length) return;
   if(!Array.isArray(db.settings.autoDeleteQueue)) db.settings.autoDeleteQueue=[];
@@ -4944,9 +4944,9 @@ function contentProtectionText() {
     "🛡️ 防转发/保存：<b>"+(protection ? "开启" : "关闭")+"</b>",
     "⏱️ 自动删除：<b>"+autoDeleteText()+"</b>",
     "━━━━━━━━━━━━━━",
-    protection && deletion
-      ? "📌 用户获取的资源将在 "+autoDeleteText()+" 后自动删除。"
-      : "💡 开启内容保护后，可设置资源消息自动删除时间。"
+    deletion
+      ? "📌 用户获取的资源将在 "+autoDeleteText()+" 后自动删除，与内容保护开关独立。"
+      : "💡 自动删除已关闭；可单独设置删除时间，不影响内容保护。" 
   ].join("\\n");
 }
 function expandOriginalAlbumItems(items) {
@@ -7868,8 +7868,6 @@ async function handleDirectoryCallback(token, q, child=false) {
     const op=data.slice("protect:".length);
     if(op==="toggle"){
       db.settings.contentProtection=!contentProtectionEnabled();
-      if(!contentProtectionEnabled()) db.settings.autoDeleteMinutes=0;
-      else if(!autoDeleteMinutes()) db.settings.autoDeleteMinutes=1440;
       saveDb(); logAdmin(uid,"内容保护",contentProtectionEnabled()?"开启":"关闭");
       void answer(contentProtectionEnabled()?"已开启":"已关闭");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
@@ -7880,7 +7878,6 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(op.startsWith("set:")){
       const n=Math.max(0,Number(op.slice(4))||0);
       db.settings.autoDeleteMinutes=n;
-      if(n>0) db.settings.contentProtection=true;
       saveDb(); logAdmin(uid,"自动删除",n?autoDeleteText():"关闭");
       void answer(n?("自动删除："+autoDeleteText()):"已关闭自动删除");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:contentProtectionText(),parse_mode:"HTML",reply_markup:contentProtectionMenu()});
