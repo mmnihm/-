@@ -3793,12 +3793,37 @@ function nonMemberDailyUsed(uid) {
   if(!row || row.date!==quotaDateKey()) return 0;
   return Math.max(0,Number(row.used)||0);
 }
-function nonMemberDailyRemaining(uid) {
-  // 指定群成员、管理员和兑换获得的有效会员均不限量。
-  if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true) return Infinity;
-  return Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid));
+// 同一用户快速连点多个获取入口时，先预留本批额度，防止并发请求都读到相同的剩余额度。
+const nonMemberQuotaReservations = new Map();
+function activeNonMemberQuotaReservation(uid) {
+  const id=String(uid), now=Date.now();
+  const row=nonMemberQuotaReservations.get(id);
+  if(!row) return 0;
+  if(row.expiresAt<=now) { nonMemberQuotaReservations.delete(id); return 0; }
+  return Math.max(0,Number(row.count)||0);
 }
-function consumeNonMemberQuota(uid,count) {
+function reserveNonMemberQuota(uid,count) {
+  const n=Math.max(0,Math.floor(Number(count)||0));
+  if(!n || isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true) return;
+  const id=String(uid), now=Date.now(), old=nonMemberQuotaReservations.get(id);
+  const active=old && old.expiresAt>now ? Math.max(0,Number(old.count)||0) : 0;
+  nonMemberQuotaReservations.set(id,{count:active+n,expiresAt:now+5*60*1000});
+}
+function releaseNonMemberQuotaReservation(uid,count) {
+  const id=String(uid), row=nonMemberQuotaReservations.get(id);
+  if(!row) return;
+  if(row.expiresAt<=Date.now()) { nonMemberQuotaReservations.delete(id); return; }
+  const left=Math.max(0,Number(row.count)||0)-Math.max(0,Math.floor(Number(count)||0));
+  if(left<=0) nonMemberQuotaReservations.delete(id);
+  else nonMemberQuotaReservations.set(id,{count:left,expiresAt:row.expiresAt});
+}
+function nonMemberDailyRemaining(uid) {
+  // 指定群成员、管理员和兑换获得的有效会员均不限量；非会员按每日硬上限扣除已用及发送中的预留额度。
+  if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true) return Infinity;
+  return Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid)-activeNonMemberQuotaReservation(uid));
+}
+function consumeNonMemberQuota(uid,count,reservationAlreadyReleased=false) {
+  if(!reservationAlreadyReleased) releaseNonMemberQuotaReservation(uid,count);
   if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true || !(Number(count)>0)) return;
   if(!db.settings.nonMemberDailyUsage || typeof db.settings.nonMemberDailyUsage!=="object") db.settings.nonMemberDailyUsage={};
   const id=String(uid), today=quotaDateKey(), row=db.settings.nonMemberDailyUsage[id];
@@ -5207,18 +5232,22 @@ function withoutVideosForGuest(items, member, uid, expandAlbums=true) {
   const remaining=nonMemberDailyRemaining(uid);
   const limit=remaining===Infinity?expanded.length:Math.max(0,remaining);
   const kept=expanded.slice(0,limit);
+  // 预留只覆盖本次准备发送的条目；成功后转为已用额度，发送异常时最多 5 分钟自动释放。
+  if(kept.length) reserveNonMemberQuota(uid,kept.length);
   return {items:kept,blocked:Math.max(0,expanded.length-kept.length),allowed:kept.length};
 }
 async function guestVideoNotice(token, chatId) {
   return sendHtml(token, chatId, "<b>🎁 今日免费资源额度已用完</b>\n\n非会员每天最多成功获取 <b>"+nonMemberDailyLimit()+"</b> 个资源，照片、视频和其他文件都计入额度。\n明天自动恢复；加入指定会员群后可不限量获取。", userMenu());
 }
 function consumeVideoQuota(uid,items){
-  if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true) return;
   const list=Array.isArray(items)?items:[];
   if(!list.length) return;
+  // 发送成功后先释放本批预留，再按原有规则记账；不改变每日额度数值或会员规则。
+  releaseNonMemberQuotaReservation(uid,list.length);
+  if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true) return;
   const bonusVideos=list.filter(item=>item?.__bonusVideoQuota===true).length;
   const baseCount=Math.max(0,list.length-bonusVideos);
-  if(baseCount>0) consumeNonMemberQuota(uid,baseCount);
+  if(baseCount>0) consumeNonMemberQuota(uid,baseCount,true);
   if(bonusVideos>0) consumeExtraVideoQuota(uid,bonusVideos);
   saveDb();
 }
