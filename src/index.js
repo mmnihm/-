@@ -4868,9 +4868,9 @@ function directoryBatchItems(all, offset=0, limit=10, preserveAlbum=true) {
   const list=Array.isArray(all)?all:[];
   let i=Math.max(0,Number(offset)||0);
   const picked=[];
-  if(preserveAlbum && i>0 && i<list.length && list[i]?.mediaGroupId && String(list[i-1]?.mediaGroupId||"")===String(list[i]?.mediaGroupId||"")) {
-    const groupId=String(list[i].mediaGroupId);
-    while(i>0 && String(list[i-1]?.mediaGroupId||"")===groupId) i--;
+  if(preserveAlbum && i>0 && i<list.length && list[i]?.mediaGroupId && String(list[i-1]?.chatId||"")===String(list[i]?.chatId||"") && String(list[i-1]?.mediaGroupId||"")===String(list[i]?.mediaGroupId||"")) {
+    const groupId=String(list[i].mediaGroupId),groupChatId=String(list[i].chatId||"");
+    while(i>0 && String(list[i-1]?.chatId||"")===groupChatId && String(list[i-1]?.mediaGroupId||"")===groupId) i--;
   }
   while(i<list.length) {
     const item=list[i], groupId=String(item?.mediaGroupId||"");
