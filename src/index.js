@@ -7084,14 +7084,9 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(action==="dirs") {
       const key=(child ? "c:" : "m:")+uid;
       states.delete(key);
-      await answer("已打开资源目录");
-      return safeEdit(token,{
-        chat_id:chatId,
-        message_id:messageId,
-        text:directoryText(),
-        parse_mode:"HTML",
-        reply_markup:directoryInlineKeyboard()
-      });
+      await answer("正在打开资源目录");
+      try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+      return sendHtml(token,chatId,directoryText(),{reply_markup:directoryInlineKeyboard()});
     }
     if(action==="random") {
       await answer("正在随机获取");
