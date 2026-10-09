@@ -4883,9 +4883,13 @@ async function sendResourceAlbum(token, chatId, items) {
       const entity=await findHistoryEntity(client);
       const prepared=[];
       let failed=0;
+      const withTimeout=(promise,ms,label)=>Promise.race([
+        promise,
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+"超时")),ms))
+      ]);
       for(const item of valid.slice(0,10)) {
         try {
-          const found=await client.getMessages(entity,{ids:[Number(item.messageId)]});
+          const found=await withTimeout(client.getMessages(entity,{ids:[Number(item.messageId)]}),20000,"读取资源");
           const message=Array.isArray(found)?found[0]:found;
           if(!message||!message.media) throw new Error("媒体不存在");
           const file=message.file||{};
@@ -4897,12 +4901,15 @@ async function sendResourceAlbum(token, chatId, items) {
             prepared.push({item,mediaType:"",message});
             continue;
           }
-          const buffer=await client.downloadMedia(message,{});
+          const buffer=await withTimeout(client.downloadMedia(message,{}),45000,"下载媒体");
           if(!buffer||!buffer.length) throw new Error("媒体下载失败");
           prepared.push({item,mediaType,buffer,name:String(file.name||item.title||(mediaType==="photo"?"photo.jpg":"video.mp4")),caption:String(item.caption||"")});
         } catch(e) {
           failed++;
-          console.warn("MEDIA GROUP PREPARE:",String(e?.message||e),"message=",item.messageId);
+          // 即使 MTProto 读取/下载失败，也必须继续用 Bot API 发送原仓库消息，
+          // 不能只显示“正在整理”然后把这条资源丢掉。
+          prepared.push({item,mediaType:"",message:null,prepareFailed:true});
+          console.warn("MEDIA GROUP PREPARE, fallback to original message:",String(e?.message||e),"message=",item.messageId);
         }
       }
       let sent=0,lastMessageId=0;
