@@ -8025,7 +8025,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   const directoryAction=data==="dirs"||data.startsWith("dirsp:")||data.startsWith("dir:")||data.startsWith("get:");
-  void answer(directoryAction?"正在打开/发送目录资源…":"");
+  await answer(directoryAction?"正在打开/发送目录资源…":"");
 
   if(data==="adm:shared_refresh"){
     await refreshSharedData(true);
@@ -8176,6 +8176,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   const next=Math.min(sent>0?selectedBatch.nextOffset:offset,all.length);
   if(sent) {
     const sentItems=Array.isArray(album?.sentItems)?album.sentItems:batch.slice(0,sent);
+    for(const item of sentItems) { recordResourceDownload(item); recordRecent(uid,item); }
     if(!member && !isAdmin(uid)) consumeVideoQuota(uid,sentItems);
     else saveDb();
   }
@@ -8251,7 +8252,12 @@ async function pollMain() {
         if(u.callback_query) {
           console.log("🔘 MAIN CALLBACK RECEIVED:", String(u.callback_query.data||""));
           // 回调后台执行，不阻塞 getUpdates；Telegram 按钮可连续点击，长任务不会卡住整个机器人。
-          void handleDirectoryCallback(TOKEN,u.callback_query,false).catch(e=>console.error("MAIN CALLBACK ERROR:",String(e?.message||e)));
+          void handleDirectoryCallback(TOKEN,u.callback_query,false).catch(async e=>{
+            const message=String(e?.telegramDescription||e?.message||e||"未知错误");
+            console.error("MAIN CALLBACK ERROR:",message);
+            try { await tg(TOKEN,"answerCallbackQuery",{callback_query_id:u.callback_query.id,text:"操作失败，请查看机器人消息后重试",show_alert:true}); } catch {}
+            try { if(u.callback_query.message?.chat?.id) await sendHtml(TOKEN,u.callback_query.message.chat.id,"⚠️ <b>按钮操作失败</b>\n\n"+escapeHtml(message).slice(0,700)+"\n\n请返回目录后重试。"); } catch {}
+          });
         }
         if(u.message) {
           console.log("📨 MAIN MESSAGE RECEIVED:", String(u.message.text||u.message.caption||"").slice(0,80));
@@ -8315,7 +8321,12 @@ async function childLoop(child) {
         child.offset=u.update_id+1;
         if(u.callback_query) {
           // 子机器人回调同样后台执行，避免一个慢操作堵住后续按钮。
-          void handleDirectoryCallback(token,u.callback_query,true);
+          void handleDirectoryCallback(token,u.callback_query,true).catch(async e=>{
+            const message=String(e?.telegramDescription||e?.message||e||"未知错误");
+            console.error("CHILD CALLBACK ERROR:",message);
+            try { await tg(token,"answerCallbackQuery",{callback_query_id:u.callback_query.id,text:"操作失败，请重试",show_alert:true}); } catch {}
+            try { if(u.callback_query.message?.chat?.id) await sendHtml(token,u.callback_query.message.chat.id,"⚠️ <b>按钮操作失败</b>\n\n"+escapeHtml(message).slice(0,700)+"\n\n请返回目录后重试。"); } catch {}
+          });
         }
         if(u.message) void childMessage(child,u.message,token).catch(e=>console.error("CHILD MESSAGE:",e.message));
       }
