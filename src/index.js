@@ -4717,10 +4717,10 @@ async function sendDirectoryBatch(token, chatId, items) {
     if(!ok) console.warn("⏭️ 文件夹批量发送：资源仓库已解绑/已切换，跳过旧资源 chat=",String(item?.chatId||""),"resource=",String(item?.messageId||""));
     return ok;
   });
-  if(!valid.length)return 0;
+  if(!valid.length)return {sent:0,sentItems:[]};
   try {
     const result=await sendResourceAlbum(token,chatId,valid);
-    return Number(result?.sent||0);
+    return {sent:Number(result?.sent||0),sentItems:Array.isArray(result?.sentItems)?result.sentItems:[]};
   } catch(e) {
     const desc=String(e?.telegramDescription||e?.message||e||"");
     console.error("DIRECTORY SEND:",desc);
@@ -4735,7 +4735,7 @@ async function sendDirectoryBatch(token, chatId, items) {
         console.warn("🧹 文件夹批量发送：仓库访问失效，已自动解绑并清理资源 chat=",badChat,"removed=",removed.length);
       }
     }
-    return 0;
+    return {sent:0,sentItems:[]};
   }
 }
 function directoryText() {
@@ -6214,9 +6214,10 @@ async function mainMessage(msg) {
     const guest=withoutVideosForGuest(page,member,uid);
     const allowedPage=guest.items;
     if(!allowedPage.length) return guestVideoNotice(TOKEN,uid);
-    const sent=await sendDirectoryBatch(TOKEN,uid,allowedPage);
+    const sendResult=await sendDirectoryBatch(TOKEN,uid,allowedPage);
+    const sent=Number(sendResult?.sent||0);
     const nextOffset=sent?pageInfo.nextOffset:offset;
-    if(sent>0&&!member&&!isAdmin(uid)) consumeVideoQuota(uid,allowedPage.filter(isVideoResource).slice(0,sent));
+    if(sent>0&&!member&&!isAdmin(uid)) consumeVideoQuota(uid,Array.isArray(sendResult?.sentItems)?sendResult.sentItems:[]);
     states.set(key,{step:"directory_page",directoryId:s.directoryId,offset:nextOffset});
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
     const safe=String(d?.name||"资源文件夹").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
