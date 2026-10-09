@@ -3380,8 +3380,14 @@ async function cloud123ScanAndUpload(uid, options={}) {
       const found=await clientHistory.getMessages(entity,{ids:[Number(item.messageId)]});
       const message=Array.isArray(found)?found[0]:found;
       if(!message || !message.media) {
-        item.cloud123={uploaded:false,error:"Telegram 历史消息/媒体不存在",at:Date.now()};
+        item.cloud123={
+          uploaded:false,
+          error:"Telegram 历史消息/媒体不存在",
+          attempts:Number(item.cloud123?.attempts||0)+1,
+          at:Date.now()
+        };
         fail++;
+        saveDb();
         return 0;
       }
 
@@ -3423,8 +3429,11 @@ async function cloud123ScanAndUpload(uid, options={}) {
           uploaded:true,
           path:remoteDir+"/"+originalName,
           size:stat.size,
-          uploadedAt:Date.now()
+          uploadedAt:Date.now(),
+          attempts:Number(item.cloud123?.attempts||0)
         };
+        // 每个文件确认上传成功后立即安排 JSON 持久化，降低批次中断导致重复上传的概率。
+        saveDb();
         success++;
         globalThis.cloud123Run={running:true,success,fail,skip,total:resources.length};
         totalUploadedBytes += stat.size;
@@ -3432,6 +3441,7 @@ async function cloud123ScanAndUpload(uid, options={}) {
       } catch(e) {
         uploadProgress.delete(String(item.messageId));
         item.cloud123={uploaded:false,error:String(e.message||e).slice(0,500),attempts:Number(item.cloud123?.attempts||0)+1,at:Date.now()};
+        saveDb();
         fail++;
         globalThis.cloud123Run={running:true,success,fail,skip,total:resources.length};
         console.error("123 UPLOAD:", item.title, e);
