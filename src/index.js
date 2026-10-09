@@ -5470,6 +5470,8 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total,requestedCount));
     return;
   } catch(e) {
+    // 本批发送异常时释放预留额度，避免失败资源暂时占用免费额度。
+    if(!member&&!isAdmin(userId)) releaseNonMemberQuotaReservation(userId,items.length);
     console.error("HISTORY DELIVERY:",e);
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\\n\\n原因："+escapeHtml(e.message||e),childMenu());
   }
@@ -7742,11 +7744,22 @@ async function handleDirectoryCallback(token, q, child=false) {
   for(const prefix of ["getfav:","getrecent:","gethot:","gettag:"]){
     if(data.startsWith(prefix)){
       const item=resourceByKey(data.slice(prefix.length));if(!item){void answer("资源不存在或已删除",true);return;}
-      const member=await allowed(TOKEN,uid);if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0){void answer("今日免费资源额度已用完",true);return guestVideoNotice(token,chatId);}
-      try{void answer("正在获取资源…");await sendIndexedResource(token,chatId,item);recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);if(!member&&!isAdmin(uid))consumeNonMemberQuota(uid,1);else saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\n\n📦 "+escapeHtml(item.title||"未命名资源")+"\n\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
-        [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
-        [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
-      ]}});}catch(e){void answer("获取失败："+String(e.message||e),true);return;}
+      const member=await allowed(TOKEN,uid);
+      const guest=withoutVideosForGuest([item],member,uid,false);
+      if(!guest.items.length){void answer("今日免费资源额度已用完",true);return guestVideoNotice(token,chatId);}
+      try{
+        void answer("正在获取资源…");
+        await sendIndexedResource(token,chatId,guest.items[0]);
+        recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);
+        if(!member&&!isAdmin(uid))consumeVideoQuota(uid,[item]);else saveDb();
+        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\\n\\n📦 "+escapeHtml(item.title||"未命名资源")+"\\n\\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+          [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
+          [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
+        ]}});
+      }catch(e){
+        releaseNonMemberQuotaReservation(uid,guest.items.length);
+        void answer("获取失败："+String(e.message||e),true);return;
+      }
     }
   }
   // 管理后台旧文字入口与内联按钮统一：这些按钮直接复用原有文字菜单处理逻辑，避免出现“按钮能显示但点了没反应”。
@@ -8705,6 +8718,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
       const album=await sendResourceAlbum(token,chatId,first);
       const sent=Number(album?.sent||0);
+      if(!member&&!isAdmin(uid)&&first.length>sent) releaseNonMemberQuotaReservation(uid,first.length-sent);
       if(sent>0) {
         recordStat(uid,"download",sent);
         for(const item of (Array.isArray(album?.sentItems)?album.sentItems:first.slice(0,sent))) {
@@ -8724,6 +8738,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
       return sendHtml(token,chatId,summary,{reply_markup:folderProgressKeyboard(d.id,all.length,next)});
     } catch(e) {
+      if(!member&&!isAdmin(uid)) releaseNonMemberQuotaReservation(uid,first.length);
       console.error("DIRECTORY ALBUM SEND FAILED:",String(e?.message||e));
       const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
       try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
@@ -8747,12 +8762,14 @@ async function handleDirectoryCallback(token, q, child=false) {
     progressMessage=await tg(token,"sendMessage",{chat_id:chatId,text:"⏳ 正在整理本组照片和视频，请稍候……"});
     album=await sendResourceAlbum(token,chatId,batch);
   } catch(e) {
+    if(!member&&!isAdmin(uid)) releaseNonMemberQuotaReservation(uid,batch.length);
     console.error("DIRECTORY BATCH SEND FAILED:",String(e?.message||e));
     const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
     if(progressMessage?.message_id) return tg(token,"editMessageText",{chat_id:chatId,message_id:progressMessage.message_id,text:errText,parse_mode:"HTML",reply_markup:folderProgressKeyboard(d.id,all.length,offset)});
     return sendHtml(token,chatId,errText,{reply_markup:folderProgressKeyboard(d.id,all.length,offset)});
   }
   const sent=Number(album?.sent||0);
+  if(!member&&!isAdmin(uid)&&batch.length>sent) releaseNonMemberQuotaReservation(uid,batch.length-sent);
   if(sent) recordStat(uid,"download",sent);
 
   // 只有至少发送成功一条，才推进到下一批；0 条成功时保留当前 offset 供重试。
