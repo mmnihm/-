@@ -3993,7 +3993,7 @@ function userHomeText(uid) {
   const premium = isAdmin(uid) || hasActivePremiumMembership(uid);
   const remaining = nonMemberDailyRemaining(uid);
   const quota = premium ? "💎 <b>会员状态：</b>不限量获取" : "🎁 <b>今日免费额度：</b>剩余 " + Math.max(0, Number(remaining) || 0) + " 个";
-  const folderCount = new Set(db.resources.filter(r => r && r.directoryId !== undefined && r.directoryId !== null).map(r => String(r.directoryId))).size;
+  const knownFolderIds = new Set(db.directories.map(d => String(d.id)));\n  const folderCount = new Set(db.resources.filter(r => r && r.directoryId !== undefined && r.directoryId !== null && knownFolderIds.has(String(r.directoryId))).map(r => String(r.directoryId))).size;
   return "<b>🏠 资源平台</b>\n━━━━━━━━━━━━━━\n\n" +
     "📚 <b>资源总量：</b>" + db.resources.length + " 条\n" +
     "📁 <b>可浏览文件夹：</b>" + folderCount + " 个\n" + quota + "\n\n" +
@@ -7388,7 +7388,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
-        text:isAdmin(uid)?adminStatusText():"<b>🏠 资源平台</b>\\n━━━━━━━━━━━━━━\\n\\n👇 <i>请选择你要使用的功能</i>",
+        text:isAdmin(uid)?adminStatusText():userHomeText(uid),
         parse_mode:"HTML",
         reply_markup:isAdmin(uid)?adminRootInline():userHomeInlineKeyboard().reply_markup
       });
@@ -8053,7 +8053,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="batch:random" || data==="batch:video" || data.startsWith("batch:latest:") || data==="batch:home"){
     if(data==="batch:home"){
       void answer("返回首页");
-      return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
+      return sendHtml(token,uid,userHomeText(uid),child ? childMenu() : userMenu());
     }
     // 再来一组/下一批前清除旧控制键盘，新按钮只挂在新一组文件之后。
     void tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
