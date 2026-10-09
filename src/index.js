@@ -3760,6 +3760,19 @@ async function allowed(token, userId) {
   membershipPending.set(cacheKey,pending);
   return pending;
 }
+// 统一读取指定群会员缓存。null 表示尚未检查或缓存过期，避免把“未知”当成非会员。
+function cachedRequiredGroupMembership(userId) {
+  if(isAdmin(userId) || hasActivePremiumMembership(userId)) return true;
+  const g=group();
+  if(!g?.chatId) return false;
+  const key=tokenFingerprint(TOKEN)+":"+String(g.chatId)+":"+String(userId);
+  const cached=membershipCache.get(key);
+  if(!cached || cached.expiresAt<=Date.now()) {
+    if(cached) membershipCache.delete(key);
+    return null;
+  }
+  return cached.member===true;
+}
 async function requireMemberAccess(token, chatId, userId, menu=null) {
   // 指定群只负责会员身份与非会员额度判断；是否强制入群由额度设置决定。
   // 保留此函数兼容旧入口，但不再把“未入群”直接拦截。
@@ -3780,11 +3793,12 @@ function nonMemberDailyUsed(uid) {
   return Math.max(0,Number(row.used)||0);
 }
 function nonMemberDailyRemaining(uid) {
-  if(isAdmin(uid) || hasActivePremiumMembership(uid)) return Infinity;
+  // 指定群成员、管理员和兑换获得的有效会员均不限量。
+  if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true) return Infinity;
   return Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid));
 }
 function consumeNonMemberQuota(uid,count) {
-  if(isAdmin(uid) || hasActivePremiumMembership(uid) || !(Number(count)>0)) return;
+  if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true || !(Number(count)>0)) return;
   if(!db.settings.nonMemberDailyUsage || typeof db.settings.nonMemberDailyUsage!=="object") db.settings.nonMemberDailyUsage={};
   const id=String(uid), today=quotaDateKey(), row=db.settings.nonMemberDailyUsage[id];
   if(!row || row.date!==today) db.settings.nonMemberDailyUsage[id]={date:today,used:Number(count)||0};
@@ -4001,7 +4015,8 @@ function childMenu() {
   return userHomeInlineKeyboard();
 }
 function userHomeText(uid) {
-  const premium = isAdmin(uid) || hasActivePremiumMembership(uid);
+  const groupMember = cachedRequiredGroupMembership(uid)===true;
+  const premium = isAdmin(uid) || hasActivePremiumMembership(uid) || groupMember;
   const remaining = nonMemberDailyRemaining(uid);
   const quota = premium ? "💎 <b>会员状态：</b>不限量获取" : "🎁 <b>今日免费额度：</b>剩余 " + Math.max(0, Number(remaining) || 0) + " 个";
   const knownFolderIds = new Set(db.directories.map(d => String(d.id)));
@@ -5200,7 +5215,7 @@ async function guestVideoNotice(token, chatId) {
   return sendHtml(token, chatId, "<b>🎁 今日免费资源额度已用完</b>\n\n非会员每天最多成功获取 <b>"+nonMemberDailyLimit()+"</b> 个资源，照片、视频和其他文件都计入额度。\n明天自动恢复；加入指定会员群后可不限量获取。", userMenu());
 }
 function consumeVideoQuota(uid,items){
-  if(isAdmin(uid) || hasActivePremiumMembership(uid)) return;
+  if(isAdmin(uid) || hasActivePremiumMembership(uid) || cachedRequiredGroupMembership(uid)===true) return;
   const list=Array.isArray(items)?items:[];
   if(!list.length) return;
   const bonusVideos=list.filter(item=>item?.__bonusVideoQuota===true).length;
