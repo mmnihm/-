@@ -3909,7 +3909,7 @@ function adminBotInline(){return{inline_keyboard:[
  [{text:"🤖 克隆机器人",callback_data:"adm:clone"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
-function quotaSettingsText(){return"<b>🎬 会员 / 非会员视频额度</b>\n━━━━━━━━━━━━━━\n\n👤 非会员每日可获取视频：<b>"+nonMemberDailyLimit()+"</b> 个\n💎 会员：视频不限量\n📂 普通目录/搜索浏览不受此额度限制\n\n👇 修改每日视频额度";}
+function quotaSettingsText(){return"<b>🎁 会员 / 非会员每日资源额度</b>\\n━━━━━━━━━━━━━━\\n\\n👤 非会员每日最多获取：<b>"+nonMemberDailyLimit()+"</b> 个资源\\n📷 照片、🎬 视频、📄 文件均计入额度\\n💎 会员：资源不限量\\n🔄 每日自动重置\\n\\n👇 修改每日资源额度";}
 
 function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
@@ -7210,7 +7210,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   for(const prefix of ["getfav:","getrecent:","gethot:","gettag:"]){
     if(data.startsWith(prefix)){
       const item=resourceByKey(data.slice(prefix.length));if(!item){void answer("资源不存在或已删除",true);return;}
-      const member=await allowed(TOKEN,uid);if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0){void answer("今日免费视频额度已用完",true);return guestVideoNotice(token,chatId);}
+      const member=await allowed(TOKEN,uid);if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0){void answer("今日免费资源额度已用完",true);return guestVideoNotice(token,chatId);}
       try{void answer("正在获取资源…");await sendIndexedResource(token,chatId,item);recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);if(!member&&!isAdmin(uid))consumeNonMemberQuota(uid,1);else saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\n\n📦 "+escapeHtml(item.title||"未命名资源")+"\n\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
         [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
@@ -7814,7 +7814,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       recordRecent(uid,item);
       if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
       try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
-      return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源"+(isVideoResource(item)&&!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":""),resourceInlineKeyboard(s.results,page));
+      return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源"+(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":""),resourceInlineKeyboard(s.results,page));
     } catch(e) {
       return safeEdit(token,{
         chat_id:chatId,
