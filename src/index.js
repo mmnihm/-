@@ -3732,13 +3732,11 @@ function redeemCode(uid,rawCode) {
     } else {
       const oldExpiry=premiumMembershipExpiry(uid), expiresAt=Math.max(now,oldExpiry)+amount*86400000;
       store.premiumMemberships[String(uid)]={expiresAt,updatedAt:now,sourceCode:code};
-      const renewalGroup=group(); if(renewalGroup?.chatId) tg(TOKEN,"unbanChatMember",{chat_id:renewalGroup.chatId,user_id:Number(uid),only_if_banned:true}).catch(e=>console.warn("⚠️ 会员续期后解除群限制失败，用户="+uid+"："+String(e?.message||e)));
       row.rewardAppliedAt=now; row.expiresAt=expiresAt; reward="已增加 "+amount+" 天会员";
       expiry=new Date(expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"});
     }
   } else if(row.type==="membership_permanent") {
     store.premiumMemberships[String(uid)]={permanent:true,updatedAt:now,sourceCode:code};
-    const permanentGroup=group(); if(permanentGroup?.chatId) tg(TOKEN,"unbanChatMember",{chat_id:permanentGroup.chatId,user_id:Number(uid),only_if_banned:true}).catch(e=>console.warn("⚠️ 永久会员开通后解除群限制失败，用户="+uid+"："+String(e?.message||e)));
     row.rewardAppliedAt=now; row.permanent=true; reward="已开通永久会员"; expiry="永久有效";
   } else if(row.type==="video_credits") {
     store.extraVideoQuota[String(uid)]=extraVideoQuotaRemaining(uid)+amount;
@@ -3785,50 +3783,6 @@ async function checkMembershipExpiryReminders() {
       await sendHtml(TOKEN,uid,"<b>⏰ 会员到期提醒</b>\n━━━━━━━━━━━━━━\n\n"+(daysLeft===3?"你的会员还有 <b>3 天</b> 到期。":"你的会员将于今天到期。")+"\n到期时间："+escapeHtml(expiryText)+"\n\n如需继续使用会员权益，请及时续期。");
       raw[marker]=expiry; changed=true;
     } catch(e) { console.warn("⚠️ 会员到期提醒发送失败，用户="+uid+"："+String(e?.message||e)); }
-  }
-  if(changed) saveDb();
-}
-async function checkMembershipExpiryKicks() {
-  if(!TOKEN) return;
-  const g=group();
-  if(!g?.chatId) return;
-  const store=redemptionStore();
-  let changed=false;
-  for(const [uid,entry] of Object.entries(store.premiumMemberships)) {
-    let raw=entry;
-    if(typeof raw==="number" && Number.isFinite(raw)) {
-      raw={expiresAt:raw};
-      store.premiumMemberships[uid]=raw;
-      changed=true;
-    }
-    if(!raw || typeof raw!=="object" || raw.permanent===true) continue;
-    const expiry=Number(raw.expiresAt||0);
-    if(!Number.isFinite(expiry) || expiry<=0 || expiry>Date.now()) continue;
-    if(Number(raw.kickedForExpiry||0)===expiry) continue;
-    try {
-      const member=await tg(TOKEN,"getChatMember",{chat_id:g.chatId,user_id:Number(uid)});
-      const status=String(member?.status||"");
-      if(status==="creator" || status==="administrator") {
-        console.warn("⚠️ 会员已到期但属于群管理员/群主，跳过自动移出：用户="+uid);
-        raw.kickedForExpiry=expiry;
-        raw.kickSkippedAdmin=true;
-        changed=true;
-        continue;
-      }
-      await tg(TOKEN,"banChatMember",{chat_id:g.chatId,user_id:Number(uid),revoke_messages:false});
-      raw.kickedForExpiry=expiry;
-      raw.kickProcessedAt=Date.now();
-      raw.kickSkippedAdmin=false;
-      changed=true;
-      console.log("🚪 会员到期，已从会员群移出并限制重新入群：用户="+uid+" 群="+g.chatId);
-      try {
-        await sendHtml(TOKEN,uid,"<b>🚪 会员已到期</b>\n━━━━━━━━━━━━━━\n\n你的会员资格已到期，已自动移出会员群。续费成功后即可重新获取入群资格。");
-      } catch(e) {
-        console.warn("⚠️ 到期移出后通知用户失败，用户="+uid+"："+String(e?.message||e));
-      }
-    } catch(e) {
-      console.warn("⚠️ 会员到期自动移出失败，用户="+uid+" 群="+g.chatId+"："+String(e?.telegramDescription||e?.message||e));
-    }
   }
   if(changed) saveDb();
 }
@@ -8700,9 +8654,7 @@ async function boot(){
     backgroundTimersStarted = true;
     setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
     checkMembershipExpiryReminders().catch(e=>console.warn("⚠️ 会员到期提醒检查失败：",String(e?.message||e)));
-    checkMembershipExpiryKicks().catch(e=>console.warn("⚠️ 会员到期自动移出检查失败：",String(e?.message||e)));
     setInterval(() => { checkMembershipExpiryReminders().catch(e=>console.warn("⚠️ 会员到期提醒检查失败：",String(e?.message||e))); }, 60*60*1000);
-    setInterval(() => { checkMembershipExpiryKicks().catch(e=>console.warn("⚠️ 会员到期自动移出检查失败：",String(e?.message||e))); }, 5*60*1000);
     setInterval(() => {
       const s = runtimeStatus();
       console.log("🫀 HEARTBEAT:", "connected="+s.mainConnected, "uptime="+s.uptimeSeconds+"s", "lastPoll="+(s.lastPollAt||"-"), "lastUpdate="+(s.lastUpdateAt||"-"), "error="+(s.lastError||"-"));
