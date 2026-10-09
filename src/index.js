@@ -1464,7 +1464,7 @@ async function ensureStartCommand(token) {
 async function tgUploadBuffer(token, method, chatId, buffer, fileName, caption="") {
   const form = new FormData();
   form.append("chat_id", String(chatId));
-  form.append(method === "sendVideo" ? "video" : "document", new Blob([buffer]), fileName || "resource");
+  form.append(method === "sendVideo" ? "video" : method === "sendPhoto" ? "photo" : "document", new Blob([buffer]), fileName || "resource");
   if (caption) form.append("caption", String(caption).slice(0,1024));
   if (contentProtectionEnabled()) form.append("protect_content", "true");
   const r = await fetch(api(token, method), {method:"POST", body:form});
@@ -5214,54 +5214,54 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
         for(let attempt=0;attempt<2;attempt++){
           try{
             buffer=await client.downloadMedia(message,{});
-            if(buffer && buffer.length) break;
+            if(buffer&&buffer.length) break;
             downloadError=new Error("媒体下载失败");
-          }catch(downloadErr){
-            downloadError=downloadErr;
-            if(attempt===0) await sleep(500);
-          }
+          }catch(downloadErr){downloadError=downloadErr;if(attempt===0)await sleep(500);}
         }
         if(!buffer||!buffer.length) throw downloadError||new Error("媒体下载失败");
-        const file=message.file||{},mime=String(file.mimeType||""),name=String(file.name||item.title||"resource");
-        prepared.push({item,buffer,name,isVideo:isVideoResource(item)||mime.startsWith("video"),caption:String(item.caption||"")});
+        const file=message.file||{},mime=String(file.mimeType||"").toLowerCase(),mediaClass=String(message.media?.className||"");
+        const mediaType=(mime.startsWith("image/")||/MessageMediaPhoto/i.test(mediaClass)||message.photo)?"photo":
+          (mime.startsWith("video/")||isVideoResource(item)||(/MessageMediaDocument/i.test(mediaClass)&&mime.startsWith("video")))?"video":"";
+        prepared.push({item,buffer,name:String(file.name||item.title||(mediaType==="photo"?"photo.jpg":mediaType==="video"?"video.mp4":"resource")),mediaType,caption:String(item.caption||"")});
       }catch(e){
         fail++;
-        const historyError=String(e?.message||e);
-        console.error("HISTORY SEND:",historyError,"message=",item.messageId);
-        if(/历史消息或媒体不存在|message not found|MESSAGE_ID_INVALID|message.?id.?invalid|media.*not found|message.*does not exist/i.test(historyError)) removeInvalidResource(item,historyError);
+        const msg=String(e?.message||e);
+        console.error("HISTORY SEND:",msg,"message=",item.messageId);
+        if(/历史消息或媒体不存在|message not found|MESSAGE_ID_INVALID|message.?id.?invalid|media.*not found|message.*does not exist/i.test(msg))removeInvalidResource(item,msg);
       }
     }
     for(let i=0;i<prepared.length;){
       const entry=prepared[i];
-      if(entry.isVideo){
+      if(entry.mediaType){
         let end=i;
-        while(end<prepared.length && prepared[end].isVideo && end-i<10) end++;
+        while(end<prepared.length&&prepared[end].mediaType&&end-i<10)end++;
         const group=prepared.slice(i,end);
         if(group.length>=2){
           try{
-            const sent=await tgUploadVideoAlbum(token,chatId,group);
+            const sent=await tgUploadMediaAlbum(token,chatId,group);
             const delivered=Math.min(sent.length,group.length);
             ok+=delivered;
-            videoSent+=group.slice(0,delivered).filter(x=>isVideoResource(x.item)).length;
+            videoSent+=group.slice(0,delivered).filter(x=>x.mediaType==="video"&&isVideoResource(x.item)).length;
             for(const x of group.slice(0,delivered)){recordResourceDownload(x.item);recordRecent(userId,x.item);}
             fail+=group.length-delivered;
           }catch(albumError){
-            console.warn("VIDEO ALBUM FAILED, fallback to individual sends:",String(albumError?.message||albumError));
+            console.warn("MEDIA ALBUM FAILED, fallback to individual sends:",String(albumError?.message||albumError));
             for(const x of group){
               try{
-                await tgUploadBuffer(token,"sendVideo",chatId,x.buffer,x.name,x.caption);
-                ok++;if(isVideoResource(x.item)) videoSent++;
+                const method=x.mediaType==="photo"?"sendPhoto":"sendVideo";
+                await tgUploadBuffer(token,method,chatId,x.buffer,x.name,x.caption);
+                ok++;if(x.mediaType==="video"&&isVideoResource(x.item))videoSent++;
                 recordResourceDownload(x.item);recordRecent(userId,x.item);
-              }catch(sendError){fail++;console.error("VIDEO SEND:",String(sendError?.message||sendError),"message=",x.item.messageId);}
+              }catch(sendError){fail++;console.error("MEDIA SEND:",String(sendError?.message||sendError),"message=",x.item.messageId);}
               await sleep(100);
             }
           }
         }else{
           try{
-            await tgUploadBuffer(token,"sendVideo",chatId,entry.buffer,entry.name,entry.caption);
-            ok++;if(isVideoResource(entry.item)) videoSent++;
+            await tgUploadBuffer(token,entry.mediaType==="photo"?"sendPhoto":"sendVideo",chatId,entry.buffer,entry.name,entry.caption);
+            ok++;if(entry.mediaType==="video"&&isVideoResource(entry.item))videoSent++;
             recordResourceDownload(entry.item);recordRecent(userId,entry.item);
-          }catch(e){fail++;console.error("VIDEO SEND:",String(e?.message||e),"message=",entry.item.messageId);}
+          }catch(e){fail++;console.error("MEDIA SEND:",String(e?.message||e),"message=",entry.item.messageId);}
         }
         i=end;
       }else{
@@ -5278,8 +5278,8 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
     const extraMessage=postResourceMessage();
-    const historySummary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"");
-    await sendHtml(token,chatId,historySummary,batchNavigation(mode,offset,total));
+    const summary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"");
+    await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total));
     return;
   }catch(e){
     console.error("HISTORY DELIVERY:",e);
