@@ -5391,7 +5391,9 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
 
   const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
   const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
-  const summary = (fail ? "⚠️ 本批 "+ok+"/"+valid.length : "✅ 本批 "+ok+" 个")+inviteText;
+  const summary = fail
+    ? "⚠️ <b>本批发送结果</b>\\n✅ 成功：<b>"+ok+"</b> 个\\n❌ 失败：<b>"+fail+"</b> 个\\n\\n<i>失败资源已跳过，可继续获取下一批。</i>"+inviteText
+    : "✅ <b>本批发送完成</b>\\n成功发送：<b>"+ok+"</b> 个"+inviteText;
 
   // 无论本批是否有失败，都必须保留“再来一组”按钮。
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
