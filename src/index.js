@@ -5451,6 +5451,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const guest=withoutVideosForGuest(items,member,userId,options.mode!=="latest" && options.mode!=="random");
   items=guest.items;
   if(!items.length) return guestVideoNotice(token,chatId);
+  let quotaSettled=false;
   try {
     const album=await sendResourceAlbum(token,chatId,items,{singleEach:options.mode==="random"});
     const ok=Number(album?.sent||0),fail=Math.max(Number(album?.failed||0),items.length-ok);
@@ -5460,6 +5461,8 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
       if(!member&&!isAdmin(userId)) consumeVideoQuota(userId,Array.isArray(album?.sentItems)?album.sentItems:items.slice(0,ok));
       else saveDb();
     } else saveDb();
+    if(!member&&!isAdmin(userId)&&items.length>ok) releaseNonMemberQuotaReservation(userId,items.length-ok);
+    quotaSettled=true;
     const mode=options.mode==="random"?"random":"latest";
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
@@ -5471,7 +5474,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     return;
   } catch(e) {
     // 本批发送异常时释放预留额度，避免失败资源暂时占用免费额度。
-    if(!member&&!isAdmin(userId)) releaseNonMemberQuotaReservation(userId,items.length);
+    if(!quotaSettled&&!member&&!isAdmin(userId)) releaseNonMemberQuotaReservation(userId,items.length);
     console.error("HISTORY DELIVERY:",e);
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\\n\\n原因："+escapeHtml(e.message||e),childMenu());
   }
@@ -7747,19 +7750,19 @@ async function handleDirectoryCallback(token, q, child=false) {
       const member=await allowed(TOKEN,uid);
       const guest=withoutVideosForGuest([item],member,uid,false);
       if(!guest.items.length){void answer("今日免费资源额度已用完",true);return guestVideoNotice(token,chatId);}
-      try{
-        void answer("正在获取资源…");
-        await sendIndexedResource(token,chatId,guest.items[0]);
-        recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);
-        if(!member&&!isAdmin(uid))consumeVideoQuota(uid,[item]);else saveDb();
-        return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\\n\\n📦 "+escapeHtml(item.title||"未命名资源")+"\\n\\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
-          [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
-          [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
-        ]}});
-      }catch(e){
+      void answer("正在获取资源…");
+      try { await sendIndexedResource(token,chatId,guest.items[0]); }
+      catch(e) {
         releaseNonMemberQuotaReservation(uid,guest.items.length);
-        void answer("获取失败："+String(e.message||e),true);return;
+        void answer("获取失败："+String(e.message||e),true);
+        return;
       }
+      recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);
+      if(!member&&!isAdmin(uid))consumeVideoQuota(uid,[item]);else saveDb();
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\\n\\n📦 "+escapeHtml(item.title||"未命名资源")+"\\n\\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+        [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
+        [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
+      ]}});
     }
   }
   // 管理后台旧文字入口与内联按钮统一：这些按钮直接复用原有文字菜单处理逻辑，避免出现“按钮能显示但点了没反应”。
@@ -8711,6 +8714,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const first=guest.items;
     // 先在聊天里显示进度，避免媒体下载/相册整理期间用户误以为按钮没反应。
     let progressMessage;
+    let quotaSettled=false;
     try {
       progressMessage=await tg(token,"sendMessage",{
         chat_id:chatId,
@@ -8728,6 +8732,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         if(!member&&!isAdmin(uid)) consumeVideoQuota(uid,Array.isArray(album?.sentItems)?album.sentItems:first.slice(0,sent));
         else saveDb();
       }
+      quotaSettled=true;
       // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
       const next=sent>0?(member?selectedBatch.nextOffset:Math.min(sent,all.length)):0;
       const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
@@ -8738,7 +8743,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
       return sendHtml(token,chatId,summary,{reply_markup:folderProgressKeyboard(d.id,all.length,next)});
     } catch(e) {
-      if(!member&&!isAdmin(uid)) releaseNonMemberQuotaReservation(uid,first.length);
+      if(!quotaSettled&&!member&&!isAdmin(uid)) releaseNonMemberQuotaReservation(uid,first.length);
       console.error("DIRECTORY ALBUM SEND FAILED:",String(e?.message||e));
       const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
       try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
@@ -8758,11 +8763,12 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(!batch.length) return guestVideoNotice(token, chatId);
   let progressMessage;
   let album;
+  let quotaSettled=false;
   try {
     progressMessage=await tg(token,"sendMessage",{chat_id:chatId,text:"⏳ 正在整理本组照片和视频，请稍候……"});
     album=await sendResourceAlbum(token,chatId,batch);
   } catch(e) {
-    if(!member&&!isAdmin(uid)) releaseNonMemberQuotaReservation(uid,batch.length);
+    if(!quotaSettled&&!member&&!isAdmin(uid)) releaseNonMemberQuotaReservation(uid,batch.length);
     console.error("DIRECTORY BATCH SEND FAILED:",String(e?.message||e));
     const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
     if(progressMessage?.message_id) return tg(token,"editMessageText",{chat_id:chatId,message_id:progressMessage.message_id,text:errText,parse_mode:"HTML",reply_markup:folderProgressKeyboard(d.id,all.length,offset)});
@@ -8780,6 +8786,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(!member && !isAdmin(uid)) consumeVideoQuota(uid,sentItems);
     else saveDb();
   }
+  quotaSettled=true;
   // 批量发送完成后单独发送一个控制消息，避免编辑原文件夹消息失败导致“下面没有按钮”。
   // 下一批仍然从 next 位置开始，不重复发送已经处理过的资源。
   const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
