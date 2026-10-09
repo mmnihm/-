@@ -3812,18 +3812,40 @@ async function checkMembershipExpiryReminders() {
   }
   if(changed) saveDb();
 }
+const membershipCache = new Map();
+const membershipPending = new Map();
 async function allowed(token, userId) {
   // 管理员、兑换获得的有效会员不受非会员额度限制。
   if (isAdmin(userId) || hasActivePremiumMembership(userId)) return true;
   const g = group();
   if (!g) return false;
-  try {
-    const m = await tg(token, "getChatMember", {chat_id:g.chatId, user_id:userId});
-    return ["creator","administrator","member"].includes(m.status) || (m.status === "restricted" && m.is_member === true);
-  } catch(e) {
-    console.warn("⚠️ 指定群会员检查失败:", String(e?.telegramDescription || e?.message || e));
-    return false;
-  }
+  const cacheKey=tokenFingerprint(token)+":"+String(g.chatId)+":"+String(userId);
+  const cached=membershipCache.get(cacheKey);
+  if(cached && cached.expiresAt>Date.now()) return cached.member;
+  if(cached) membershipCache.delete(cacheKey);
+  // 同一个用户同时点多个按钮时，共用一次会员查询，避免排队重复请求 Telegram。
+  if(membershipPending.has(cacheKey)) return membershipPending.get(cacheKey);
+  const pending=(async()=>{
+    try {
+      const m = await tg(token, "getChatMember", {chat_id:g.chatId, user_id:userId});
+      const member=["creator","administrator","member"].includes(m.status) || (m.status === "restricted" && m.is_member === true);
+      membershipCache.set(cacheKey,{member,expiresAt:Date.now()+20000});
+      if(membershipCache.size>5000) {
+        const now=Date.now();
+        for(const [key,value] of membershipCache) if(value.expiresAt<=now) membershipCache.delete(key);
+        while(membershipCache.size>5000) membershipCache.delete(membershipCache.keys().next().value);
+      }
+      return member;
+    } catch(e) {
+      // 查询失败不缓存 false，避免临时网络问题把会员误判为非会员 20 秒。
+      console.warn("⚠️ 指定群会员检查失败:", String(e?.telegramDescription || e?.message || e));
+      return false;
+    } finally {
+      membershipPending.delete(cacheKey);
+    }
+  })();
+  membershipPending.set(cacheKey,pending);
+  return pending;
 }
 async function requireMemberAccess(token, chatId, userId, menu=null) {
   // 指定群只负责会员身份与非会员额度判断；是否强制入群由额度设置决定。
@@ -4784,22 +4806,30 @@ function directoryKeyboard() {
 }
 
 function directoryInlineKeyboard(page=0) {
-  const all=sortedDirectories(db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id))));
+  // 先一次遍历统计每个文件夹的资源数，避免“每个文件夹都扫描全部资源”的重复 O(文件夹×资源) 开销。
+  const counts=new Map();
+  for(const r of db.resources) {
+    if(r?.directoryId===undefined || r?.directoryId===null) continue;
+    const key=String(r.directoryId);
+    counts.set(key,(counts.get(key)||0)+1);
+  }
+  const all=sortedDirectories(db.directories.filter(d=>(counts.get(String(d.id))||0)>0));
   const pageSize=10;
-  const start=Math.max(0,Number(page)||0)*pageSize;
+  const currentPage=Math.max(0,Number(page)||0);
+  const start=currentPage*pageSize;
   const current=all.slice(start,start+pageSize);
   const rows=[];
   let row=[];
   for(const d of current){
-    const count=db.resources.filter(r=>String(r.directoryId)===String(d.id)).length;
+    const count=counts.get(String(d.id))||0;
     row.push({text:"📁 "+String(d.name||"未命名").slice(0,18)+" · "+count,callback_data:"dir:"+d.id+":0"});
     if(row.length===3){ rows.push(row); row=[]; }
   }
   if(row.length) rows.push(row);
   if(!rows.length) rows.push([{text:"📭 暂无分类",callback_data:"noop"}]);
   const nav=[];
-  if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"dirsp:"+(page-1)});
-  if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"dirsp:"+(page+1)});
+  if(start>0) nav.push({text:"⬅️ 上一页",callback_data:"dirsp:"+(currentPage-1)});
+  if(start+pageSize<all.length) nav.push({text:"下一页 ➡️",callback_data:"dirsp:"+(currentPage+1)});
   if(nav.length) rows.push(nav);
   rows.push([{text:"⬅️ 返回首页",callback_data:"user:home"}]);
   return {inline_keyboard:rows};
