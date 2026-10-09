@@ -5567,9 +5567,13 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
 
   const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
   const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
+  const modeLabel=options.mode==="random"?"🎲 随机获取":options.mode==="latest"?"🆕 最新资源":"📦 资源获取";
+  const pageInfo=options.mode==="latest"
+    ?"\\n📄 批次：<b>"+(Math.floor(Math.max(0,Number(options.offset)||0)/10)+1)+" / "+Math.max(1,Math.ceil(Math.max(0,Number(options.total)||0)/10))+"</b>"
+    :"";
   const summary = fail
-    ? "⚠️ <b>本批发送结果</b>\\n✅ 成功：<b>"+ok+"</b> 个\\n❌ 失败：<b>"+fail+"</b> 个\\n\\n<i>失败资源已跳过，可继续获取下一批。</i>"+inviteText
-    : "✅ <b>本批发送完成</b>\\n成功发送：<b>"+ok+"</b> 个"+inviteText;
+    ? "⚠️ <b>"+modeLabel+"结果</b>"+pageInfo+"\\n✅ 成功：<b>"+ok+"</b> 个\\n❌ 失败：<b>"+fail+"</b> 个\\n\\n<i>失败资源未计入成功数量；如需可稍后重新获取。</i>"+inviteText
+    : "✅ <b>"+modeLabel+"完成</b>"+pageInfo+"\\n成功发送：<b>"+ok+"</b> 个"+inviteText;
 
   // 无论本批是否有失败，都必须保留“再来一组”按钮。
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
