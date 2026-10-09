@@ -4884,6 +4884,37 @@ function directoryBatchItems(all, offset=0, limit=10, preserveAlbum=true) {
   }
   return {items:picked,nextOffset:i};
 }
+function latestResourcePage(requestedOffset=0) {
+  const all=Array.isArray(db.resources)?db.resources:[];
+  const total=all.length;
+  if(!total) return {items:[],offset:0,total,prevOffset:null,nextOffset:null};
+  const starts=[];
+  let cursor=0, guard=0;
+  while(cursor<total && guard++<=total) {
+    starts.push(cursor);
+    const batch=directoryBatchItems(all,cursor,10,true);
+    const next=Number(batch.nextOffset);
+    if(!Number.isFinite(next)||next<=cursor) break;
+    cursor=next;
+  }
+  if(!starts.length) starts.push(0);
+  const requested=Math.max(0,Math.floor(Number(requestedOffset)||0));
+  let index=starts.indexOf(requested);
+  if(index<0) {
+    const nextIndex=starts.findIndex(value=>value>requested);
+    index=nextIndex<0?starts.length-1:Math.max(0,nextIndex-1);
+  }
+  const offset=starts[index];
+  const page=directoryBatchItems(all,offset,10,true);
+  return {
+    items:page.items,
+    offset,
+    total,
+    prevOffset:index>0?starts[index-1]:null,
+    nextOffset:index+1<starts.length?starts[index+1]:null
+  };
+}
+
 async function sendDirectoryBatch(token, chatId, items) {
   const valid=(Array.isArray(items)?items:[]).filter(item=>{
     const currentRepo=repo();
@@ -5528,7 +5559,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\\n\\n原因："+escapeHtml(e.message||e),childMenu());
   }
 }
-function batchNavigation(mode,offset,total,advance=10){
+function batchNavigation(mode,offset,total,advance=10,pageOffsets=null){
   const rows=[];
   const step=Number(advance)>0?Number(advance):10;
   const next=Number(offset||0)+step;
@@ -5536,8 +5567,16 @@ function batchNavigation(mode,offset,total,advance=10){
     rows.push([{text:"🎲 再来一组",callback_data:"batch:random"}]);
   } else if(mode==="latest"){
     const nav=[];
-    if(Number(offset||0)>0) nav.push({text:"⬅️ 上一批",callback_data:"batch:latest:"+Math.max(0,Number(offset||0)-10)});
-    if(next<Number(total||0)) nav.push({text:"下一批 ➡️",callback_data:"batch:latest:"+next});
+    if(pageOffsets && Object.prototype.hasOwnProperty.call(pageOffsets,"prevOffset")) {
+      if(pageOffsets.prevOffset!==null && pageOffsets.prevOffset!==undefined) nav.push({text:"⬅️ 上一批",callback_data:"batch:latest:"+Number(pageOffsets.prevOffset)});
+    } else if(Number(offset||0)>0) {
+      nav.push({text:"⬅️ 上一批",callback_data:"batch:latest:"+Math.max(0,Number(offset||0)-10)});
+    }
+    if(pageOffsets && Object.prototype.hasOwnProperty.call(pageOffsets,"nextOffset")) {
+      if(pageOffsets.nextOffset!==null && pageOffsets.nextOffset!==undefined) nav.push({text:"下一批 ➡️",callback_data:"batch:latest:"+Number(pageOffsets.nextOffset)});
+    } else if(next<Number(total||0)) {
+      nav.push({text:"下一批 ➡️",callback_data:"batch:latest:"+next});
+    }
     if(nav.length) rows.push(nav);
   }
   rows.push([{text:"🏠 返回首页",callback_data:"batch:home"}]);
@@ -5548,7 +5587,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   const member=await allowed(TOKEN,userId);
   if(!Array.isArray(items) || !items.length) {
     return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",{
-      ...(options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0)} : {})
+      ...(options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0,10,{prevOffset:options.prevOffset??null,nextOffset:options.nextOffset??null})} : {})
     });
   }
 
@@ -5568,7 +5607,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   if(!valid.length) {
     return sendHtml(token,chatId,
       "<b>📭 暂无可发送的资源</b>\\n\\n无效资源记录已被过滤，请重新获取。",
-      options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0)} : {}
+      options.mode ? {reply_markup:batchNavigation(options.mode,options.offset||0,options.total||0,10,{prevOffset:options.prevOffset??null,nextOffset:options.nextOffset??null})} : {}
     );
   }
 
@@ -5602,7 +5641,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   }
 
   const navigation=options.mode
-    ? batchNavigation(options.mode,options.offset||0,options.total||valid.length)
+    ? batchNavigation(options.mode,options.offset||0,options.total||valid.length,10,{prevOffset:options.prevOffset??null,nextOffset:options.nextOffset??null})
     : {};
 
   const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
@@ -6772,7 +6811,7 @@ async function mainMessage(msg) {
   }
   if(t==="🆕 最新资源") {
     if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) return;
-    return deliver(TOKEN,uid,uid,db.resources.slice(0,10),TOKEN,{mode:"latest",offset:0,total:db.resources.length});
+    const page=latestResourcePage(0);\n    return deliver(TOKEN,uid,uid,page.items,TOKEN,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
   }
   if(s?.step==="search") {
     if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) { states.delete(key); return; }
@@ -7440,7 +7479,7 @@ async function childMessage(child,msg,token) {
     return sendHtml(token,uid,"<b>🔎 搜索资源</b>\n\n请输入关键词，例如：作者名、标题或关键词。\n\n发送 /cancel 可取消。");
   }
   if(t==="🎲 随机获取") return deliverFromHistory(token,uid,uid,random10(uid),{mode:"random",offset:0,total:db.resources.length});
-  if(t==="🆕 最新资源") return deliverFromHistory(token,uid,uid,db.resources.slice(0,10),{mode:"latest",offset:0,total:db.resources.length});
+  if(t==="🆕 最新资源") { const page=latestResourcePage(0); return deliverFromHistory(token,uid,uid,page.items,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset}); }
   if(s?.step==="nonmember_quota_edit"){
     if(t==="/cancel"){states.delete(key);return sendHtml(token,uid,"<b>↩️ 已取消修改</b>",adminMenu());}
     if(!isAdmin(uid)){states.delete(key);return;}
@@ -7662,7 +7701,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
       }
       await answer("正在获取最新资源");
-      return deliver(token,uid,uid,db.resources.slice(0,10),token,{mode:"latest",offset:0,total:db.resources.length});
+      const page=latestResourcePage(0);\n      return deliver(token,uid,uid,page.items,token,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
     }
     if(action==="home") {
       const key=(child ? "c:" : "m:")+uid;
@@ -8382,7 +8421,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       }
       const offset=Math.max(0,Number(data.split(":")[2])||0);
       void answer("正在获取最新资源…");
-      return deliverFromHistory(token,uid,uid,db.resources.slice(offset,offset+10),{mode:"latest",offset,total:db.resources.length});
+      const page=latestResourcePage(offset);\n      return deliverFromHistory(token,uid,uid,page.items,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
     }
     if(data==="batch:random"){
       void answer("正在随机获取…");
@@ -8394,7 +8433,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     const offset=Math.max(0,Number(data.split(":")[2])||0);
     void answer("正在获取最新资源…");
-    return deliver(token,uid,uid,db.resources.slice(offset,offset+10),TOKEN,{mode:"latest",offset,total:db.resources.length});
+    const page=latestResourcePage(offset);\n    return deliver(token,uid,uid,page.items,TOKEN,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
   }
 
   // 用户搜索结果使用内联按钮：两列排列，结果多时分页，不再占用底部键盘。
