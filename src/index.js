@@ -3783,8 +3783,9 @@ function quotaDateKey() {
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 }
 function nonMemberDailyLimit() {
+  // 免费用户每日上限最多为 3；保留管理员将额度调低的设置，但旧配置不能把上限放大。
   const n=Number(db.settings.nonMemberDailyLimit);
-  return Number.isFinite(n) && n>=0 ? Math.floor(n) : 3;
+  return Number.isFinite(n) && n>=0 ? Math.min(3,Math.floor(n)) : 3;
 }
 function nonMemberDailyUsed(uid) {
   if(!db.settings.nonMemberDailyUsage || typeof db.settings.nonMemberDailyUsage!=="object") db.settings.nonMemberDailyUsage={};
