@@ -3687,9 +3687,61 @@ function decrypt(value) {
   return Buffer.concat([d.update(Buffer.from(data, "base64url")), d.final()]).toString();
 }
 
+function redemptionStore() {
+  if(!db.settings || typeof db.settings!=="object") db.settings={};
+  if(!db.settings.redemptionCodes || typeof db.settings.redemptionCodes!=="object" || Array.isArray(db.settings.redemptionCodes)) db.settings.redemptionCodes={};
+  if(!db.settings.premiumMemberships || typeof db.settings.premiumMemberships!=="object") db.settings.premiumMemberships={};
+  if(!db.settings.extraVideoQuota || typeof db.settings.extraVideoQuota!=="object") db.settings.extraVideoQuota={};
+  return db.settings;
+}
+function premiumMembershipExpiry(uid) {
+  const row=redemptionStore().premiumMemberships[String(uid)];
+  const expiry=Number(typeof row==="number"?row:row?.expiresAt||0);
+  return Number.isFinite(expiry)?expiry:0;
+}
+function hasActivePremiumMembership(uid) {
+  return premiumMembershipExpiry(uid)>Date.now();
+}
+function extraVideoQuotaRemaining(uid) {
+  const n=Number(redemptionStore().extraVideoQuota[String(uid)]||0);
+  return Number.isFinite(n)?Math.max(0,Math.floor(n)):0;
+}
+function consumeExtraVideoQuota(uid,count) {
+  if(!(Number(count)>0)) return 0;
+  const store=redemptionStore().extraVideoQuota;
+  const id=String(uid), before=extraVideoQuotaRemaining(uid);
+  const used=Math.min(before,Math.floor(Number(count)||0));
+  if(used>0) store[id]=before-used;
+  return used;
+}
+function redeemCode(uid,rawCode) {
+  const store=redemptionStore();
+  const code=String(rawCode||"").trim().toUpperCase().replace(/\\s+/g,"");
+  if(!code) return {ok:false,message:"请输入兑换码。"};
+  const row=store.redemptionCodes[code];
+  if(!row) return {ok:false,message:"兑换码不存在，请检查后重试。"};
+  if(row.usedAt || row.usedBy) return {ok:false,message:"这个兑换码已经被使用，不能重复兑换。"};
+  const amount=Math.floor(Number(row.amount)||0);
+  if(amount<1) return {ok:false,message:"兑换码奖励数据异常，请联系管理员。"};
+  const now=Date.now();
+  if(row.type==="membership_days") {
+    const oldExpiry=premiumMembershipExpiry(uid);
+    const expiresAt=Math.max(now,oldExpiry)+amount*86400000;
+    store.premiumMemberships[String(uid)]={expiresAt,updatedAt:now,sourceCode:code};
+    row.rewardAppliedAt=now;
+    row.expiresAt=expiresAt;
+  } else if(row.type==="video_credits") {
+    store.extraVideoQuota[String(uid)]=extraVideoQuotaRemaining(uid)+amount;
+    row.rewardAppliedAt=now;
+  } else return {ok:false,message:"兑换码奖励类型无效，请联系管理员。"};
+  row.usedBy=String(uid); row.usedAt=now;
+  saveDb();
+  if(row.type==="membership_days") return {ok:true,message:"🎉 兑换成功！已增加 "+amount+" 天会员。\\n会员到期时间："+new Date(row.expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})+"。"};
+  return {ok:true,message:"🎉 兑换成功！额外视频额度 +"+amount+" 次。\\n当前剩余额外视频额度："+extraVideoQuotaRemaining(uid)+" 次。"};
+}
 async function allowed(token, userId) {
-  // 没有绑定指定会员群时，不能把所有用户都当成会员，否则会绕过每日视频额度。
-  if (isAdmin(userId)) return true;
+  // 管理员、兑换获得的有效会员不受非会员额度限制。
+  if (isAdmin(userId) || hasActivePremiumMembership(userId)) return true;
   const g = group();
   if (!g) return false;
   try {
@@ -3720,11 +3772,11 @@ function nonMemberDailyUsed(uid) {
   return Math.max(0,Number(row.used)||0);
 }
 function nonMemberDailyRemaining(uid) {
-  if(isAdmin(uid)) return Infinity;
+  if(isAdmin(uid) || hasActivePremiumMembership(uid)) return Infinity;
   return Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid));
 }
 function consumeNonMemberQuota(uid,count) {
-  if(isAdmin(uid) || !(Number(count)>0)) return;
+  if(isAdmin(uid) || hasActivePremiumMembership(uid) || !(Number(count)>0)) return;
   if(!db.settings.nonMemberDailyUsage || typeof db.settings.nonMemberDailyUsage!=="object") db.settings.nonMemberDailyUsage={};
   const id=String(uid), today=quotaDateKey(), row=db.settings.nonMemberDailyUsage[id];
   if(!row || row.date!==today) db.settings.nonMemberDailyUsage[id]={date:today,used:Number(count)||0};
@@ -3895,9 +3947,13 @@ function adminResourceInline(){return{inline_keyboard:[
 ]};}
 function adminSettingsInline(){return{inline_keyboard:[
  [{text:"🔐 指定群管理",callback_data:"adm:group"},{text:"👥 管理员管理",callback_data:"adm:admins"}],
- [{text:"🎁 会员/配额设置",callback_data:"adm:quota"}],
+ [{text:"🎁 会员/配额设置",callback_data:"adm:quota"},{text:"🎟️ 兑换码管理",callback_data:"adm:redeem"}],
  [{text:"🛡️ 内容保护",callback_data:"adm:protect"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
+]};}
+function redeemAdminInline(){return{inline_keyboard:[
+ [{text:"➕ 批量生成兑换码",callback_data:"adm:redeem_make"}],
+ [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
 ]};}
 function adminOpsInline(){return{inline_keyboard:[
  [{text:"📊 数据统计",callback_data:"adm:stats"},{text:"📢 广播消息",callback_data:"adm:broadcast"}],
@@ -3915,7 +3971,7 @@ function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
     [{text:"📂 资源目录",callback_data:"user:dirs"},{text:"🔎 搜索资源",callback_data:"user:search"}],
     [{text:"🎲 随机获取",callback_data:"user:random"},{text:"🆕 最新资源",callback_data:"user:latest"}],
-    [{text:"💬 联系客服",callback_data:"support:start"}]
+    [{text:"🎟️ 兑换码",callback_data:"user:redeem"},{text:"💬 联系客服",callback_data:"support:start"}]
   ]}};
 }
 function userMenu() {
@@ -5022,19 +5078,30 @@ function search(q) {
 function withoutVideosForGuest(items, member, uid, expandAlbums=true) {
   const raw=Array.isArray(items)?items:[];
   const expanded=expandAlbums?expandOriginalAlbumItems(raw):raw;
-  if(member || isAdmin(uid)) return {items:expanded,blocked:0,allowed:expanded.length};
+  if(member || isAdmin(uid) || hasActivePremiumMembership(uid)) return {items:expanded,blocked:0,allowed:expanded.length};
   const remaining=nonMemberDailyRemaining(uid);
   const limit=remaining===Infinity?expanded.length:Math.max(0,remaining);
   const kept=expanded.slice(0,limit);
+  let bonusLeft=extraVideoQuotaRemaining(uid);
+  for(const item of expanded.slice(limit)) {
+    if(isVideoResource(item) && bonusLeft>0) { kept.push(item); bonusLeft--; }
+  }
   return {items:kept,blocked:Math.max(0,expanded.length-kept.length),allowed:kept.length};
 }
 async function guestVideoNotice(token, chatId) {
   return sendHtml(token, chatId, "<b>🎁 今日免费资源额度已用完</b>\n\n非会员每天最多成功获取 <b>"+nonMemberDailyLimit()+"</b> 个资源，照片、视频和其他文件都计入额度。\n明天自动恢复；加入指定会员群后可不限量获取。", userMenu());
 }
 function consumeVideoQuota(uid,items){
-  if(isAdmin(uid)) return;
-  const count=(Array.isArray(items)?items:[]).length;
-  if(count>0) consumeNonMemberQuota(uid,count);
+  if(isAdmin(uid) || hasActivePremiumMembership(uid)) return;
+  const list=Array.isArray(items)?items:[];
+  if(!list.length) return;
+  const baseRemaining=Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid));
+  const baseCount=Math.min(list.length,baseRemaining);
+  if(baseCount>0) consumeNonMemberQuota(uid,baseCount);
+  const overflow=list.slice(baseCount);
+  const bonusVideos=overflow.filter(isVideoResource).length;
+  if(bonusVideos>0) consumeExtraVideoQuota(uid,bonusVideos);
+  saveDb();
 }
 function isVideoResource(item){
   const type=String(item?.fileType||"").toLowerCase();
@@ -5609,6 +5676,49 @@ async function mainMessage(msg) {
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
   let s=states.get(key);
+
+  if(s?.step==="redeem_code_input" && !admin) {
+    if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消兑换。",userMenu()); }
+    const result=redeemCode(uid,rawText);
+    states.delete(key);
+    return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\\n\\n"+escapeHtml(result.message),userMenu());
+  }
+  if(rawText.toLowerCase().startsWith("/redeem")) {
+    const code=rawText.replace(/^\\/redeem(?:@\\w+)?\\s*/i,"").trim();
+    if(!code) {
+      states.set(key,{step:"redeem_code_input"});
+      return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\\n\\n请发送兑换码。\\n发送 /cancel 可取消。",userMenu());
+    }
+    const result=redeemCode(uid,code);
+    return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\\n\\n"+escapeHtml(result.message),userMenu());
+  }
+  if(admin && s?.step==="redeem_reward_amount") {
+    const amount=Number(rawText), max=s.rewardType==="membership_days"?3650:100000;
+    if(!Number.isInteger(amount)||amount<1||amount>max) return sendHtml(TOKEN,uid,"❌ 请输入 1～"+max+" 的整数。");
+    states.set(key,{step:"redeem_batch_count",rewardType:s.rewardType,rewardAmount:amount});
+    return sendHtml(TOKEN,uid,"<b>🎟️ 批量生成兑换码</b>\\n\\n每个兑换码奖励："+(s.rewardType==="membership_days"?"会员 "+amount+" 天":"额外视频 "+amount+" 次")+"。\\n请输入本次生成数量（1～100）。\\n发送 /cancel 可取消。");
+  }
+  if(admin && s?.step==="redeem_batch_count") {
+    if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
+    const count=Number(rawText);
+    if(!Number.isInteger(count)||count<1||count>100) return sendHtml(TOKEN,uid,"❌ 请输入 1～100 的整数。");
+    const store=redemptionStore(), codes=[];
+    for(let i=0;i<count;i++) {
+      let code="";
+      do { code="RDM-"+crypto.randomBytes(6).toString("hex").toUpperCase(); } while(store.redemptionCodes[code]);
+      store.redemptionCodes[code]={type:s.rewardType,amount:s.rewardAmount,createdAt:Date.now(),createdBy:String(uid),usedBy:"",usedAt:0};
+      codes.push(code);
+    }
+    saveDb(); logAdmin(uid,"批量生成兑换码",(s.rewardType==="membership_days"?"会员天数 ":"额外视频额度 ")+s.rewardAmount+"，生成 "+count+" 个");
+    states.delete(key);
+    const text="<b>✅ 兑换码生成完成</b>\\n━━━━━━━━━━━━━━\\n奖励："+(s.rewardType==="membership_days"?"会员 "+s.rewardAmount+" 天":"额外视频 "+s.rewardAmount+" 次")+"\\n生成数量："+count+"\\n\\n"+codes.map((code,i)=>(i+1)+". <code>"+code+"</code>").join("\\n");
+    return sendHtml(TOKEN,uid,text,{reply_markup:redeemAdminInline()});
+  }
+  if(admin && rawText==="🎟️ 兑换码管理") {
+    const store=redemptionStore(), all=Object.values(store.redemptionCodes);
+    const unused=all.filter(x=>!x.usedAt&&!x.usedBy).length, used=all.length-unused;
+    return sendHtml(TOKEN,uid,"<b>🎟️ 兑换码管理</b>\\n━━━━━━━━━━━━━━\\n\\n📦 总计："+all.length+" 个\\n🟢 未使用："+unused+" 个\\n☑️ 已兑换："+used+" 个\\n\\n选择奖励类型并批量生成。",redeemAdminInline());
+  }
 
   // 顶部/底部菜单必须优先于搜索、分页等旧状态；否则用户在搜索后点击目录会被当作搜索关键词。
   if(!admin && (t==="📂 资源目录" || t==="📂资源目录")) {
@@ -7078,6 +7188,12 @@ async function handleDirectoryCallback(token, q, child=false) {
   // 用户首页内联按钮：统一处理资源目录、搜索、随机、最新，避免 user:* 回调落空。
   if(data.startsWith("user:")) {
     const action=data.slice("user:".length);
+    if(action==="redeem") {
+      const key=child ? uploadStateKey(uid,true,token) : "m:"+uid;
+      states.set(key,{step:"redeem_code_input"});
+      await answer("请发送兑换码");
+      return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\\n━━━━━━━━━━━━━━\\n\\n请发送你的兑换码。\\n也可以直接发送 <code>/redeem 兑换码</code>。\\n发送 /cancel 可取消。",child?childMenu():userMenu());
+    }
     if(action==="search") {
       const key=child ? uploadStateKey(uid,true,token) : "m:"+uid;
       states.set(key,{step:"search"});
@@ -7238,6 +7354,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="adm:bulk") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 批量管理"});
   if(data==="adm:repo") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 资源仓库"});
   if(data==="adm:scan") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔍 仓库扫描"});
+  if(data==="adm:redeem") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🎟️ 兑换码管理"});
   if(data==="adm:group") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔐 指定群管理"});
   if(data==="adm:admins") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"👥 管理员管理"});
   if(data==="adm:stats") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📊 数据统计"});
@@ -7274,6 +7391,19 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:adminStatusText(),parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
+    if(data==="adm:redeem_make") {
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🎟️ 批量生成兑换码</b>\\n\\n请选择每个兑换码的奖励类型。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+        [{text:"💎 会员天数",callback_data:"adm:redeem_type:membership_days"}],
+        [{text:"🎬 额外视频额度",callback_data:"adm:redeem_type:video_credits"}],
+        [{text:"⬅️ 返回兑换码管理",callback_data:"adm:redeem"}]
+      ]}});
+    }
+    if(data.startsWith("adm:redeem_type:")) {
+      const type=data.slice("adm:redeem_type:".length);
+      if(!["membership_days","video_credits"].includes(type)) { void answer("奖励类型无效",true); return; }
+      states.set("m:"+uid,{step:"redeem_reward_amount",rewardType:type});
+      return sendHtml(TOKEN,uid,"<b>🎟️ 设置兑换奖励</b>\\n\\n"+(type==="membership_days"?"请输入每个兑换码奖励的会员天数（1～3650）。":"请输入每个兑换码奖励的额外视频次数（1～100000）。")+"\\n发送 /cancel 可取消。",adminMenu());
+    }
     if(data==="adm:cloud_retry"){
       let reset=0;
       for(const item of db.resources){
