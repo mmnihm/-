@@ -5949,7 +5949,7 @@ async function mainMessage(msg) {
     const code=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
     if(!code) {
       states.set(key,{step:"redeem_code_input"});
-      return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码。\n发送 /cancel 可取消。",userMenu());
+      return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码（大小写、空格和连字符不同也可以）。\n发送 /cancel 可取消。",userMenu());
     }
     const result=redeemCode(uid,code,msg.from,TOKEN);
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
@@ -7253,7 +7253,7 @@ async function childMessage(child,msg,token) {
   }
   if(rawText.toLowerCase().startsWith("/redeem")) {
     const code=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
-    if(!code) { states.set(key,{step:"redeem_code_input"}); return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码。\n发送 /cancel 可取消。",childMenu()); }
+    if(!code) { states.set(key,{step:"redeem_code_input"}); return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码（大小写、空格和连字符不同也可以）。\n发送 /cancel 可取消。",childMenu()); }
     const result=redeemCode(uid,code,msg.from,token);
     return sendHtml(token,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),childMenu());
   }
