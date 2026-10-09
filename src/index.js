@@ -5019,8 +5019,9 @@ function search(q) {
   return db.resources.filter(x=>(String(x.title||"")+" "+String(x.caption||"")+" "+String(x.directoryId||"")).toLowerCase().includes(q));
 }
 
-function withoutVideosForGuest(items, member, uid) {
-  const expanded=expandOriginalAlbumItems(Array.isArray(items)?items:[]);
+function withoutVideosForGuest(items, member, uid, expandAlbums=true) {
+  const raw=Array.isArray(items)?items:[];
+  const expanded=expandAlbums?expandOriginalAlbumItems(raw):raw;
   if(member || isAdmin(uid)) return {items:expanded,blocked:0,allowed:expanded.length};
   const remaining=nonMemberDailyRemaining(uid);
   const limit=remaining===Infinity?expanded.length:Math.max(0,remaining);
@@ -5182,7 +5183,7 @@ async function tgUploadMediaAlbum(token, chatId, entries) {
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const member=await allowed(TOKEN,userId);
   if(!Array.isArray(items)||!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",childMenu());
-  const guest=withoutVideosForGuest(items,member,userId);
+  const guest=withoutVideosForGuest(items,member,userId,options.mode!=="latest");
   items=guest.items;
   if(!items.length) return guestVideoNotice(token,chatId);
   try {
@@ -5240,7 +5241,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     Number(x.messageId) > 0
   );
 
-  const guest=withoutVideosForGuest(valid, member, userId);
+  const guest=withoutVideosForGuest(valid, member, userId,options.mode!=="latest");
   valid=guest.items;
   if(!valid.length) return guestVideoNotice(token, chatId);
 
@@ -6229,7 +6230,7 @@ async function mainMessage(msg) {
     const member=await allowed(TOKEN,uid);
     const pageInfo=directoryBatchItems(all,offset,10,member);
     const page=pageInfo.items;
-    const guest=withoutVideosForGuest(page,member,uid);
+    const guest=withoutVideosForGuest(page,member,uid,member);
     const allowedPage=guest.items;
     if(!allowedPage.length) return guestVideoNotice(TOKEN,uid);
     const sendResult=await sendDirectoryBatch(TOKEN,uid,allowedPage);
@@ -8121,7 +8122,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     const member=await allowed(TOKEN,uid);
     const selectedBatch=directoryBatchItems(all,0,10,member);
-    const guest=withoutVideosForGuest(selectedBatch.items,member,uid);
+    const guest=withoutVideosForGuest(selectedBatch.items,member,uid,member);
     if(!guest.items.length) return guestVideoNotice(token,chatId);
     const first=guest.items;
     // 先在聊天里显示进度，避免媒体下载/相册整理期间用户误以为按钮没反应。
@@ -8166,7 +8167,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   const member=await allowed(TOKEN,uid);
   const selectedBatch=directoryBatchItems(all,offset,10,member);
   let batch=selectedBatch.items;
-  const guest=withoutVideosForGuest(batch, member, uid);
+  const guest=withoutVideosForGuest(batch, member, uid,member);
   batch=guest.items;
   if(!batch.length) return guestVideoNotice(token, chatId);
   let progressMessage;
