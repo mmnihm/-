@@ -7703,9 +7703,12 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="adm:redeem") {
     const store=redemptionStore(), all=Object.values(store.redemptionCodes);
     const unused=all.filter(x=>!x.usedAt&&!x.usedBy).length, used=all.length-unused;
+    if(states.get("m:"+uid)?.step==="redeem_ban_user") states.delete("m:"+uid);
+    if(db.settings?.redeemAdminStates?.[String(uid)]?.step==="redeem_ban_user") { delete db.settings.redeemAdminStates[String(uid)]; saveDb(); }
+    const bannedCount=Object.keys(db.settings?.redeemAccessBans||{}).length;
     await answer("打开兑换码管理");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"<b>🎟️ 兑换码管理</b>\\n━━━━━━━━━━━━━━\\n\\n📦 总计："+all.length+" 个\\n🟢 未使用："+unused+" 个\\n☑️ 已兑换："+used+" 个\\n\\n👇 点击下方按钮批量生成兑换码。",
+      text:"<b>🎟️ 兑换码管理</b>\\n━━━━━━━━━━━━━━\\n\\n📦 总计："+all.length+" 个\\n🟢 未使用："+unused+" 个\\n☑️ 已兑换："+used+" 个\\n🚫 已封禁机器人使用权限："+bannedCount+" 人\\n\\n👇 可批量生成兑换码，或封禁指定用户并将其移出会员群。",
       parse_mode:"HTML",reply_markup:redeemAdminInline()});
   }
   if(data==="adm:group") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔐 指定群管理"});
