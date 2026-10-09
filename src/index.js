@@ -5266,7 +5266,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
 
   if(ok>0) {
     recordStat(userId,"download",ok);
-    if(!member && !isAdmin(userId)) consumeVideoQuota(userId,Array.isArray(album?.sentItems)?album.sentItems:valid.filter(isVideoResource).slice(0,ok));
+    if(!member && !isAdmin(userId)) consumeVideoQuota(userId,Array.isArray(album?.sentItems)?album.sentItems:valid.slice(0,ok));
     else saveDb();
   } else {
     saveDb();
