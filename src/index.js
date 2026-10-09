@@ -237,8 +237,11 @@ async function safeEdit(token, body, fallbackText = "") {
       : body;
     return await tg(token, "editMessageText", formattedBody);
   } catch (e) {
-    const msg = String(e?.message || e);
-    if (/message.*(can't|cannot).*edit|message is not modified|MESSAGE_ID_INVALID|message to edit not found/i.test(msg)) {
+    const msg = String(e?.telegramDescription || e?.message || e);
+    // "message is not modified" means the current progress is already correct.
+    // Do not send a fallback message here: that would create duplicate progress messages.
+    if (/message is not modified/i.test(msg)) return null;
+    if (/message.*(can't|cannot).*edit|MESSAGE_ID_INVALID|message to edit not found/i.test(msg)) {
       console.warn("⚠️ Telegram 进度消息无法编辑，继续任务：", msg);
       if (fallbackText && body?.chat_id) {
         try {
@@ -249,7 +252,7 @@ async function safeEdit(token, body, fallbackText = "") {
             reply_markup: body.reply_markup
           });
         } catch (sendErr) {
-          console.warn("⚠️ 备用进度消息发送失败，继续任务：", String(sendErr?.message || sendErr));
+          console.warn("⚠️ 备用进度消息发送失败，继续任务：", String(sendErr?.telegramDescription || sendErr?.message || sendErr));
         }
       }
       return null;
