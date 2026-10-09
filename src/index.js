@@ -5203,13 +5203,10 @@ function withoutVideosForGuest(items, member, uid, expandAlbums=true) {
   // random 模式明确允许单条发送；其他模式继续保留原有相册成组逻辑。
   const expanded=expandAlbums?expandOriginalAlbumItems(raw):raw;
   if(member || isAdmin(uid) || hasActivePremiumMembership(uid)) return {items:expanded,blocked:0,allowed:expanded.length};
+  // 每日 3 个是全部资源的硬上限；视频额外额度不能绕过该上限。
   const remaining=nonMemberDailyRemaining(uid);
   const limit=remaining===Infinity?expanded.length:Math.max(0,remaining);
   const kept=expanded.slice(0,limit);
-  let bonusLeft=extraVideoQuotaRemaining(uid);
-  for(const item of expanded.slice(limit)) {
-    if(isVideoResource(item) && bonusLeft>0) { kept.push({...item,__bonusVideoQuota:true}); bonusLeft--; }
-  }
   return {items:kept,blocked:Math.max(0,expanded.length-kept.length),allowed:kept.length};
 }
 async function guestVideoNotice(token, chatId) {
