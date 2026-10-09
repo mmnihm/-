@@ -5068,9 +5068,53 @@ async function sendResourceAlbum(token, chatId, items, options={}) {
         scheduleAutoDelete(token,chatId,[copied.message_id]);
       } else failed++;
     } catch(e) {
-      failed+=Math.max(1,group.length);
-      console.error("ORIGINAL MESSAGE COPY FAILED:",String(e?.message||e),
-        "sourceChat=",item.chatId,"message=",item.messageId,"mediaGroupId=",groupId||"none");
+      const errorText=String(e?.telegramDescription||e?.message||e||"");
+      const missingOriginal=/message to copy not found|message_id_invalid|message not found/i.test(errorText);
+      // 原始仓库消息无法复制时，若仍保存可用 file_id，则尝试重新发送，不删除资源记录。
+      const fallbackItems=group.length>=2?group:[item];
+      const canFallback=missingOriginal && fallbackItems.every(x=>
+        x && x.fileId && x.fileType &&
+        ["photo","video","document","audio"].includes(String(x.fileType).toLowerCase())
+      );
+      if(canFallback) {
+        try {
+          if(fallbackItems.length>=2) {
+            const media=fallbackItems.map(x=>({
+              type:String(x.fileType).toLowerCase(),
+              media:x.fileId,
+              ...(x.caption?{caption:String(x.caption).slice(0,1024)}:{})
+            }));
+            const sentMessages=await tg(token,"sendMediaGroup",{
+              chat_id:chatId,
+              media,
+              ...(contentProtectionEnabled()?{protect_content:true}:{})
+            });
+            const ids=Array.isArray(sentMessages)?sentMessages.filter(x=>x&&x.message_id):[];
+            sent+=ids.length;
+            sentItems.push(...fallbackItems.slice(0,ids.length));
+            if(ids.length) lastMessageId=Number(ids[ids.length-1].message_id)||lastMessageId;
+            failed+=Math.max(0,fallbackItems.length-ids.length);
+            for(const sentMessage of ids) scheduleAutoDelete(token,chatId,[sentMessage.message_id]);
+          } else {
+            const fallback=await sendIndexedResource(token,chatId,item);
+            if(fallback&&fallback.message_id) {
+              sent++;
+              sentItems.push(item);
+              lastMessageId=Number(fallback.message_id)||lastMessageId;
+            } else failed++;
+          }
+          console.warn("⚠️ 原始消息无法复制，已尝试使用保存的 file_id 发送替代内容：",
+            "sourceChat=",item.chatId,"message=",item.messageId,"count=",fallbackItems.length);
+        } catch(fallbackError) {
+          failed+=fallbackItems.length;
+          console.error("RESOURCE FALLBACK FAILED:",String(fallbackError?.telegramDescription||fallbackError?.message||fallbackError),
+            "sourceChat=",item.chatId,"message=",item.messageId,"mediaGroupId=",groupId||"none");
+        }
+      } else {
+        failed+=Math.max(1,group.length);
+        console.error("ORIGINAL MESSAGE COPY FAILED:",errorText,
+          "sourceChat=",item.chatId,"message=",item.messageId,"mediaGroupId=",groupId||"none");
+      }
     }
     i+=group.length>=2?group.length:1;
   }
