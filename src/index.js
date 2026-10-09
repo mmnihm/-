@@ -7256,7 +7256,7 @@ async function childMessage(child,msg,token) {
   if(s?.step==="nonmember_quota_edit"){
     if(t==="/cancel"){states.delete(key);return sendHtml(token,uid,"<b>↩️ 已取消修改</b>",adminMenu());}
     if(!isAdmin(uid)){states.delete(key);return;}
-    const n=Number(t);if(!Number.isInteger(n)||n<0||n>100)return sendHtml(token,uid,"❌ 请输入 0～100 的整数。",adminMenu());
+    const n=Number(t);if(!Number.isInteger(n)||n<0||n>3)return sendHtml(token,uid,"❌ 请输入 0～3 的整数；非会员每日上限最多为 3 个资源。",adminMenu());
     db.settings.nonMemberDailyLimit=n;states.delete(key);saveDb();logAdmin(uid,"修改非会员额度","每日 "+n+" 个");
     return sendHtml(token,uid,"<b>✅ 非会员每日额度已修改</b>\n\n📦 每日免费：<b>"+n+"<\/b> 个资源",adminMenu());
   }
@@ -8045,7 +8045,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       [{text:"✏️ 自定义",callback_data:"quota:set"}],
       [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
     ]}});}
-    if(op==="set"){states.set("m:"+uid,{step:"nonmember_quota_edit"});void answer("请输入新的每日额度");return sendHtml(token,uid,"<b>🎁 修改非会员每日视频额度</b>\n\n请发送每日允许获取的视频数量（0～100 的整数）。",adminMenu());}
+    if(op==="set"){states.set("m:"+uid,{step:"nonmember_quota_edit"});void answer("请输入新的每日额度");return sendHtml(token,uid,"<b>🎁 修改非会员每日资源额度</b>\n\n请发送每日允许获取的资源数量（0～3 的整数）。照片、视频和文件都计入额度。",adminMenu());}
   }
 
   if(data==="move_cancel" || data.startsWith("move_to:")) {
