@@ -3989,6 +3989,17 @@ function userMenu() {
 function childMenu() {
   return userHomeInlineKeyboard();
 }
+function userHomeText(uid) {
+  const premium = isAdmin(uid) || hasActivePremiumMembership(uid);
+  const remaining = nonMemberDailyRemaining(uid);
+  const quota = premium ? "💎 <b>会员状态：</b>不限量获取" : "🎁 <b>今日免费额度：</b>剩余 " + Math.max(0, Number(remaining) || 0) + " 个";
+  const folderCount = new Set(db.resources.filter(r => r && r.directoryId !== undefined && r.directoryId !== null).map(r => String(r.directoryId))).size;
+  return "<b>🏠 资源平台</b>\n━━━━━━━━━━━━━━\n\n" +
+    "📚 <b>资源总量：</b>" + db.resources.length + " 条\n" +
+    "📁 <b>可浏览文件夹：</b>" + folderCount + " 个\n" + quota + "\n\n" +
+    "📂 目录浏览 · 🔎 关键词搜索\n🎲 随机获取 · 🆕 最新资源\n\n" +
+    "👇 <i>选择下方按钮开始使用</i>";
+}
 function uploadBottomKeyboard() { return {reply_markup:{keyboard:[["▶️ 继续上传","✅ 结束上传"],["❌ 取消上传"]],resize_keyboard:true,is_persistent:true}}; }
 function childAdminMenu() {
   return {reply_markup:{inline_keyboard:[
@@ -4798,8 +4809,24 @@ async function sendDirectoryBatch(token, chatId, items) {
     return {sent:0,sentItems:[]};
   }
 }
-function directoryText() {
-  return ["📂 <b>资源目录</b>","━━━━━━━━━━━━━━","","📚 总资源：<b>"+db.resources.length+"</b> 条","📁 文件夹：<b>"+db.directories.length+"</b> 个","","👇 <i>请选择文件夹查看资源</i>"].join("\n");
+function directoryText(page=0) {
+  const counts = new Map();
+  for (const r of db.resources) {
+    if (r?.directoryId === undefined || r?.directoryId === null) continue;
+    const key = String(r.directoryId);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const activeDirectories = db.directories.filter(d => (counts.get(String(d.id)) || 0) > 0);
+  const pageSize = 10;
+  const pages = Math.max(1, Math.ceil(activeDirectories.length / pageSize));
+  const current = Math.min(Math.max(0, Number(page) || 0), pages - 1);
+  return [
+    "📂 <b>资源目录</b>", "━━━━━━━━━━━━━━", "",
+    "📚 总资源：<b>" + db.resources.length + "</b> 条",
+    "📁 有资源的文件夹：<b>" + activeDirectories.length + "</b> 个",
+    "📄 当前页：<b>" + (current + 1) + " / " + pages + "</b>", "",
+    activeDirectories.length ? "👇 <i>点击文件夹名称查看资源</i>" : "📭 <i>暂时没有可浏览的文件夹</i>"
+  ].join("\n");
 }
 function configText() {
   const g = group(), r = repo(), scan = db.settings.historyScan || {};
@@ -6172,18 +6199,16 @@ async function mainMessage(msg) {
 👋 很高兴见到你！
 
 📚 <b>这里可以：</b>
-• 📂 浏览资源目录
-• 🔎 搜索资源
-• 🎲 随机获取资源
+• 📂 按文件夹浏览资源
+• 🔎 按标题或关键词搜索
+• 🎲 随机获取，每次最多 10 条
 • 🆕 查看最新资源
+• 🎟️ 使用兑换码 / 💬 联系客服
 
-👇 <i>点击下方菜单开始使用</i>`,admin?adminMenu():userMenu());
+👇 <i>点击下方按钮开始使用</i>`,admin?adminMenu():userMenu());
       return;
     }
-    return sendHtml(TOKEN,uid,admin?adminStatusText():`<b>🏠 资源平台</b>
-━━━━━━━━━━━━━━
-
-👇 <i>请选择你要使用的功能</i>`,admin?adminMenu():userMenu());
+    return sendHtml(TOKEN,uid,admin?adminStatusText():userHomeText(uid),admin?adminMenu():userMenu());
   }
   if(t==="/admin") {
   if(t.startsWith("/start share_")) {
@@ -8382,7 +8407,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
-      text:directoryText(),
+      text:directoryText(page),
       parse_mode:"HTML",
       reply_markup:directoryInlineKeyboard(page)
     });
