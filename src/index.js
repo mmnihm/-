@@ -8226,8 +8226,11 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
       const album=await sendResourceAlbum(token,chatId,first);
       const sent=Number(album?.sent||0);
-      const next=first.length;
-      const summary="📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个";
+      // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
+      const next=sent>0?first.length:0;
+      const summary=sent>0
+        ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"
+        : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。";
       return tg(token,"editMessageText",{
         chat_id:chatId,
         message_id:progressMessage?.message_id,
@@ -8270,7 +8273,8 @@ async function handleDirectoryCallback(token, q, child=false) {
   const sent=Number(album?.sent||0);
   if(sent) recordStat(uid,"download",sent);
 
-  const next=Math.min(offset+batch.length,all.length);
+  // 只有至少发送成功一条，才推进到下一批；0 条成功时保留当前 offset 供重试。
+  const next=Math.min(offset+(sent>0?batch.length:0),all.length);
   if(sent) {
     if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,sent);
     else saveDb();
