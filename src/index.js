@@ -5345,8 +5345,20 @@ function random10(userId) {
     : [];
   const historySet=new Set(history);
 
-  // 普通资源各自为一组；同一仓库中同一 mediaGroupId 的连续消息作为一个相册组。
-  const units=[],albumMap=new Map();
+  // 先单次分组，避免资源量较大时每个相册都重复扫描全表。
+  const albumMap=new Map();
+  for(const item of arr) {
+    const groupId=String(item.mediaGroupId||"");
+    if(!groupId) continue;
+    const groupKey=String(item.chatId)+":"+groupId;
+    if(!albumMap.has(groupKey)) albumMap.set(groupKey,[]);
+    albumMap.get(groupKey).push(item);
+  }
+  for(const members of albumMap.values()) {
+    members.sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+  }
+
+  const units=[],emittedAlbums=new Set();
   for(const item of arr) {
     const groupId=String(item.mediaGroupId||"");
     if(!groupId) {
@@ -5354,13 +5366,9 @@ function random10(userId) {
       continue;
     }
     const groupKey=String(item.chatId)+":"+groupId;
-    if(!albumMap.has(groupKey)) {
-      const members=arr
-        .filter(x=>String(x.chatId)===String(item.chatId)&&String(x.mediaGroupId||"")===groupId)
-        .sort((a,b)=>Number(a.messageId)-Number(b.messageId));
-      albumMap.set(groupKey,members);
-      units.push(members);
-    }
+    if(emittedAlbums.has(groupKey)) continue;
+    emittedAlbums.add(groupKey);
+    units.push(albumMap.get(groupKey)||[item]);
   }
 
   let pool=units.filter(unit=>unit.length && unit.some(item=>!historySet.has(resourceKey(item))));
@@ -5376,13 +5384,12 @@ function random10(userId) {
   const batch=[],pickedKeys=[];
   for(const unit of pool) {
     if(!unit.length || unit.length>10) continue;
-    // 相册不拆组；如果当前剩余名额不足，跳过该组，继续寻找能完整放入的资源组。
+    // 相册不拆组；剩余名额不足时跳过整组，继续寻找可完整放入的资源组。
     if(batch.length+unit.length>10) continue;
     batch.push(...unit);
     pickedKeys.push(...unit.map(resourceKey));
     if(batch.length>=10) break;
   }
-  // 资源总量少于 10 或只有一个大相册时，允许返回一个完整相册，绝不切片。
   if(!batch.length && pool.length) {
     const first=pool.find(unit=>unit.length>0 && unit.length<=10);
     if(first) {
