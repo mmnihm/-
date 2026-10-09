@@ -3716,7 +3716,7 @@ function consumeExtraVideoQuota(uid,count) {
 }
 function redeemCode(uid,rawCode) {
   const store=redemptionStore();
-  const code=String(rawCode||"").trim().toUpperCase().replace(/\\s+/g,"");
+  const code=String(rawCode||"").trim().toUpperCase().replace(/\s+/g,"");
   if(!code) return {ok:false,message:"请输入兑换码。"};
   const row=store.redemptionCodes[code];
   if(!row) return {ok:false,message:"兑换码不存在，请检查后重试。"};
@@ -3736,8 +3736,8 @@ function redeemCode(uid,rawCode) {
   } else return {ok:false,message:"兑换码奖励类型无效，请联系管理员。"};
   row.usedBy=String(uid); row.usedAt=now;
   saveDb();
-  if(row.type==="membership_days") return {ok:true,message:"🎉 兑换成功！已增加 "+amount+" 天会员。\\n会员到期时间："+new Date(row.expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})+"。"};
-  return {ok:true,message:"🎉 兑换成功！额外视频额度 +"+amount+" 次。\\n当前剩余额外视频额度："+extraVideoQuotaRemaining(uid)+" 次。"};
+  if(row.type==="membership_days") return {ok:true,message:"🎉 兑换成功！已增加 "+amount+" 天会员。\n会员到期时间："+new Date(row.expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})+"。"};
+  return {ok:true,message:"🎉 兑换成功！额外视频额度 +"+amount+" 次。\n当前剩余额外视频额度："+extraVideoQuotaRemaining(uid)+" 次。"};
 }
 async function allowed(token, userId) {
   // 管理员、兑换获得的有效会员不受非会员额度限制。
@@ -5681,22 +5681,23 @@ async function mainMessage(msg) {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消兑换。",userMenu()); }
     const result=redeemCode(uid,rawText);
     states.delete(key);
-    return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\\n\\n"+escapeHtml(result.message),userMenu());
+    return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
   }
   if(rawText.toLowerCase().startsWith("/redeem")) {
-    const code=rawText.replace(/^\\/redeem(?:@\\w+)?\\s*/i,"").trim();
+    const code=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
     if(!code) {
       states.set(key,{step:"redeem_code_input"});
-      return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\\n\\n请发送兑换码。\\n发送 /cancel 可取消。",userMenu());
+      return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码。\n发送 /cancel 可取消。",userMenu());
     }
     const result=redeemCode(uid,code);
-    return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\\n\\n"+escapeHtml(result.message),userMenu());
+    return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
   }
   if(admin && s?.step==="redeem_reward_amount") {
+    if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
     const amount=Number(rawText), max=s.rewardType==="membership_days"?3650:100000;
     if(!Number.isInteger(amount)||amount<1||amount>max) return sendHtml(TOKEN,uid,"❌ 请输入 1～"+max+" 的整数。");
     states.set(key,{step:"redeem_batch_count",rewardType:s.rewardType,rewardAmount:amount});
-    return sendHtml(TOKEN,uid,"<b>🎟️ 批量生成兑换码</b>\\n\\n每个兑换码奖励："+(s.rewardType==="membership_days"?"会员 "+amount+" 天":"额外视频 "+amount+" 次")+"。\\n请输入本次生成数量（1～100）。\\n发送 /cancel 可取消。");
+    return sendHtml(TOKEN,uid,"<b>🎟️ 批量生成兑换码</b>\n\n每个兑换码奖励："+(s.rewardType==="membership_days"?"会员 "+amount+" 天":"额外视频 "+amount+" 次")+"。\n请输入本次生成数量（1～100）。\n发送 /cancel 可取消。");
   }
   if(admin && s?.step==="redeem_batch_count") {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
@@ -5711,13 +5712,13 @@ async function mainMessage(msg) {
     }
     saveDb(); logAdmin(uid,"批量生成兑换码",(s.rewardType==="membership_days"?"会员天数 ":"额外视频额度 ")+s.rewardAmount+"，生成 "+count+" 个");
     states.delete(key);
-    const text="<b>✅ 兑换码生成完成</b>\\n━━━━━━━━━━━━━━\\n奖励："+(s.rewardType==="membership_days"?"会员 "+s.rewardAmount+" 天":"额外视频 "+s.rewardAmount+" 次")+"\\n生成数量："+count+"\\n\\n"+codes.map((code,i)=>(i+1)+". <code>"+code+"</code>").join("\\n");
+    const text="<b>✅ 兑换码生成完成</b>\n━━━━━━━━━━━━━━\n奖励："+(s.rewardType==="membership_days"?"会员 "+s.rewardAmount+" 天":"额外视频 "+s.rewardAmount+" 次")+"\n生成数量："+count+"\n\n"+codes.map((code,i)=>(i+1)+". <code>"+code+"</code>").join("\n");
     return sendHtml(TOKEN,uid,text,{reply_markup:redeemAdminInline()});
   }
   if(admin && rawText==="🎟️ 兑换码管理") {
     const store=redemptionStore(), all=Object.values(store.redemptionCodes);
     const unused=all.filter(x=>!x.usedAt&&!x.usedBy).length, used=all.length-unused;
-    return sendHtml(TOKEN,uid,"<b>🎟️ 兑换码管理</b>\\n━━━━━━━━━━━━━━\\n\\n📦 总计："+all.length+" 个\\n🟢 未使用："+unused+" 个\\n☑️ 已兑换："+used+" 个\\n\\n选择奖励类型并批量生成。",redeemAdminInline());
+    return sendHtml(TOKEN,uid,"<b>🎟️ 兑换码管理</b>\n━━━━━━━━━━━━━━\n\n📦 总计："+all.length+" 个\n🟢 未使用："+unused+" 个\n☑️ 已兑换："+used+" 个\n\n选择奖励类型并批量生成。",redeemAdminInline());
   }
 
   // 顶部/底部菜单必须优先于搜索、分页等旧状态；否则用户在搜索后点击目录会被当作搜索关键词。
@@ -6927,6 +6928,19 @@ async function childMessage(child,msg,token) {
   // 子机器人上传状态与回调统一使用 token-aware key，多个子机器人互不串任务。
   const key=uploadStateKey(uid,true,token);
   const t=msg.text||"",s=states.get(key);
+  const rawText=String(t||"").trim();
+  if(s?.step==="redeem_code_input") {
+    if(rawText==="/cancel") { states.delete(key); return sendHtml(token,uid,"已取消兑换。",childMenu()); }
+    const result=redeemCode(uid,rawText);
+    states.delete(key);
+    return sendHtml(token,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),childMenu());
+  }
+  if(rawText.toLowerCase().startsWith("/redeem")) {
+    const code=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
+    if(!code) { states.set(key,{step:"redeem_code_input"}); return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码。\n发送 /cancel 可取消。",childMenu()); }
+    const result=redeemCode(uid,code);
+    return sendHtml(token,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),childMenu());
+  }
 
   // 上传文件最高优先级：收到媒体后直接进入批量上传队列，避免被其他状态机拦截。
   if(isAdmin(uid) && s?.step==="upload_file") {
@@ -7192,7 +7206,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const key=child ? uploadStateKey(uid,true,token) : "m:"+uid;
       states.set(key,{step:"redeem_code_input"});
       await answer("请发送兑换码");
-      return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\\n━━━━━━━━━━━━━━\\n\\n请发送你的兑换码。\\n也可以直接发送 <code>/redeem 兑换码</code>。\\n发送 /cancel 可取消。",child?childMenu():userMenu());
+      return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\n━━━━━━━━━━━━━━\n\n请发送你的兑换码。\n也可以直接发送 <code>/redeem 兑换码</code>。\n发送 /cancel 可取消。",child?childMenu():userMenu());
     }
     if(action==="search") {
       const key=child ? uploadStateKey(uid,true,token) : "m:"+uid;
@@ -7392,7 +7406,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:adminStatusText(),parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
     if(data==="adm:redeem_make") {
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🎟️ 批量生成兑换码</b>\\n\\n请选择每个兑换码的奖励类型。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🎟️ 批量生成兑换码</b>\n\n请选择每个兑换码的奖励类型。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:"💎 会员天数",callback_data:"adm:redeem_type:membership_days"}],
         [{text:"🎬 额外视频额度",callback_data:"adm:redeem_type:video_credits"}],
         [{text:"⬅️ 返回兑换码管理",callback_data:"adm:redeem"}]
@@ -7402,7 +7416,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const type=data.slice("adm:redeem_type:".length);
       if(!["membership_days","video_credits"].includes(type)) { void answer("奖励类型无效",true); return; }
       states.set("m:"+uid,{step:"redeem_reward_amount",rewardType:type});
-      return sendHtml(TOKEN,uid,"<b>🎟️ 设置兑换奖励</b>\\n\\n"+(type==="membership_days"?"请输入每个兑换码奖励的会员天数（1～3650）。":"请输入每个兑换码奖励的额外视频次数（1～100000）。")+"\\n发送 /cancel 可取消。",adminMenu());
+      return sendHtml(TOKEN,uid,"<b>🎟️ 设置兑换奖励</b>\n\n"+(type==="membership_days"?"请输入每个兑换码奖励的会员天数（1～3650）。":"请输入每个兑换码奖励的额外视频次数（1～100000）。")+"\n发送 /cancel 可取消。",adminMenu());
     }
     if(data==="adm:cloud_retry"){
       let reset=0;
