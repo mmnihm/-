@@ -3993,7 +3993,8 @@ function userHomeText(uid) {
   const premium = isAdmin(uid) || hasActivePremiumMembership(uid);
   const remaining = nonMemberDailyRemaining(uid);
   const quota = premium ? "💎 <b>会员状态：</b>不限量获取" : "🎁 <b>今日免费额度：</b>剩余 " + Math.max(0, Number(remaining) || 0) + " 个";
-  const knownFolderIds = new Set(db.directories.map(d => String(d.id)));\n  const folderCount = new Set(db.resources.filter(r => r && r.directoryId !== undefined && r.directoryId !== null && knownFolderIds.has(String(r.directoryId))).map(r => String(r.directoryId))).size;
+  const knownFolderIds = new Set(db.directories.map(d => String(d.id)));
+  const folderCount = new Set(db.resources.filter(r => r && r.directoryId !== undefined && r.directoryId !== null && knownFolderIds.has(String(r.directoryId))).map(r => String(r.directoryId))).size;
   return "<b>🏠 资源平台</b>\n━━━━━━━━━━━━━━\n\n" +
     "📚 <b>资源总量：</b>" + db.resources.length + " 条\n" +
     "📁 <b>可浏览文件夹：</b>" + folderCount + " 个\n" + quota + "\n\n" +
