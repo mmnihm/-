@@ -5726,7 +5726,7 @@ async function mainMessage(msg) {
   }
 
   // 顶部/底部菜单必须优先于搜索、分页等旧状态；否则用户在搜索后点击目录会被当作搜索关键词。
-  if(!admin && (t==="📂 资源目录" || t==="📂资源目录")) {
+  if(String(t||"").replace(/[\uFE0E\uFE0F]/g,"").replace(/\s+/g,"").trim()==="📂资源目录") {
     states.delete(key);
     console.log("📂 用户打开资源目录：用户="+uid+" 文件夹="+db.directories.length+" 资源="+db.resources.length);
     try {
@@ -6315,7 +6315,7 @@ async function mainMessage(msg) {
     catch(e) { return send(TOKEN,uid,"❌ 扫描授权失败：\n\n"+e.message,adminMenu()); }
   }
 
-  if(t==="📂 资源目录" || t==="📂资源目录") {
+  if(String(t||"").replace(/[\uFE0E\uFE0F]/g,"").replace(/\s+/g,"").trim()==="📂资源目录") {
     states.delete(key);
     console.log("📂 资源目录：用户="+uid+" 文件夹="+db.directories.length+" 资源="+db.resources.length);
     try {
@@ -7034,7 +7034,7 @@ async function childMessage(child,msg,token) {
     if(handled) return;
   }
 
-  if(t==="📂 资源目录" || t==="📂资源目录") {
+  if(String(t||"").replace(/[\uFE0E\uFE0F]/g,"").replace(/\s+/g,"").trim()==="📂资源目录") {
     if(!db.directories.length) return sendHtml(token,uid,"<b>📂 暂无资源目录</b>\n\n管理员创建目录后，所有机器人会自动同步看到。",childMenu());
     return sendHtml(token,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
