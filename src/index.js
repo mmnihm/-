@@ -4953,6 +4953,16 @@ function search(q) {
   if(!q) return [];
   return db.resources.filter(x=>(String(x.title||"")+" "+String(x.caption||"")+" "+String(x.directoryId||"")).toLowerCase().includes(q));
 }
+
+function withoutVideosForGuest(items, member, uid) {
+  if(member || isAdmin(uid)) return {items:items||[], blocked:0};
+  const list=Array.isArray(items)?items:[];
+  const kept=list.filter(x=>!isVideoResource(x));
+  return {items:kept, blocked:list.length-kept.length};
+}
+async function guestVideoNotice(token, chatId) {
+  return sendHtml(token, chatId, "<b>🔐 未加入指定群</b>\n\n可以浏览目录和搜索。\n视频不会发送，加入指定群后才能获取视频。", userMenu());
+}
 function isVideoResource(item){
   const type=String(item?.fileType||"").toLowerCase();
   if(type==="video"||type==="animation"||type==="videonote") return true;
@@ -5080,11 +5090,9 @@ function escapeHtml(value) {
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const member=await allowed(TOKEN,userId);
   if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\n\n暂时没有找到可用内容。",childMenu());
-  if(!member && !isAdmin(userId)) {
-    const remaining=nonMemberDailyRemaining(userId);
-    if(remaining<=0) return sendQuotaNotice(token,chatId,userId,childMenu());
-    items=items.slice(0,remaining);
-  }
+  const guest=withoutVideosForGuest(items, member, userId);
+  items=guest.items;
+  if(!items.length) return guestVideoNotice(token, chatId);
   try {
     const client=await ensureHistoryClient(userId);
     const entity=await findHistoryEntity(client);
@@ -5172,11 +5180,9 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     Number(x.messageId) > 0
   );
 
-  if(!member && !isAdmin(userId)) {
-    const remaining=nonMemberDailyRemaining(userId);
-    if(remaining<=0) return sendQuotaNotice(token,chatId,userId);
-    valid=valid.slice(0,remaining);
-  }
+  const guest=withoutVideosForGuest(valid, member, userId);
+  valid=guest.items;
+  if(!valid.length) return guestVideoNotice(token, chatId);
 
   if(!valid.length) {
     return sendHtml(token,chatId,
@@ -8064,7 +8070,10 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
     }
     await answer("正在发送相册");
-    const first=all.slice(0,10);
+    const member=await allowed(TOKEN,uid);
+    const guest=withoutVideosForGuest(all.slice(0,10), member, uid);
+    if(!guest.items.length) return guestVideoNotice(token, chatId);
+    const first=guest.items;
     const album=await sendResourceAlbum(token,chatId,first);
     const sent=Number(album?.sent||0);
     const next=first.length;
@@ -8082,14 +8091,9 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
   const member=true;
   let batch=all.slice(offset,offset+10);
-  if(!member && !isAdmin(uid)) {
-    const remaining=nonMemberDailyRemaining(uid);
-    if(remaining<=0) {
-      void answer("今日免费额度已用完",true);
-      return sendQuotaNotice(token,chatId,uid);
-    }
-    batch=batch.slice(0,remaining);
-  }
+  const guest=withoutVideosForGuest(batch, member, uid);
+  batch=guest.items;
+  if(!batch.length) return guestVideoNotice(token, chatId);
   const album=await sendResourceAlbum(token,chatId,batch);
   const sent=Number(album?.sent||0);
   if(sent) recordStat(uid,"download",sent);
