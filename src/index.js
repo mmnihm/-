@@ -8093,13 +8093,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     // 先移除旧目录键盘，避免操作按钮留在新发文件上方。
     try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
     if(!all.length) {
-      return safeEdit(token,{
-        chat_id:chatId,
-        message_id:messageId,
-        text:"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",
-        parse_mode:"HTML",
-        reply_markup:directoryInlineKeyboard()
-      });
+      return sendHtml(token,chatId,"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",{reply_markup:directoryInlineKeyboard()});
     }
     const member=await allowed(TOKEN,uid);
     const selectedBatch=directoryBatchItems(all,0,10);
