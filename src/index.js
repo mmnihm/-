@@ -1218,196 +1218,41 @@ async function backfillBaserowFolderAssignments(rows, fields, folderField, title
 }
 
 async function pullBaserowSharedData() {
-  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID || sharedSyncLock) return false;
-  sharedSyncLock=true;
-  try {
-    const fields=await getBaserowFields();
-    const rows=await listAllBaserowRows();
-    const titleField=baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"]);
-    const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
-    const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
-    const urlField=baserowPickField(fields,["网址","链接","链接地址","URL","Url","Link"]);
-    const captionField=baserowPickField(fields,["描述","说明","备注","Caption","Description"]);
-    const folderField=baserowPickField(fields,["文件夹","目录","分类","Folder","Directory","Category"]);
-    const dateField=baserowPickField(fields,["日期","时间","创建时间","资源日期","Date","Created","Created At"]);
-    const typeField=baserowPickField(fields,["类型","文件类型","Type","File Type"]);
-    const fileIdField=baserowPickField(fields,["文件ID","File ID","FileID"]);
-    const downloadField=baserowPickField(fields,["下载","下载次数","Downloads"]);
-
-    const byKey=new Map();
-    const folderNames=new Map();
-    let urlNonEmpty=0, telegramPrivateMatches=0, telegramUrlMatches=0;
-    baserowRowsCache=new Map();
-
-    for(const row of rows) {
-      if(row?.id) baserowRowsCache.set(String(row.id),row);
-      const title=titleField ? String(row?.[titleField.name]??"").trim() : "";
-      if(title.startsWith("__FOLDER__:")) {
-        let folderValue=folderField ? sharedFolderName(row?.[folderField.name]) : "";
-        if(!folderValue) {
-          const encoded=title.split(":")[2] || "";
-          try { folderValue=Buffer.from(encoded,"base64url").toString("utf8").trim(); } catch {}
-        }
-        if(folderValue) {
-          const created=Date.parse(String(row?.created_on||row?.createdAt||""));
-          folderNames.set(sharedDirectoryId(folderValue),{name:folderValue,createdAt:Number.isFinite(created)&&created>0?created:Date.now()});
-        }
-        continue;
-      }
-      let chat=chatField ? String(row?.[chatField.name]??"").trim() : "";
-      let message=messageField ? Number(row?.[messageField.name]??0) : 0;
-      // 兼容旧表：如果没有聊天ID/消息ID，尝试从“网址”中的 Telegram 消息链接恢复。
-      if((!chat || !Number.isFinite(message) || message<=0) && urlField) {
-        const url=String(row?.[urlField.name]??"").trim();
-        if(url) urlNonEmpty++;
-        let m=url.match(/t\.me\/c\/(\d+)\/(\d+)/i);
-        if(m) { chat="-100"+m[1]; message=Number(m[2]); telegramPrivateMatches++; }
-        else {
-          m=url.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\d+)/i);
-          if(m) { chat="@"+m[1]; message=Number(m[2]); telegramUrlMatches++; }
-        }
-      }
-      if(!chat || !Number.isFinite(message) || message<=0) continue;
-      const key=chat+":"+message;
-      const folderName=folderField ? sharedFolderName(row?.[folderField.name]) : "";
-      if(folderName && !folderNames.has(sharedDirectoryId(folderName))) {
-        const created=Date.parse(String(row?.created_on||row?.createdAt||""));
-        folderNames.set(sharedDirectoryId(folderName),{name:folderName,createdAt:Number.isFinite(created)&&created>0?created:Date.now()});
-      }
-      byKey.set(key,{row,title,chat,message,folderName});
-    }
-
-    console.log("🧪 Google Sheets 资源恢复诊断：网址非空="+urlNonEmpty+" 私有链接匹配="+telegramPrivateMatches+" 公开链接匹配="+telegramUrlMatches+" 可恢复="+byKey.size+" 总行="+rows.length);
-    // MySQL 为正式数据层，Google Sheets 是手机管理界面：
-    // Google Sheets 修改名称/描述/文件夹/类型等字段后，立即同步回内存并由 saveDb() 写入 MySQL。
-    let createdFolders=0;
-    for(const folder of folderNames.values()) {
-      if(!db.directories.some(x=>String(x.name||"").trim()===folder.name)) {
-        ensureDirectory(folder.name);
-        createdFolders++;
-      }
-    }
-    if(createdFolders) console.log("📁 Google Sheets 已补入文件夹:", createdFolders);
-    const localResources=Array.isArray(db.resources)?db.resources:[];
-    const localDirectories=Array.isArray(db.directories)?db.directories:[];
-    const remoteByKey=new Map(byKey);
-    let matched=0, missing=0;
-    for(const item of localResources) {
-      const key=resourceKey(item);
-      const remote=remoteByKey.get(key);
-      if(remote?.row?.id) {
-        item.baserowRowId=remote.row.id;
-        // Google Sheets 是手机端管理层：把人工修改写回本地内存，随后 saveDb() -> MySQL。
-        const row=remote.row;
-        const remoteTitle=String(row?.[titleField?.name]??"").trim();
-        const remoteCaption=captionField ? String(row?.[captionField.name]??"") : "";
-        const remoteType=typeField ? String(row?.[typeField.name]??"") : "";
-        const remoteFolder=folderField ? sharedFolderName(row?.[folderField.name]) : "";
-        if(remoteTitle && !remoteTitle.startsWith("__FOLDER__:")) item.title=remoteTitle.slice(0,200);
-        if(captionField && remoteCaption!==undefined) item.caption=remoteCaption.slice(0,500);
-        if(typeField && remoteType) item.fileType=remoteType.slice(0,64);
-        if(remoteFolder) {
-          let d=(db.directories||[]).find(x=>String(x.name||"").trim()===remoteFolder);
-          if(!d) d=ensureDirectory(remoteFolder);
-          item.directoryId=d?.id||item.directoryId||null;
-        }
-        if(downloadField) {
-          const n=Number(row?.[downloadField.name]);
-          if(Number.isFinite(n) && n>=0) item.downloads=n;
-        }
-        matched++;
-      } else if(key!==":") {
-        missing++;
-        queueBaserowResourceSync(item);
-      }
-    }
-    for(const directory of localDirectories) {
-      queueBaserowDirectorySync(directory);
-    }
-    const normChat=v=>String(v??"").trim().replace(/^-100/,"").replace(/^@/,"").toLowerCase();
-    let linked=0;
-    for(const remote of byKey.values()) {
-      if(!remote.folderName) continue;
-      let d=db.directories.find(x=>String(x.name||"").trim()===remote.folderName);
-      if(!d) d=ensureDirectory(remote.folderName);
-      const key=remote.chat+":"+remote.message;
-      let item=localResources.find(x=>resourceKey(x)===key || (normChat(x.chatId)===normChat(remote.chat)&&Number(x.messageId)===Number(remote.message)));
-      if(!item && remote.title) item=localResources.find(x=>String(x.title||"").trim()===String(remote.title).trim());
-      if(item && d) {
-        item.directoryId=d.id;
-        linked++;
-      }
-    }
-    normalizeSharedDirectories();
-    console.log("📁 Google Sheets 资源归类:", "归入="+linked, "文件夹="+db.directories.length, "有资源的文件夹="+db.directories.filter(d=>db.resources.some(r=>String(r.directoryId)===String(d.id))).length);
-    if(missing) console.log("🔗 本地为准：Google Sheets 缺少 "+missing+" 条资源，已加入同步队列");
-    console.log("🔗 Google Sheets 刷新采用本地表格/本地数据库为准：保留本地资源="+localResources.length+" 文件夹="+localDirectories.length+"，远端匹配="+matched);
-
-    db.settings.sharedData={...(db.settings.sharedData||{}),version:Number(db.settings.sharedData?.version||0)+1,lastChangedAt:Date.now(),lastChangedBy:"baserow"};
-    saveDb();
-    console.log("🔄 Google Sheets 共享数据已刷新（MySQL 主库）：资源="+db.resources.length+"，文件夹="+db.directories.length);
-    return true;
-  } catch(e) {
-    baserow.connected=false;
-    baserow.lastError=String(e?.message||e);
-    console.error("❌ Google Sheets 共享数据刷新失败:",baserow.lastError);
-    return false;
-  } finally {
-    sharedSyncLock=false;
-  }
+  // Google Sheets is a one-way backup only. Never import rows into the live JSON database.
+  console.log("ℹ️ Google Sheets 仅作为备份，本次跳过远端读取；运行数据以 JSON 为准。");
+  return false;
 }
 
 async function initializeSharedBaserow() {
-  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
+  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) {
+    console.log("ℹ️ Google Sheets 备份未配置；继续以 JSON 为主数据库运行。");
+    return;
+  }
   try {
-    // 先完成一次真实连接检查，再进入共享初始化。
-    // 避免启动初期 checkBaserowConnection() 仍在异步执行时，
-    // 日志暂时显示 enabled=false，导致误判为没有启用共享。
-    const connected = await checkBaserowConnection();
+    const connected = await checkGoogleSheetsConnection();
     if(!connected) {
-      console.error("❌ Google Sheets 共享初始化终止：连接检查未通过", baserow.lastError || "");
+      console.warn("⚠️ Google Sheets 备份不可用；不影响 JSON 主数据库和机器人运行：", baserow.lastError || "");
       return;
     }
-    console.log("🔗 Google Sheets 共享连接确认：enabled="+String(baserow.enabled)+" connected="+String(baserow.connected)+" table="+GOOGLE_SHEETS_ID);
-
     await ensureBaserowRecoveryFields();
     normalizeSharedDirectories();
-    // 首次切换共享模式时，先保留本地快照，再与 Google Sheets 做并集合并，绝不因为远端为空而丢失本地资源。
-    const localResources=(db.resources||[]).map(x=>({...x}));
-    const localDirectories=(db.directories||[]).map(x=>({...x}));
-    await pullBaserowSharedData();
 
-    const remoteKeys=new Set(db.resources.map(x=>String(x.chatId)+":"+String(x.messageId)));
-    for(const item of localResources) {
-      const key=String(item.chatId)+":"+String(item.messageId);
-      if(!remoteKeys.has(key)) {
-        db.resources.push(item);
-        queueBaserowResourceSync(item);
-      }
+    // 单向：只把 JSON 中现有目录和资源写入 Google Sheets；不从表格导入/覆盖 JSON。
+    for(const directory of (Array.isArray(db.directories)?db.directories:[])) {
+      queueBaserowDirectorySync(directory);
     }
-
-    const dirMap=new Map(db.directories.map(d=>[sharedDirectoryId(d.name),d]));
-    for(const d of localDirectories) {
-      const id=sharedDirectoryId(d.name);
-      if(!dirMap.has(id)) {
-        const nd={...d,id};
-        db.directories.push(nd);
-        dirMap.set(id,nd);
-      }
-      queueBaserowDirectorySync(dirMap.get(id));
+    for(const item of (Array.isArray(db.resources)?db.resources:[])) {
+      queueBaserowResourceSync(item);
     }
-
-    db.resources=db.resources.slice(0,MAX_RESOURCES);
-    saveDb();
-    await waitBaserowSyncQueue();
     await waitBaserowDirectorySyncQueue();
-
-    // 清理后重新拉取，确保内存中的目录也同步为最终状态。
-    await pullBaserowSharedData();
+    await waitBaserowSyncQueue();
+    console.log("✅ Google Sheets 单向备份初始化完成：JSON 目录="+db.directories.length+"，资源="+db.resources.length);
   } catch(e) {
-    console.error("❌ 共享数据初始化失败:",String(e?.message||e));  }
+    baserow.connected=false;
+    baserow.lastError=String(e?.message||e);
+    console.warn("⚠️ Google Sheets 备份初始化失败，不影响 JSON 主库：",baserow.lastError);
+  }
 }
-
 
 function requestSharedDataRefresh(){
   if(globalThis.__sharedRefreshTimer) clearTimeout(globalThis.__sharedRefreshTimer);
@@ -1416,32 +1261,10 @@ function requestSharedDataRefresh(){
   },1500);
 }
 async function refreshSharedData(force=false) {
-  if(!GOOGLE_SHEETS_CREDENTIAL || !GOOGLE_SHEETS_ID) return;
-  const now=Date.now();
-  if(!force && now-sharedRefreshAt<300000) return;
-  if(sharedRefreshPromise) return sharedRefreshPromise;
-  sharedRefreshPromise=(async()=>{
-    const started=Date.now();
-    try {
-      // 共享目录读取不能等待资源写入队列；否则历史扫描/批量同步时，
-      // 前面的几千条 Google Sheets 写入会把目录刷新一直排队，导致其他机器人看不到新目录。
-      if(db.settings.historyScan?.status==="running" || db.settings.baserowRecovery?.status==="running") {
-        console.log("⏸️ Google Sheets 共享刷新：后台历史任务进行中，跳过本轮");
-        return;
-      }
-      console.log("🔄 Google Sheets 共享刷新开始");
-      await pullBaserowSharedData();
-      sharedRefreshAt=Date.now();
-      console.log("✅ Google Sheets 共享刷新完成：耗时="+(Date.now()-started)+"ms 文件夹="+db.directories.length+" 资源="+db.resources.length);
-    } catch(e) {
-      console.error("❌ Google Sheets 共享刷新异常:",String(e?.message||e));
-    } finally {
-      sharedRefreshPromise=null;
-    }
-  })();
-  return sharedRefreshPromise;
+  // 兼容旧按钮/调用点，但不再从 Google Sheets 拉取数据覆盖 JSON。
+  console.log("ℹ️ 已忽略 Google Sheets 读取/刷新请求：Google Sheets 仅为 JSON 备份。");
+  return false;
 }
-
 
 
 async function ensureStartCommand(token) {
@@ -2542,6 +2365,7 @@ async function repositoryAutoSyncBatch(batch){
 
   if(!Array.isArray(copiedIds)){
     const errorText=String(lastError?.telegramDescription||lastError?.message||lastError||"批量复制失败");
+    const containsAlbum=jobs.some(job=>Boolean(job.mediaGroupId)) || sourceItems.some(item=>Boolean(item?.mediaGroupId));
     state.lastError=errorText;
     state.updatedAt=Date.now();
 
@@ -2549,7 +2373,7 @@ async function repositoryAutoSyncBatch(batch){
       // Telegram 对已删除/不可转发的源消息会返回“there are no messages to forward”。
       // 不要让整个自动同步暂停：拆分定位失效消息，正常消息继续同步。
       // 如果当前是相册，只有异常消息被剔除后，其余同组媒体仍按实际数量复制。
-      if(messageIds.length>1){
+      if(messageIds.length>1 && !containsAlbum){
         const mid=Math.ceil(jobs.length/2);
         const left=jobs.slice(0,mid),right=jobs.slice(mid);
         console.warn("↪️ AUTO SYNC 批量失败，拆分为两组继续:",left.length+"+"+right.length);
@@ -2558,62 +2382,67 @@ async function repositoryAutoSyncBatch(batch){
         return await repositoryAutoSyncBatch(right);
       }
 
-      const badId=messageIds[0];
-      state.queue=state.queue.filter(x=>Number(x?.messageId||0)!==badId);
-      state.failed=Number(state.failed||0)+1;
-      state.status="running";
-      state.lastMessageId=Math.max(Number(state.lastMessageId||0),badId);
+      // 不自动丢弃失败消息；保留原队列并暂停，交由管理员确认后处理。
+      state.manualPaused=true;
+      state.status="paused";
+      state.lastError=(containsAlbum?"相册组复制失败，已保留整组队列：":"源消息不可复制，已保留队列：")+sourceId+"#"+messageIds[0]+"；"+errorText;
+      state.updatedAt=Date.now();
       saveDb();
-      console.warn("⏭️ AUTO SYNC 跳过无效媒体:",sourceId+"#"+badId);
-      return true;
+      console.warn("⏸️ AUTO SYNC 失败消息已保留，暂停等待处理:",state.lastError);
+      return false;
     }
 
     // Telegram 的 4xx 业务错误通常不是临时网络故障。
     // 如果整组失败，继续拆分定位；单条仍失败则只跳过这一条，不能让队列原地死循环。
-    if(messageIds.length>1){
+    if(messageIds.length>1 && !containsAlbum){
       const mid=Math.ceil(jobs.length/2);
       console.warn("↪️ AUTO SYNC 业务错误，拆分消息组继续:",leftCountSafe(jobs,mid)+"+"+leftCountSafe(jobs,jobs.length-mid));
       const leftOk=await repositoryAutoSyncBatch(jobs.slice(0,mid));
       if(!leftOk)return false;
       return await repositoryAutoSyncBatch(jobs.slice(mid));
     }
-    const badId=messageIds[0];
-    state.queue=state.queue.filter(x=>Number(x?.messageId||0)!==badId);
-    state.failed=Number(state.failed||0)+1;
-    state.lastMessageId=Math.max(Number(state.lastMessageId||0),badId);
-    state.lastError="";
-    state.status="running";
+    state.manualPaused=true;
+    state.status="paused";
+    state.lastError=(containsAlbum?"相册组复制失败，已保留整组队列：":"消息复制失败，已保留队列：")+sourceId+"#"+messageIds[0]+"；"+errorText;
     state.updatedAt=Date.now();
     saveDb();
-    console.warn("⏭️ AUTO SYNC 跳过无法复制的消息:",sourceId+"#"+badId,errorText);
-    return true;
+    console.warn("⏸️ AUTO SYNC 失败队列已保留，暂停等待处理:",state.lastError);
+    return false;
   }
 
   // copyMessages 成功时返回目标消息 ID 数组。
   // 正常情况下数量与输入一致；若 Telegram 跳过不可复制消息，
   // 将当前组拆分后重试，以准确定位无效消息，同时尽量保持批量复制。
   if(copiedIds.length!==messageIds.length){
-    if(messageIds.length>1){
+    const containsAlbum=jobs.some(job=>Boolean(job.mediaGroupId)) || sourceItems.some(item=>Boolean(item?.mediaGroupId));
+    if(messageIds.length>1 && !containsAlbum){
       const mid=Math.ceil(jobs.length/2);
       console.warn("⚠️ AUTO SYNC 批量结果数量不一致:",copiedIds.length+"/"+messageIds.length,"拆分继续");
       const leftOk=await repositoryAutoSyncBatch(jobs.slice(0,mid));
       if(!leftOk)return false;
       return await repositoryAutoSyncBatch(jobs.slice(mid));
     }
-    const badId=messageIds[0];
-    state.queue=state.queue.filter(x=>Number(x?.messageId||0)!==badId);
-    state.failed=Number(state.failed||0)+1;
-    state.lastMessageId=Math.max(Number(state.lastMessageId||0),badId);
+    state.manualPaused=true;
+    state.status="paused";
+    state.lastError="Telegram 返回的复制数量不一致，已保留消息队列："+sourceId+"#"+messageIds[0];
     state.updatedAt=Date.now();
     saveDb();
-    console.warn("⏭️ AUTO SYNC 跳过 Telegram 未复制的消息:",sourceId+"#"+badId);
-    return true;
+    console.warn("⏸️ AUTO SYNC 复制结果不完整，已保留队列并暂停:",state.lastError);
+    return false;
   }
 
   for(let i=0;i<jobs.length;i++){
     const messageId=jobs[i].messageId;
     const copiedId=Number(copiedIds[i]?.message_id||0);
-    if(!copiedId)continue;
+    if(!copiedId) {
+      state.manualPaused=true;
+      state.status="paused";
+      state.lastError="Telegram 未返回目标消息 ID，已保留队列："+sourceId+"#"+messageId;
+      state.updatedAt=Date.now();
+      saveDb();
+      console.warn("⏸️ AUTO SYNC 缺少目标消息 ID，保留队列并暂停:",state.lastError);
+      return false;
+    }
 
     const sourceItem=db.resources.find(x=>String(x.chatId)===sourceId&&Number(x.messageId)===messageId)||null;
     const directoryId=sourceItem?repositoryAutoSyncFolderId(sourceItem,targetId):null;
