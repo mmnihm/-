@@ -7705,6 +7705,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       void answer("返回首页");
       return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
     }
+    // 再来一组/下一批前清除旧控制键盘，新按钮只挂在新一组文件之后。
+    try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
     if(!(await requireMemberAccess(token,chatId,uid,child ? childMenu() : userMenu()))) {
       void answer("请先加入指定会员群",true);
       return;
