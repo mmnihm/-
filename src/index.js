@@ -7814,19 +7814,25 @@ async function handleDirectoryCallback(token, q, child=false) {
       return;
     }
     const member=await allowed(TOKEN,uid);
-    if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0) {
-      void answer("今日免费额度已用完",true);
+    const guest=withoutVideosForGuest([item],member,uid);
+    if(!guest.items.length) {
+      void answer("今日免费资源额度已用完",true);
       return guestVideoNotice(token,chatId);
     }
-    void answer("正在获取资源…");
+    void answer("正在获取资源相册/文件组…");
     try {
-      await sendIndexedResource(token,chatId,item);
-      recordStat(uid,"download",1);
-      recordResourceDownload(item);
-      recordRecent(uid,item);
-      if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
+      const sentResult=await sendResourceAlbum(token,chatId,guest.items);
+      const sent=Number(sentResult?.sent||0);
+      const sentItems=Array.isArray(sentResult?.sentItems)?sentResult.sentItems:guest.items.slice(0,sent);
+      if(sent>0) {
+        recordStat(uid,"download",sent);
+        for(const sentItem of sentItems){recordResourceDownload(sentItem);recordRecent(uid,sentItem);}
+        if(!member&&!isAdmin(uid)) consumeVideoQuota(uid,sentItems); else saveDb();
+      } else {
+        saveDb();
+      }
       try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
-      return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源"+(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":""),resourceInlineKeyboard(s.results,page));
+      return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已成组发送：<b>"+sent+" </b> 个资源"+(sent<guest.items.length?"（失败 "+(guest.items.length-sent)+" 个）":"")+"\n👇 可继续选择其他资源"+(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":""),resourceInlineKeyboard(s.results,page));
     } catch(e) {
       return safeEdit(token,{
         chat_id:chatId,
