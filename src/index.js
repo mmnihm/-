@@ -6818,7 +6818,8 @@ async function mainMessage(msg) {
   }
   if(t==="🆕 最新资源") {
     if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) return;
-    const page=latestResourcePage(0);\n    return deliver(TOKEN,uid,uid,page.items,TOKEN,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
+    const page=latestResourcePage(0);
+    return deliver(TOKEN,uid,uid,page.items,TOKEN,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
   }
   if(s?.step==="search") {
     if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) { states.delete(key); return; }
@@ -7708,7 +7709,8 @@ async function handleDirectoryCallback(token, q, child=false) {
         return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
       }
       await answer("正在获取最新资源");
-      const page=latestResourcePage(0);\n      return deliver(token,uid,uid,page.items,token,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
+      const page=latestResourcePage(0);
+      return deliver(token,uid,uid,page.items,token,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
     }
     if(action==="home") {
       const key=(child ? "c:" : "m:")+uid;
@@ -8428,7 +8430,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       }
       const offset=Math.max(0,Number(data.split(":")[2])||0);
       void answer("正在获取最新资源…");
-      const page=latestResourcePage(offset);\n      return deliverFromHistory(token,uid,uid,page.items,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
+      const page=latestResourcePage(offset);
+      return deliverFromHistory(token,uid,uid,page.items,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
     }
     if(data==="batch:random"){
       void answer("正在随机获取…");
@@ -8440,7 +8443,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     const offset=Math.max(0,Number(data.split(":")[2])||0);
     void answer("正在获取最新资源…");
-    const page=latestResourcePage(offset);\n    return deliver(token,uid,uid,page.items,TOKEN,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
+    const page=latestResourcePage(offset);
+    return deliver(token,uid,uid,page.items,TOKEN,{mode:"latest",offset:page.offset,total:page.total,prevOffset:page.prevOffset,nextOffset:page.nextOffset});
   }
 
   // 用户搜索结果使用内联按钮：两列排列，结果多时分页，不再占用底部键盘。
