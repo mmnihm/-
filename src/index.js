@@ -5674,6 +5674,8 @@ async function mainMessage(msg) {
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
   let s=states.get(key);
+  const persistedRedeemState=db.settings?.redeemAdminStates?.[String(uid)];
+  if(admin && persistedRedeemState && /^redeem_(?:reward_amount|batch_count)$/.test(String(persistedRedeemState.step||""))){s=persistedRedeemState;states.set(key,s);}
 
   if(s?.step==="redeem_code_input" && !admin) {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消兑换。",userMenu()); }
@@ -5691,14 +5693,17 @@ async function mainMessage(msg) {
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
   }
   if(admin && s?.step==="redeem_reward_amount") {
-    if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
+    if(rawText==="/cancel") { states.delete(key); if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)]; saveDb(); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
     const amount=Number(rawText), max=s.rewardType==="membership_days"?3650:100000;
     if(!Number.isInteger(amount)||amount<1||amount>max) return sendHtml(TOKEN,uid,"❌ 请输入 1～"+max+" 的整数。");
-    states.set(key,{step:"redeem_batch_count",rewardType:s.rewardType,rewardAmount:amount});
+    const nextRedeemState={step:"redeem_batch_count",rewardType:s.rewardType,rewardAmount:amount};
+    states.set(key,nextRedeemState);
+    if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};
+    db.settings.redeemAdminStates[String(uid)]=nextRedeemState; saveDb();
     return sendHtml(TOKEN,uid,"<b>🎟️ 批量生成兑换码</b>\n\n每个兑换码奖励："+(s.rewardType==="membership_days"?"会员 "+amount+" 天":"额外视频 "+amount+" 次")+"。\n请输入本次生成数量（1～100）。\n发送 /cancel 可取消。");
   }
   if(admin && s?.step==="redeem_batch_count") {
-    if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
+    if(rawText==="/cancel") { states.delete(key); if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)]; saveDb(); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
     const count=Number(rawText);
     if(!Number.isInteger(count)||count<1||count>100) return sendHtml(TOKEN,uid,"❌ 请输入 1～100 的整数。");
     const store=redemptionStore(), codes=[];
@@ -5710,6 +5715,7 @@ async function mainMessage(msg) {
     }
     saveDb(); logAdmin(uid,"批量生成兑换码",(s.rewardType==="membership_days"?"会员天数 ":"额外视频额度 ")+s.rewardAmount+"，生成 "+count+" 个");
     states.delete(key);
+    if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)];
     const text="<b>✅ 兑换码生成完成</b>\n━━━━━━━━━━━━━━\n奖励："+(s.rewardType==="membership_days"?"会员 "+s.rewardAmount+" 天":"额外视频 "+s.rewardAmount+" 次")+"\n生成数量："+count+"\n\n"+codes.map((code,i)=>(i+1)+". <code>"+code+"</code>").join("\n");
     return sendHtml(TOKEN,uid,text,{reply_markup:redeemAdminInline()});
   }
@@ -7413,7 +7419,10 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data.startsWith("adm:redeem_type:")) {
       const type=data.slice("adm:redeem_type:".length);
       if(!["membership_days","video_credits"].includes(type)) { void answer("奖励类型无效",true); return; }
-      states.set("m:"+uid,{step:"redeem_reward_amount",rewardType:type});
+      const redeemState={step:"redeem_reward_amount",rewardType:type};
+      states.set("m:"+uid,redeemState);
+      if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};
+      db.settings.redeemAdminStates[String(uid)]=redeemState; saveDb();
       return sendHtml(TOKEN,uid,"<b>🎟️ 设置兑换奖励</b>\n\n"+(type==="membership_days"?"请输入每个兑换码奖励的会员天数（1～3650）。":"请输入每个兑换码奖励的额外视频次数（1～100000）。")+"\n发送 /cancel 可取消。",adminMenu());
     }
     if(data==="adm:cloud_retry"){
