@@ -5135,24 +5135,16 @@ function expandOriginalAlbumItems(items) {
         if(contiguous.length) album=contiguous;
       }
     }
-    // 保持相册完整：剩余名额不够时跳过整组，而不是发送残缺相册。
+    // 保持相册完整：不够容纳整组时跳过整组，绝不切片发送残缺相册。
     const uniqueAlbum=album.filter(member=>!seen.has(resourceKey(member)));
     if(!uniqueAlbum.length) continue;
-    if(out.length+uniqueAlbum.length>MAX_ITEMS) {
-      if(out.length===0) {
-        for(const member of uniqueAlbum.slice(0,MAX_ITEMS)) {
-          const memberKey=resourceKey(member);
-          if(!seen.has(memberKey)){seen.add(memberKey);out.push(member);}
-        }
-      }
-      continue;
-    }
+    if(uniqueAlbum.length>MAX_ITEMS || out.length+uniqueAlbum.length>MAX_ITEMS) continue;
     for(const member of uniqueAlbum) {
       const memberKey=resourceKey(member);
       if(!seen.has(memberKey)){seen.add(memberKey);out.push(member);}
     }
   }
-  return out.slice(0,MAX_ITEMS);
+  return out;
 }
 async function sendResourceAlbum(token, chatId, items, options={}) {
   // 原样复制仓库消息：只把仓库里本来属于同一相册的连续消息一起复制，
@@ -5319,9 +5311,24 @@ function withoutVideosForGuest(items, member, uid, expandAlbums=true) {
   if(member || isAdmin(uid) || hasActivePremiumMembership(uid)) return {items:expanded,blocked:0,allowed:expanded.length};
   // 每日 3 个是全部资源的硬上限；视频额外额度不能绕过该上限。
   const remaining=nonMemberDailyRemaining(uid);
-  const limit=remaining===Infinity?expanded.length:Math.max(0,remaining);
-  const kept=expanded.slice(0,limit);
-  // 预留只覆盖本次准备发送的条目；成功后转为已用额度，发送异常时最多 5 分钟自动释放。
+  const limit=remaining===Infinity?expanded.length:Math.max(0,Math.floor(remaining));
+  let kept=expanded;
+  if(limit<expanded.length) {
+    // 非会员额度不能把相册切成几张单独发送：按相册组整体装入剩余额度。
+    kept=[];
+    const seen=new Set();
+    for(const item of expanded) {
+      const key=resourceKey(item);
+      if(seen.has(key)) continue;
+      const groupId=String(item?.mediaGroupId||"");
+      const group=groupId
+        ? expanded.filter(x=>String(x?.chatId)===String(item?.chatId)&&String(x?.mediaGroupId||"")===groupId)
+        : [item];
+      for(const memberItem of group) seen.add(resourceKey(memberItem));
+      if(kept.length+group.length<=limit) kept.push(...group);
+    }
+  }
+  // 预留只覆盖完整入选的资源组；成功后转为已用额度，异常时由调用方释放。
   if(kept.length) reserveNonMemberQuota(uid,kept.length);
   return {items:kept,blocked:Math.max(0,expanded.length-kept.length),allowed:kept.length};
 }
