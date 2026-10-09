@@ -7744,7 +7744,20 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:adminStatusText(),parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
-    if(data==="adm:redeem_ban") {\n      const banState={step:"redeem_ban_user"};\n      states.set("m:"+uid,banState);\n      if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};\n      db.settings.redeemAdminStates[String(uid)]=banState; saveDb();\n      await answer("请输入要封禁的用户 ID");\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🚫 封禁会员使用权限</b>\\n━━━━━━━━━━━━━━\\n\\n请发送要封禁用户的 Telegram 数字 ID。\\n\\n执行后会：\\n• 禁止该用户使用主机器人及子机器人\\n• 尝试将其移出当前配置的指定会员群\\n• 保留会员记录、兑换码记录和其他数据\\n\\n注意：群移出需要机器人具备群管理权限。\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"⬅️ 取消并返回",callback_data:"adm:redeem"}]]}});\n    }\n    if(data==="adm:redeem_make") {
+    if(data==="adm:redeem_ban") {
+      const banState={step:"redeem_ban_user"};
+      states.set("m:"+uid,banState);
+      if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};
+      db.settings.redeemAdminStates[String(uid)]=banState;
+      saveDb();
+      await answer("请输入要封禁的用户 ID");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"<b>🚫 封禁会员使用权限</b>\\n━━━━━━━━━━━━━━\\n\\n请发送要封禁用户的 Telegram 数字 ID。\\n\\n执行后会：\\n• 禁止该用户使用主机器人及子机器人\\n• 尝试将其移出当前配置的指定会员群\\n• 保留会员记录、兑换码记录和其他数据\\n\\n注意：群移出需要机器人具备群管理权限。\\n发送 /cancel 可取消。",
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:[[{text:"⬅️ 取消并返回",callback_data:"adm:redeem"}]]}
+      });
+    }
+    if(data==="adm:redeem_make") {
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🎟️ 批量生成兑换码</b>\n\n请选择每个兑换码的奖励类型。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:"💎 会员天数",callback_data:"adm:redeem_type:membership_days"}],
         [{text:"♾️ 永久会员",callback_data:"adm:redeem_type:membership_permanent"}],
