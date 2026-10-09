@@ -5723,7 +5723,7 @@ async function mainMessage(msg) {
   if(admin && rawText==="🎟️ 兑换码管理") {
     const store=redemptionStore(), all=Object.values(store.redemptionCodes);
     const unused=all.filter(x=>!x.usedAt&&!x.usedBy).length, used=all.length-unused;
-    return sendHtml(TOKEN,uid,"<b>🎟️ 兑换码管理</b>\n━━━━━━━━━━━━━━\n\n📦 总计："+all.length+" 个\n🟢 未使用："+unused+" 个\n☑️ 已兑换："+used+" 个\n\n选择奖励类型并批量生成。",redeemAdminInline());
+    return sendHtml(TOKEN,uid,"<b>🎟️ 兑换码管理</b>\n━━━━━━━━━━━━━━\n\n📦 总计："+all.length+" 个\n🟢 未使用："+unused+" 个\n☑️ 已兑换："+used+" 个\n\n👇 点击下方按钮批量生成兑换码。",{reply_markup:redeemAdminInline()});
   }
 
   // 顶部/底部菜单必须优先于搜索、分页等旧状态；否则用户在搜索后点击目录会被当作搜索关键词。
@@ -7232,7 +7232,12 @@ async function handleDirectoryCallback(token, q, child=false) {
       const key=(child ? "c:" : "m:")+uid;
       states.delete(key);
       await answer("正在打开资源目录");
-      try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+      try {
+        const edited=await safeEdit(token,{chat_id:chatId,message_id:messageId,text:directoryText(),parse_mode:"HTML",reply_markup:directoryInlineKeyboard()});
+        if(edited) return edited;
+      } catch(e) {
+        console.warn("USER DIRECTORY OPEN EDIT FAILED:",String(e?.telegramDescription||e?.message||e));
+      }
       return sendHtml(token,chatId,directoryText(),{reply_markup:directoryInlineKeyboard()});
     }
     if(action==="random" || action==="latest") {
@@ -7373,7 +7378,14 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="adm:bulk") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 批量管理"});
   if(data==="adm:repo") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📦 资源仓库"});
   if(data==="adm:scan") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔍 仓库扫描"});
-  if(data==="adm:redeem") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🎟️ 兑换码管理"});
+  if(data==="adm:redeem") {
+    const store=redemptionStore(), all=Object.values(store.redemptionCodes);
+    const unused=all.filter(x=>!x.usedAt&&!x.usedBy).length, used=all.length-unused;
+    await answer("打开兑换码管理");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"<b>🎟️ 兑换码管理</b>\\n━━━━━━━━━━━━━━\\n\\n📦 总计："+all.length+" 个\\n🟢 未使用："+unused+" 个\\n☑️ 已兑换："+used+" 个\\n\\n👇 点击下方按钮批量生成兑换码。",
+      parse_mode:"HTML",reply_markup:redeemAdminInline()});
+  }
   if(data==="adm:group") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔐 指定群管理"});
   if(data==="adm:admins") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"👥 管理员管理"});
   if(data==="adm:stats") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"📊 数据统计"});
