@@ -5020,16 +5020,28 @@ function search(q) {
 
 function withoutVideosForGuest(items, member, uid) {
   const list=Array.isArray(items)?items:[];
-  if(member || isAdmin(uid)) return {items:list, blocked:0, allowedVideos:list.filter(isVideoResource).length};
+  if(member || isAdmin(uid)) return {items:expandOriginalAlbumItems(list),blocked:0,allowedVideos:expandOriginalAlbumItems(list).filter(isVideoResource).length};
   const remaining=nonMemberDailyRemaining(uid);
-  let allowedVideos=0, blocked=0;
-  const kept=[];
-  for(const item of list){
-    if(!isVideoResource(item)){kept.push(item);continue;}
-    if(allowedVideos<remaining){kept.push(item);allowedVideos++;}
-    else blocked++;
+  const expanded=expandOriginalAlbumItems(list);
+  const kept=[],seenGroups=new Set();
+  let allowedVideos=0,blocked=0;
+  for(const item of expanded) {
+    const groupId=String(item?.mediaGroupId||"");
+    const key=groupId?String(item.chatId)+":"+groupId:resourceKey(item);
+    if(seenGroups.has(key)) continue;
+    seenGroups.add(key);
+    const group=groupId
+      ? expanded.filter(x=>String(x?.chatId||"")===String(item?.chatId||"")&&String(x?.mediaGroupId||"")===groupId)
+      : [item];
+    const videos=group.filter(isVideoResource).length;
+    if(videos===0 || allowedVideos+videos<=remaining) {
+      kept.push(...group);
+      allowedVideos+=videos;
+    } else {
+      blocked+=videos;
+    }
   }
-  return {items:kept, blocked, allowedVideos};
+  return {items:kept,blocked,allowedVideos};
 }
 async function guestVideoNotice(token, chatId) {
   return sendHtml(token, chatId, "<b>🎬 今日免费视频额度已用完</b>\n\n非会员每天可获取 <b>"+nonMemberDailyLimit()+"</b> 个视频。\n加入指定会员群后可不限量获取。", userMenu());
@@ -5185,84 +5197,19 @@ async function tgUploadMediaAlbum(token, chatId, entries) {
 }
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const member=await allowed(TOKEN,userId);
-  if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",childMenu());
-  const guest=withoutVideosForGuest(items, member, userId);
+  if(!Array.isArray(items)||!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",childMenu());
+  const guest=withoutVideosForGuest(items,member,userId);
   items=guest.items;
-  if(!items.length) return guestVideoNotice(token, chatId);
+  if(!items.length) return guestVideoNotice(token,chatId);
   try {
-    const client=await ensureHistoryClient(userId);
-    const entity=await findHistoryEntity(client);
-    let ok=0,fail=0,videoSent=0;
-    const prepared=[];
-    for(const item of items){
-      try{
-        const found=await client.getMessages(entity,{ids:[Number(item.messageId)]});
-        const message=Array.isArray(found)?found[0]:found;
-        if(!message||!message.media) throw new Error("历史消息或媒体不存在");
-        let buffer=null,downloadError=null;
-        for(let attempt=0;attempt<2;attempt++){
-          try{
-            buffer=await client.downloadMedia(message,{});
-            if(buffer&&buffer.length) break;
-            downloadError=new Error("媒体下载失败");
-          }catch(downloadErr){downloadError=downloadErr;if(attempt===0)await sleep(500);}
-        }
-        if(!buffer||!buffer.length) throw downloadError||new Error("媒体下载失败");
-        const file=message.file||{},mime=String(file.mimeType||"").toLowerCase(),mediaClass=String(message.media?.className||"");
-        const mediaType=(mime.startsWith("image/")||/MessageMediaPhoto/i.test(mediaClass)||message.photo)?"photo":
-          (mime.startsWith("video/")||isVideoResource(item)||(/MessageMediaDocument/i.test(mediaClass)&&mime.startsWith("video")))?"video":"";
-        prepared.push({item,buffer,name:String(file.name||item.title||(mediaType==="photo"?"photo.jpg":mediaType==="video"?"video.mp4":"resource")),mediaType,caption:String(item.caption||"")});
-      }catch(e){
-        fail++;
-        const msg=String(e?.message||e);
-        console.error("HISTORY SEND:",msg,"message=",item.messageId);
-        if(/历史消息或媒体不存在|message not found|MESSAGE_ID_INVALID|message.?id.?invalid|media.*not found|message.*does not exist/i.test(msg))removeInvalidResource(item,msg);
-      }
-    }
-    for(let i=0;i<prepared.length;){
-      const entry=prepared[i];
-      if(entry.mediaType){
-        let end=i;
-        while(end<prepared.length&&prepared[end].mediaType&&end-i<10)end++;
-        const group=prepared.slice(i,end);
-        if(group.length>=2){
-          try{
-            const sent=await tgUploadMediaAlbum(token,chatId,group);
-            const delivered=Math.min(sent.length,group.length);
-            ok+=delivered;
-            videoSent+=group.slice(0,delivered).filter(x=>x.mediaType==="video"&&isVideoResource(x.item)).length;
-            for(const x of group.slice(0,delivered)){recordResourceDownload(x.item);recordRecent(userId,x.item);}
-            fail+=group.length-delivered;
-          }catch(albumError){
-            console.warn("MEDIA ALBUM FAILED, fallback to individual sends:",String(albumError?.message||albumError));
-            for(const x of group){
-              try{
-                const method=x.mediaType==="photo"?"sendPhoto":"sendVideo";
-                await tgUploadBuffer(token,method,chatId,x.buffer,x.name,x.caption);
-                ok++;if(x.mediaType==="video"&&isVideoResource(x.item))videoSent++;
-                recordResourceDownload(x.item);recordRecent(userId,x.item);
-              }catch(sendError){fail++;console.error("MEDIA SEND:",String(sendError?.message||sendError),"message=",x.item.messageId);}
-              await sleep(100);
-            }
-          }
-        }else{
-          try{
-            await tgUploadBuffer(token,entry.mediaType==="photo"?"sendPhoto":"sendVideo",chatId,entry.buffer,entry.name,entry.caption);
-            ok++;if(entry.mediaType==="video"&&isVideoResource(entry.item))videoSent++;
-            recordResourceDownload(entry.item);recordRecent(userId,entry.item);
-          }catch(e){fail++;console.error("MEDIA SEND:",String(e?.message||e),"message=",entry.item.messageId);}
-        }
-        i=end;
-      }else{
-        try{
-          await tgUploadBuffer(token,"sendDocument",chatId,entry.buffer,entry.name,entry.caption);
-          ok++;recordResourceDownload(entry.item);recordRecent(userId,entry.item);
-        }catch(e){fail++;console.error("HISTORY SEND:",String(e?.message||e),"message=",entry.item.messageId);}
-        i++;
-      }
-      await sleep(150);
-    }
-    if(ok>0){recordStat(userId,"download",ok);if(!member&&!isAdmin(userId))consumeNonMemberQuota(userId,videoSent);else saveDb();}
+    const album=await sendResourceAlbum(token,chatId,items);
+    const ok=Number(album?.sent||0),fail=Math.max(Number(album?.failed||0),items.length-ok);
+    if(ok>0) {
+      recordStat(userId,"download",ok);
+      for(const item of items.slice(0,ok)){recordResourceDownload(item);recordRecent(userId,item);}
+      if(!member&&!isAdmin(userId)) consumeVideoQuota(userId,items.slice(0,ok));
+      else saveDb();
+    } else saveDb();
     const mode=options.mode==="random"?"random":"latest";
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
@@ -5270,7 +5217,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const summary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"");
     await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total));
     return;
-  }catch(e){
+  } catch(e) {
     console.error("HISTORY DELIVERY:",e);
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\\n\\n原因："+escapeHtml(e.message||e),childMenu());
   }
