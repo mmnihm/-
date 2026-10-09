@@ -3688,8 +3688,10 @@ function decrypt(value) {
 }
 
 async function allowed(token, userId) {
+  // 没有绑定指定会员群时，不能把所有用户都当成会员，否则会绕过每日视频额度。
+  if (isAdmin(userId)) return true;
   const g = group();
-  if (!g) return true;
+  if (!g) return false;
   try {
     const m = await tg(token, "getChatMember", {chat_id:g.chatId, user_id:userId});
     return ["creator","administrator","member"].includes(m.status) || (m.status === "restricted" && m.is_member === true);
@@ -6894,7 +6896,7 @@ async function childMessage(child,msg,token) {
     if(handled) return;
   }
 
-  if(t==="📂 资源目录") {
+  if(t==="📂 资源目录" || t==="📂资源目录") {
     if(!db.directories.length) return sendHtml(token,uid,"<b>📂 暂无资源目录</b>\n\n管理员创建目录后，所有机器人会自动同步看到。",childMenu());
     return sendHtml(token,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
   }
