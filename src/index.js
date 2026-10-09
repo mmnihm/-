@@ -5258,30 +5258,13 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   let lastError="";
 
   let albumReplyId=0;
-  if(options.mode==="random" || options.mode==="latest") {
-    const album=await sendResourceAlbum(sourceToken,chatId,valid);
-    ok=Number(album?.sent||0);
-    albumReplyId=Number(album?.lastMessageId||0);
-    fail=Math.max(0,valid.length-ok);
-  } else for(const item of valid) {
-    try {
-      await sendIndexedResource(sourceToken,chatId,item);
-      ok++;
-      recordResourceDownload(item);
-      recordRecent(userId,item);
-    } catch(e) {
-      fail++;
-      lastError=String(e?.message||e);
-      console.error("DELIVER ITEM FAILED:",lastError,"chat=",item.chatId,"message=",item.messageId);
-
-      const permanent=isPermanentResourceError(e) ||
-        (/^Bad Request(?::|$)/i.test(lastError) && /message|file|copy|forward/i.test(lastError));
-      if(permanent) {
-        removeInvalidResource(item,lastError);
-      }
-    }
-    // 给 Telegram 留一点间隔，避免连续发送触发限流。
-    await sleep(100);
+  const album=await sendResourceAlbum(sourceToken,chatId,valid);
+  ok=Number(album?.sent||0);
+  albumReplyId=Number(album?.lastMessageId||0);
+  fail=Math.max(Number(album?.failed||0),valid.length-ok);
+  for(const item of valid.slice(0,ok)) {
+    recordResourceDownload(item);
+    recordRecent(userId,item);
   }
 
   if(ok>0) {
