@@ -5365,6 +5365,14 @@ const states=new Map();
 // 会话/路由写入 db.settings，重启后仍可继续处理已经建立的会话。
 const supportSessions = new Map();
 const supportRoutes = new Map();
+const supportTokens = new Map();
+const SUPPORT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+function supportRememberToken(token) {
+  const fingerprint = tokenFingerprint(token);
+  if (fingerprint && token) supportTokens.set(fingerprint, token);
+}
+supportRememberToken(TOKEN);
 
 function supportSessionStore() {
   if(!db.settings || typeof db.settings!=="object") db.settings={};
@@ -5379,6 +5387,7 @@ function supportRouteKey(token, adminChatId, messageId) {
   return tokenFingerprint(token)+":"+String(adminChatId)+":"+String(messageId);
 }
 function supportOpenSession(token, uid) {
+  supportRememberToken(token);
   const key=supportSessionKey(token,uid);
   supportSessionStore().supportSessions[key]={userId:Number(uid),tokenFingerprint:tokenFingerprint(token),updatedAt:Date.now(),status:"open"};
   supportSessions.set(key,{userId:Number(uid),tokenFingerprint:tokenFingerprint(token),updatedAt:Date.now(),status:"open"});
@@ -5396,6 +5405,7 @@ function supportCloseSession(token, uid) {
   saveDb();
 }
 function supportIsOpen(token,uid) {
+  supportRememberToken(token);
   const key=supportSessionKey(token,uid);
   const row=supportSessionStore().supportSessions[key];
   return Boolean(row && row.status==="open");
@@ -5425,7 +5435,47 @@ function supportActiveSessions() {
   const store=supportSessionStore().supportSessions;
   return Object.values(store).filter(x=>x&&x.status==="open").sort((a,b)=>Number(b.updatedAt||0)-Number(a.updatedAt||0));
 }
+
+let supportExpiryRunning = false;
+setInterval(async () => {
+  if (supportExpiryRunning) return;
+  supportExpiryRunning = true;
+  try {
+    const now = Date.now();
+    const expired = supportActiveSessions().filter(row =>
+      now - Number(row.updatedAt || 0) >= SUPPORT_IDLE_TIMEOUT_MS
+    );
+    for (const row of expired) {
+      const token = supportTokens.get(String(row.tokenFingerprint || ""));
+      if (!token) continue;
+      const uid = Number(row.userId);
+      if (!Number.isFinite(uid)) continue;
+      supportCloseSession(token, uid);
+      try {
+        await sendHtml(token, uid,
+          "<b>⏰ 客服会话已自动结束</b>\\n\\n连续 30 分钟没有新消息，本次会话已结束。\\n如需帮助，请重新点击「💬 联系客服」。",
+          userMenu());
+      } catch (e) {
+        console.warn("⚠️ 客服超时通知用户失败:", String(e?.message || e));
+      }
+      const admins = [...ADMIN_IDS].map(Number).filter(Number.isFinite);
+      for (const adminId of admins) {
+        try {
+          await sendHtml(token, adminId,
+            "⏰ 用户 <code>" + escapeHtml(String(uid)) + "</code> 的客服会话因连续 30 分钟无消息已自动结束。");
+        } catch (e) {
+          console.warn("⚠️ 客服超时通知管理员失败:", String(e?.message || e));
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("⚠️ 客服会话超时检查失败:", String(e?.message || e));
+  } finally {
+    supportExpiryRunning = false;
+  }
+}, 60 * 1000).unref?.();
 async function supportSendToAdmins(token,msg) {
+  supportRememberToken(token);
   const uid=msg.from?.id;
   const admins=[...ADMIN_IDS].map(Number).filter(Number.isFinite);
   if(!admins.length) return false;
@@ -5433,8 +5483,9 @@ async function supportSendToAdmins(token,msg) {
   const username=msg.from?.username ? "@"+msg.from.username : "无用户名";
   const header=await tg(token,"sendMessage",{
     chat_id:admins[0],
-    text:"<b>💬 客服消息</b>\\n━━━━━━━━━━━━━━\\n👤 <b>"+escapeHtml(displayName)+"</b>  ·  "+escapeHtml(username)+"\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n━━━━━━━━━━━━━━\\n↩️ <i>请直接回复下方的用户消息</i>",
-    parse_mode:"HTML"
+    text:"<b>💬 客服消息</b>\\n━━━━━━━━━━━━━━\\n👤 <b>"+escapeHtml(displayName)+"</b>  ·  "+escapeHtml(username)+"\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n━━━━━━━━━━━━━━\\n↩️ <i>请直接回复下方的用户消息，或点击按钮结束会话</i>",
+    parse_mode:"HTML",
+    reply_markup:{inline_keyboard:[[{text:"🔚 结束该客服会话",callback_data:"support:admin_end:"+String(uid)}]]}
   });
   for(const adminId of admins) {
     let targetHeader=header;
@@ -5442,8 +5493,9 @@ async function supportSendToAdmins(token,msg) {
       try {
         targetHeader=await tg(token,"sendMessage",{
           chat_id:adminId,
-          text:"<b>💬 客服消息</b>\\n━━━━━━━━━━━━━━\\n👤 <b>"+escapeHtml(displayName)+"</b>  ·  "+escapeHtml(username)+"\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n━━━━━━━━━━━━━━\\n↩️ <i>请直接回复下方的用户消息</i>",
-          parse_mode:"HTML"
+          text:"<b>💬 客服消息</b>\\n━━━━━━━━━━━━━━\\n👤 <b>"+escapeHtml(displayName)+"</b>  ·  "+escapeHtml(username)+"\\n🆔 <code>"+escapeHtml(String(uid))+"</code>\\n━━━━━━━━━━━━━━\\n↩️ <i>请直接回复下方的用户消息，或点击按钮结束会话</i>",
+          parse_mode:"HTML",
+          reply_markup:{inline_keyboard:[[{text:"🔚 结束该客服会话",callback_data:"support:admin_end:"+String(uid)}]]}
         });
       } catch(e) {
         console.warn("⚠️ 客服管理员通知失败:",String(e?.message||e));
@@ -5465,9 +5517,14 @@ async function supportSendToAdmins(token,msg) {
   return true;
 }
 async function supportHandleAdminReply(token,msg) {
+  supportRememberToken(token);
   if(!isAdmin(msg.from?.id) || !msg.reply_to_message?.message_id) return false;
   const route=supportFindRoute(token,msg.chat?.id,msg.reply_to_message.message_id);
   if(!route) return false;
+  if(!supportIsOpen(token,route.userId)) {
+    await sendHtml(token,msg.chat.id,"⚠️ 这个客服会话已经结束，消息没有转发给用户。");
+    return true;
+  }
   if((msg.text||"").trim()==="/结束客服") {
     supportCloseSession(token,route.userId);
     await sendHtml(token,route.userId,"<b>💬 客服会话已结束</b>\\n\\n如需帮助，可以再次点击「💬 联系客服」。",userMenu());
@@ -5486,6 +5543,7 @@ async function supportHandleAdminReply(token,msg) {
   }
 }
 async function supportHandleUserMessage(token,msg) {
+  supportRememberToken(token);
   const uid=msg.from?.id;
   if(!uid || !supportIsOpen(token,uid)) return false;
   const t=String(msg.text||"").trim();
@@ -7351,7 +7409,35 @@ async function handleDirectoryCallback(token, q, child=false) {
       text:"<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n👋 你已进入客服会话\\n\\n📨 直接发送问题、文字、图片、视频或文件即可。\\n💬 客服回复后会自动发送给你。\\n\\n📌 需要结束时，点击下方「❌ 结束客服」。",
       parse_mode:"HTML",reply_markup:supportUserKeyboard()});
   }
+  if(data==="support:admin_end" || data.startsWith("support:admin_end:")) {
+    if(!isAdmin(uid)) {
+      await answer("无权操作");
+      return;
+    }
+    const targetUserId = Number(data.startsWith("support:admin_end:") ? data.slice("support:admin_end:".length) : "");
+    if(!Number.isFinite(targetUserId) || targetUserId <= 0) {
+      await answer("用户信息无效");
+      return;
+    }
+    if(!supportIsOpen(token,targetUserId)) {
+      await answer("该会话已经结束");
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,
+        text:"<b>💬 客服会话已结束</b>\\n\\n该用户的会话已结束或超时。",
+        parse_mode:"HTML"});
+    }
+    supportCloseSession(token,targetUserId);
+    try {
+      await sendHtml(token,targetUserId,"<b>💬 客服会话已结束</b>\\n\\n客服已结束本次会话。如需帮助，可以再次点击「💬 联系客服」。",userMenu());
+    } catch(e) {
+      console.warn("⚠️ 管理员结束客服后通知用户失败:",String(e?.message||e));
+    }
+    await answer("已结束客服会话");
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,
+      text:"<b>💬 客服会话已结束</b>\\n━━━━━━━━━━━━━━\\n用户 <code>"+escapeHtml(String(targetUserId))+"</code> 的会话已由管理员结束。",
+      parse_mode:"HTML"});
+  }
   if(data==="support:end") {
+    supportRememberToken(token);
     supportCloseSession(token,uid);
     return safeEdit(token,{chat_id:chatId,message_id:messageId,
       text:"<b>💬 客服会话已结束</b>\\n━━━━━━━━━━━━━━\\n\\n📭 本次客服会话已结束。\\n\\n💬 如需帮助，可再次点击「💬 联系客服」。",
