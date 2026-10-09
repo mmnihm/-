@@ -8201,23 +8201,41 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
-        text:"📁 <b>"+safe+"</b>\n\n📭 这个文件夹目前没有可获取的资源。",
+        text:"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",
         parse_mode:"HTML",
         reply_markup:directoryInlineKeyboard()
       });
     }
-    await answer("正在发送相册");
     const member=await allowed(TOKEN,uid);
-    const guest=withoutVideosForGuest(all.slice(0,10), member, uid);
-    if(!guest.items.length) return guestVideoNotice(token, chatId);
+    const guest=withoutVideosForGuest(all.slice(0,10),member,uid);
+    if(!guest.items.length) return guestVideoNotice(token,chatId);
     const first=guest.items;
-    const album=await sendResourceAlbum(token,chatId,first);
-    const sent=Number(album?.sent||0);
-    const next=first.length;
-    return sendHtml(token,chatId,
-      "📁 <b>"+safe+"</b>"+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length,
-      {reply_markup:folderProgressKeyboard(d.id,all.length,next),...(album?.lastMessageId?{reply_to_message_id:album.lastMessageId}:{})}
-    );
+    // 先在聊天里显示进度，避免媒体下载/相册整理期间用户误以为按钮没反应。
+    let progressMessage;
+    try {
+      progressMessage=await tg(token,"sendMessage",{
+        chat_id:chatId,
+        text:"⏳ 正在整理本组照片和视频，请稍候……"
+      });
+      const album=await sendResourceAlbum(token,chatId,first);
+      const sent=Number(album?.sent||0);
+      const next=first.length;
+      const summary="📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个";
+      return tg(token,"editMessageText",{
+        chat_id:chatId,
+        message_id:progressMessage?.message_id,
+        text:summary,
+        reply_markup:folderProgressKeyboard(d.id,all.length,next),
+        ...(album?.lastMessageId?{reply_to_message_id:album.lastMessageId}:{})
+      });
+    } catch(e) {
+      console.error("DIRECTORY ALBUM SEND FAILED:",String(e?.message||e));
+      const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
+      if(progressMessage?.message_id) {
+        return tg(token,"editMessageText",{chat_id:chatId,message_id:progressMessage.message_id,text:errText,parse_mode:"HTML",reply_markup:folderProgressKeyboard(d.id,all.length,0)});
+      }
+      return sendHtml(token,chatId,errText, {reply_markup:folderProgressKeyboard(d.id,all.length,0)});
+    }
   }
 
   if(offset>=all.length) return;
