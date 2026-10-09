@@ -5286,7 +5286,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
   const extraMessage = postResourceMessage();
   const finalSummary = extraMessage ? summary+"\n\n"+extraMessage : summary;
-  await sendHtml(token,chatId,finalSummary,{...batchNavigation(options.mode,options.offset||0,options.total||valid.length,ok),...(albumReplyId?{reply_to_message_id:albumReplyId}:{})});
+  await sendHtml(token,chatId,finalSummary,{...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length,ok):navigation),...(albumReplyId?{reply_to_message_id:albumReplyId}:{})});
   return;
 }
 const states=new Map();
