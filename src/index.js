@@ -5325,8 +5325,7 @@ function randomVideos(userId,limit=10){
   return arr.slice(0,limit);
 }
 function random10(userId) {
-  // 随机获取每次最多抽取 10 条原始资源记录；不在这里扩展相册。
-  // 允许相册中的照片/视频单个发送，避免一次点击扩展成几十条。
+  // 每次随机获取最多 10 条资源，但以原始相册为最小单位抽取，避免拆散照片/视频相册。
   const arr=[...db.resources].filter(x =>
     x &&
     x.chatId !== undefined &&
@@ -5344,25 +5343,59 @@ function random10(userId) {
   let history=Array.isArray(db.settings.randomHistory[key])
     ? db.settings.randomHistory[key].filter(id=>validIds.has(String(id)))
     : [];
+  const historySet=new Set(history);
 
-  let pool=arr.filter(x=>!history.includes(resourceKey(x)));
-  if(!pool.length) {
-    history=[];
-    pool=[...arr];
+  // 普通资源各自为一组；同一仓库中同一 mediaGroupId 的连续消息作为一个相册组。
+  const units=[],albumMap=new Map();
+  for(const item of arr) {
+    const groupId=String(item.mediaGroupId||"");
+    if(!groupId) {
+      units.push([item]);
+      continue;
+    }
+    const groupKey=String(item.chatId)+":"+groupId;
+    if(!albumMap.has(groupKey)) {
+      const members=arr
+        .filter(x=>String(x.chatId)===String(item.chatId)&&String(x.mediaGroupId||"")===groupId)
+        .sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+      albumMap.set(groupKey,members);
+      units.push(members);
+    }
   }
 
-  for(let i=pool.length-1;i>0;i--){
+  let pool=units.filter(unit=>unit.length && unit.some(item=>!historySet.has(resourceKey(item))));
+  if(!pool.length) {
+    history=[];
+    pool=[...units];
+  }
+  for(let i=pool.length-1;i>0;i--) {
     const j=Math.floor(Math.random()*(i+1));
     [pool[i],pool[j]]=[pool[j],pool[i]];
   }
 
-  const batch=pool.slice(0,10);
-  history.push(...batch.map(resourceKey));
-  db.settings.randomHistory[key]=history.slice(-arr.length);
+  const batch=[],pickedKeys=[];
+  for(const unit of pool) {
+    if(!unit.length || unit.length>10) continue;
+    // 相册不拆组；如果当前剩余名额不足，跳过该组，继续寻找能完整放入的资源组。
+    if(batch.length+unit.length>10) continue;
+    batch.push(...unit);
+    pickedKeys.push(...unit.map(resourceKey));
+    if(batch.length>=10) break;
+  }
+  // 资源总量少于 10 或只有一个大相册时，允许返回一个完整相册，绝不切片。
+  if(!batch.length && pool.length) {
+    const first=pool.find(unit=>unit.length>0 && unit.length<=10);
+    if(first) {
+      batch.push(...first);
+      pickedKeys.push(...first.map(resourceKey));
+    }
+  }
+  if(!batch.length) return [];
+  history.push(...pickedKeys);
+  db.settings.randomHistory[key]=[...new Set(history)].slice(-arr.length);
   saveDb();
   return batch;
 }
-
 function isPermanentResourceError(error) {
   const msg=String(error?.message||error||"");
   return /message to copy not found|message not found|message_id_invalid|MESSAGE_ID_INVALID|file.?id.*(?:invalid|wrong|not found)|wrong file(?: identifier)?|message .*?(?:not found|does not exist)|(?:copy|forward).*message.*(?:failed|not found)|message can.?t be copied/i.test(msg);
@@ -5462,7 +5495,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
   if(!items.length) return guestVideoNotice(token,chatId);
   let quotaSettled=false;
   try {
-    const album=await sendResourceAlbum(token,chatId,items,{singleEach:options.mode==="random"});
+    const album=await sendResourceAlbum(token,chatId,items,{singleEach:false});
     const ok=Number(album?.sent||0),fail=Math.max(Number(album?.failed||0),items.length-ok);
     if(ok>0) {
       recordStat(userId,"download",ok);
@@ -5539,7 +5572,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   let albumReplyId=0;
   let album;
   try {
-    album=await sendResourceAlbum(sourceToken,chatId,valid,{singleEach:options.mode==="random"});
+    album=await sendResourceAlbum(sourceToken,chatId,valid,{singleEach:false});
   } catch(e) {
     if(!member&&!isAdmin(userId)) releaseNonMemberQuotaReservation(userId,valid.length);
     throw e;
