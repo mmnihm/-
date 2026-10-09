@@ -7088,11 +7088,12 @@ async function handleDirectoryCallback(token, q, child=false) {
       try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
       return sendHtml(token,chatId,directoryText(),{reply_markup:directoryInlineKeyboard()});
     }
-    if(action==="random") {
-      await answer("正在随机获取");
-      return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
-    }
-    if(action==="latest") {
+    if(action==="random" || action==="latest") {
+      try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+      if(action==="random") {
+        await answer("正在随机获取");
+        return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
+      }
       await answer("正在获取最新资源");
       return deliver(token,uid,uid,db.resources.slice(0,10),token,{mode:"latest",offset:0,total:db.resources.length});
     }
@@ -8022,8 +8023,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     });
   }
 
-  const directoryAction=data==="dirs"||data.startsWith("dirsp:")||data.startsWith("dir:")||data.startsWith("get:");
-  await answer(directoryAction?"正在打开/发送目录资源…":"");
+  const directoryAction=data==="dirs"||data==="user:dirs"||data.startsWith("dirsp:")||data.startsWith("dir:")||data.startsWith("get:");
+  if(directoryAction) await answer("正在打开/发送目录资源…");
 
   if(data==="adm:shared_refresh"){
     await refreshSharedData(true);
