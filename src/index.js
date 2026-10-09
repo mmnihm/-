@@ -5716,6 +5716,7 @@ async function mainMessage(msg) {
     saveDb(); logAdmin(uid,"批量生成兑换码",(s.rewardType==="membership_days"?"会员天数 ":"额外视频额度 ")+s.rewardAmount+"，生成 "+count+" 个");
     states.delete(key);
     if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)];
+    saveDb();
     const text="<b>✅ 兑换码生成完成</b>\n━━━━━━━━━━━━━━\n奖励："+(s.rewardType==="membership_days"?"会员 "+s.rewardAmount+" 天":"额外视频 "+s.rewardAmount+" 次")+"\n生成数量："+count+"\n\n"+codes.map((code,i)=>(i+1)+". <code>"+code+"</code>").join("\n");
     return sendHtml(TOKEN,uid,text,{reply_markup:redeemAdminInline()});
   }
