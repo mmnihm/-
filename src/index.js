@@ -3684,6 +3684,15 @@ async function notifyRedeemAdmins(token,uid,code,row,userInfo,usedAt) {
   const failed=results.filter(r=>r.status==="rejected"||r.value==null).length;
   if(failed) console.warn("兑换码通知发送失败:",failed+"/"+admins.length);
 }
+function extractIssuedRedeemCode(rawText) {
+  const store=redemptionStore();
+  const normalize=value=>String(value??"").normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]/g,"");
+  const text=normalize(rawText);
+  if(!text) return "";
+  // 只识别机器人已生成的兑换码；允许用户发送整段文字，只要其中包含兑换码即可。
+  const codes=Object.keys(store.redemptionCodes||{}).filter(code=>normalize(code)).sort((a,b)=>normalize(b).length-normalize(a).length);
+  return codes.find(code=>text.includes(normalize(code)))||"";
+}
 function redeemCode(uid,rawCode,userInfo=null,botToken=TOKEN) {
   const store=redemptionStore();
   // 兑换码输入容错：忽略大小写、空格、连字符及常见分隔符，并兼容全角字符。
@@ -5941,16 +5950,20 @@ async function mainMessage(msg) {
 
   if(s?.step==="redeem_code_input" && !admin) {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消兑换。",userMenu()); }
-    const result=redeemCode(uid,rawText,msg.from,TOKEN);
+    const matchedCode=extractIssuedRedeemCode(rawText);
+    if(!matchedCode) return sendHtml(TOKEN,uid,"<b>🎟️ 没有识别到兑换码</b>\n\n请直接发送机器人发放的兑换码，或发送包含该兑换码的整段文字。\n发送 /cancel 可取消。",userMenu());
+    const result=redeemCode(uid,matchedCode,msg.from,TOKEN);
     states.delete(key);
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
   }
   if(rawText.toLowerCase().startsWith("/redeem")) {
-    const code=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
-    if(!code) {
+    const rawCodeText=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
+    if(!rawCodeText) {
       states.set(key,{step:"redeem_code_input"});
-      return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码（大小写、空格和连字符不同也可以）。\n发送 /cancel 可取消。",userMenu());
+      return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送机器人发放的兑换码，或发送包含该兑换码的整段文字。\n发送 /cancel 可取消。",userMenu());
     }
+    const code=extractIssuedRedeemCode(rawCodeText);
+    if(!code) return sendHtml(TOKEN,uid,"<b>❌ 没有识别到兑换码</b>\n\n请确认文字中包含机器人发放的兑换码。",userMenu());
     const result=redeemCode(uid,code,msg.from,TOKEN);
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
   }
@@ -7247,13 +7260,17 @@ async function childMessage(child,msg,token) {
   const rawText=String(t||"").trim();
   if(s?.step==="redeem_code_input") {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(token,uid,"已取消兑换。",childMenu()); }
-    const result=redeemCode(uid,rawText,msg.from,token);
+    const matchedCode=extractIssuedRedeemCode(rawText);
+    if(!matchedCode) return sendHtml(token,uid,"<b>🎟️ 没有识别到兑换码</b>\n\n请直接发送机器人发放的兑换码，或发送包含该兑换码的整段文字。\n发送 /cancel 可取消。",childMenu());
+    const result=redeemCode(uid,matchedCode,msg.from,token);
     states.delete(key);
     return sendHtml(token,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),childMenu());
   }
   if(rawText.toLowerCase().startsWith("/redeem")) {
-    const code=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
-    if(!code) { states.set(key,{step:"redeem_code_input"}); return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码（大小写、空格和连字符不同也可以）。\n发送 /cancel 可取消。",childMenu()); }
+    const rawCodeText=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
+    if(!rawCodeText) { states.set(key,{step:"redeem_code_input"}); return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送机器人发放的兑换码，或发送包含该兑换码的整段文字。\n发送 /cancel 可取消。",childMenu()); }
+    const code=extractIssuedRedeemCode(rawCodeText);
+    if(!code) return sendHtml(token,uid,"<b>❌ 没有识别到兑换码</b>\n\n请确认文字中包含机器人发放的兑换码。",childMenu());
     const result=redeemCode(uid,code,msg.from,token);
     return sendHtml(token,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),childMenu());
   }
