@@ -4724,7 +4724,8 @@ function directoryInlineKeyboard(page=0) {
   }
   const all=sortedDirectories(db.directories.filter(d=>(counts.get(String(d.id))||0)>0));
   const pageSize=10;
-  const currentPage=Math.max(0,Number(page)||0);
+  const maxPage=Math.max(0,Math.ceil(all.length/pageSize)-1);
+  const currentPage=Math.min(Math.max(0,Number(page)||0),maxPage);
   const start=currentPage*pageSize;
   const current=all.slice(start,start+pageSize);
   const rows=[];
@@ -4970,7 +4971,7 @@ function contentProtectionText() {
 function expandOriginalAlbumItems(items) {
   const selected=Array.isArray(items)?items:[];
   const out=[],seen=new Set();
-  // 单次目录/随机/最新获取最多返回 10 条资源；相册按完整组加入，
+  // 单次目录/随机/最新获取结果较多时可使用分页资源；相册按完整组加入，
   // 不允许一个脏 mediaGroupId 把一次点击扩成几十条。
   const MAX_ITEMS=10;
   for(const item of selected) {
