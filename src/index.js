@@ -1478,19 +1478,50 @@ function normalizeText(text) {
     .replace(/\\n/g, "\n")
     .replace(/\/n/g, "\n")
     .replace(/\\r/g, "")
+    // Remove invisible formatting characters that can create visually blank Telegram messages.
+    // Keep U+200D (ZWJ) and variation selectors so emoji and joined glyphs remain intact.
+    .replace(/[\u00AD\u034F\u061C\u180E\u200B\u200E\u200F\u202A-\u202E\u2060\u2063\u2066-\u2069\uFEFF]/g, "")
     .replace(/\n{2,}/g, "\n")
     .trim();
+}
+
+function hasVisibleMessageText(text, html = false) {
+  let value = normalizeText(text);
+  if (html) {
+    value = value
+      .replace(/<[^>]*>/g, "")
+      .replace(/&(?:nbsp|zwnj|zwj|lrm|rlm);/gi, "")
+      .replace(/&#(?:0*160|0*8203|0*8204|0*8205|0*8206|0*8207);/gi, "")
+      .replace(/&#x(?:0*a0|0*200b|0*200c|0*200d|0*200e|0*200f);/gi, "");
+  }
+  return /[^\s]/u.test(value);
+}
+
+function warnSkippedEmptyMessage(kind, chat_id) {
+  console.warn("[EMPTY_MESSAGE_BLOCKED]", kind, "chat_id=", String(chat_id ?? ""));
 }
 
 function prettyText(text) {
   return normalizeText(text);
 }
 
-const send = (token, chat_id, text, extra = {}) =>
-  tg(token, "sendMessage", {chat_id, text:prettyText(text), ...extra});
+const send = (token, chat_id, text, extra = {}) => {
+  const cleanText = prettyText(text);
+  if (!hasVisibleMessageText(cleanText)) {
+    warnSkippedEmptyMessage("text", chat_id);
+    return Promise.resolve({ok:false, skipped:true, description:"Empty or invisible message blocked"});
+  }
+  return tg(token, "sendMessage", {chat_id, text:cleanText, ...extra});
+};
 
-const sendHtml = (token, chat_id, text, extra = {}) =>
-  tg(token, "sendMessage", {chat_id, text:normalizeText(text), parse_mode:"HTML", ...extra});
+const sendHtml = (token, chat_id, text, extra = {}) => {
+  const cleanText = normalizeText(text);
+  if (!hasVisibleMessageText(cleanText, true)) {
+    warnSkippedEmptyMessage("html", chat_id);
+    return Promise.resolve({ok:false, skipped:true, description:"Empty or invisible message blocked"});
+  }
+  return tg(token, "sendMessage", {chat_id, text:cleanText, parse_mode:"HTML", ...extra});
+};
 
 function emptyDb() {
   return {offset:0, users:[], children:[], resources:[], directories:[], settings:{requiredGroup:null, repository:null, historyAuth:null, historyScan:{status:"idle",scanned:0,indexed:0,startedAt:null,finishedAt:null,error:""},broadcastPin:false,admins:[],logs:[],stats:{downloads:0,searches:0,uploads:0,uploadedResources:0,userActions:{}},userFavorites:{},userRecent:{},sharedData:{version:1,lastChangedAt:Date.now(),lastChangedBy:"system"},nonMemberMessage:"🔐 <b>请先加入指定会员群</b>\n\n加入后即可继续使用资源功能。",postResourceMessage:"✨ <b>更多资源</b>\n\n欢迎继续浏览资源库。",nonMemberDailyLimit:3,nonMemberDailyUsage:{},contentProtection:true,autoDeleteMinutes:1440,autoDeleteQueue:[],resourceSources:[],repositoryMigration:{status:"idle",taskKey:"",ownerId:"",source:null,target:null,sourceId:null,targetId:null,sourceTitle:"",targetTitle:"",scanned:0,queued:0,migrated:0,skipped:0,failed:0,current:0,total:0,startedAt:null,finishedAt:null,error:"",lastError:"",folderMap:{},completedKeys:[],failedKeys:[],progressMessageId:null,autoSync:false},repositoryAutoSync:{enabled:false,status:"idle",ownerId:"",sourceId:"",targetId:"",sourceTitle:"",targetTitle:"",lastMessageId:0,queue:[],copied:0,failed:0,lastError:"",updatedAt:0,batchSize:40,perMessageDelay:0,batchDelay:0}}};
