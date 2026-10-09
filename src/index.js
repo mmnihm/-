@@ -3713,7 +3713,7 @@ function redeemCode(uid,rawCode,userInfo=null,botToken=TOKEN) {
   } else return {ok:false,message:"兑换码奖励类型无效，请联系管理员。"};
   row.usedBy=String(uid); row.usedAt=now; saveDb();
   // 兑换成功后异步通知所有配置管理员；通知失败不影响用户兑换结果。
-  void notifyRedeemAdmins(botToken,uid,code,row,userInfo,now).catch(err=>{
+  void notifyRedeemAdmins(TOKEN||botToken,uid,code,row,userInfo,now).catch(err=>{
     console.error("兑换码管理员通知失败:",String(err?.message||err));
   });
   let defaultMessage="";
