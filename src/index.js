@@ -4975,7 +4975,7 @@ async function sendResourceAlbum(token, chatId, items) {
     // 优先把本批连续的照片/视频合成相册，不受原消息是否带 mediaGroupId 限制。
     if(canAlbum(item)) {
       const group=[]; let j=i;
-      while(j<valid.length&&group.length<10&&canAlbum(ordered[j])) { group.push(ordered[j]); j++; }
+      while(j<ordered.length&&group.length<10&&canAlbum(ordered[j])) { group.push(ordered[j]); j++; }
       if(group.length>=2) {
         const sendGroup=async(sendToken)=>tg(sendToken,"sendMediaGroup",{
           chat_id:chatId,
@@ -5005,7 +5005,7 @@ async function sendResourceAlbum(token, chatId, items) {
     const groupId=String(item.mediaGroupId||"");
     if(groupId) {
       const group=[]; let j=i;
-      while(j<valid.length&&String(ordered[j]?.chatId||"")===String(item.chatId||"")&&String(ordered[j]?.mediaGroupId||"")===groupId) { group.push(ordered[j]); j++; }
+      while(j<ordered.length&&String(ordered[j]?.chatId||"")===String(item.chatId||"")&&String(ordered[j]?.mediaGroupId||"")===groupId) { group.push(ordered[j]); j++; }
       group.sort((x,y)=>Number(x.messageId)-Number(y.messageId));
       if(group.length>=2) {
         try {
