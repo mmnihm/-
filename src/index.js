@@ -4984,7 +4984,7 @@ function expandOriginalAlbumItems(items) {
   }
   return out.slice(0,MAX_ITEMS);
 }
-async function sendResourceAlbum(token, chatId, items) {
+async function sendResourceAlbum(token, chatId, items, options={}) {
   // 原样复制仓库消息：只把仓库里本来属于同一相册的连续消息一起复制，
   // 不按文件类型重新排序，不把独立照片/视频拼成新相册。
   const valid=(Array.isArray(items)?items:[])
@@ -5001,7 +5001,7 @@ async function sendResourceAlbum(token, chatId, items) {
     const groupId=String(item.mediaGroupId||"");
     const group=[];
     let j=i;
-    if(groupId) {
+    if(groupId && options.singleEach!==true) {
       while(j<valid.length &&
         String(valid[j].chatId)===String(item.chatId) &&
         String(valid[j].mediaGroupId||"")===groupId &&
@@ -5269,7 +5269,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
   items=guest.items;
   if(!items.length) return guestVideoNotice(token,chatId);
   try {
-    const album=await sendResourceAlbum(token,chatId,items);
+    const album=await sendResourceAlbum(token,chatId,items,{singleEach:options.mode==="random"});
     const ok=Number(album?.sent||0),fail=Math.max(Number(album?.failed||0),items.length-ok);
     if(ok>0) {
       recordStat(userId,"download",ok);
@@ -5339,7 +5339,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   let lastError="";
 
   let albumReplyId=0;
-  const album=await sendResourceAlbum(sourceToken,chatId,valid);
+  const album=await sendResourceAlbum(sourceToken,chatId,valid,{singleEach:options.mode==="random"});
   ok=Number(album?.sent||0);
   albumReplyId=Number(album?.lastMessageId||0);
   fail=Math.max(Number(album?.failed||0),valid.length-ok);
