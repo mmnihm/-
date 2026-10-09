@@ -7812,14 +7812,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       recordResourceDownload(item);
       recordRecent(uid,item);
       if(isVideoResource(item) && !member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
-      return safeEdit(token,{
-        chat_id:chatId,
-        message_id:messageId,
-        text:"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源"+(isVideoResource(item)&&!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":""),
-
-        parse_mode:"HTML",
-        reply_markup:resourceInlineKeyboard(s.results,page)
-      });
+      try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+      return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源"+(isVideoResource(item)&&!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":""),resourceInlineKeyboard(s.results,page));
     } catch(e) {
       return safeEdit(token,{
         chat_id:chatId,
