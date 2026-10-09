@@ -3732,11 +3732,13 @@ function redeemCode(uid,rawCode) {
     } else {
       const oldExpiry=premiumMembershipExpiry(uid), expiresAt=Math.max(now,oldExpiry)+amount*86400000;
       store.premiumMemberships[String(uid)]={expiresAt,updatedAt:now,sourceCode:code};
+      const renewalGroup=group(); if(renewalGroup?.chatId) tg(TOKEN,"unbanChatMember",{chat_id:renewalGroup.chatId,user_id:Number(uid),only_if_banned:true}).catch(e=>console.warn("⚠️ 会员续期后解除群限制失败，用户="+uid+"："+String(e?.message||e)));
       row.rewardAppliedAt=now; row.expiresAt=expiresAt; reward="已增加 "+amount+" 天会员";
       expiry=new Date(expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"});
     }
   } else if(row.type==="membership_permanent") {
     store.premiumMemberships[String(uid)]={permanent:true,updatedAt:now,sourceCode:code};
+    const permanentGroup=group(); if(permanentGroup?.chatId) tg(TOKEN,"unbanChatMember",{chat_id:permanentGroup.chatId,user_id:Number(uid),only_if_banned:true}).catch(e=>console.warn("⚠️ 永久会员开通后解除群限制失败，用户="+uid+"："+String(e?.message||e)));
     row.rewardAppliedAt=now; row.permanent=true; reward="已开通永久会员"; expiry="永久有效";
   } else if(row.type==="video_credits") {
     store.extraVideoQuota[String(uid)]=extraVideoQuotaRemaining(uid)+amount;
