@@ -8109,6 +8109,15 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
       const album=await sendResourceAlbum(token,chatId,first);
       const sent=Number(album?.sent||0);
+      if(sent>0) {
+        recordStat(uid,"download",sent);
+        for(const item of (Array.isArray(album?.sentItems)?album.sentItems:first.slice(0,sent))) {
+          recordResourceDownload(item);
+          recordRecent(uid,item);
+        }
+        if(!member&&!isAdmin(uid)) consumeVideoQuota(uid,Array.isArray(album?.sentItems)?album.sentItems:first.slice(0,sent));
+        else saveDb();
+      }
       // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
       const next=sent>0?selectedBatch.nextOffset:0;
       const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
