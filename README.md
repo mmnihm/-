@@ -26,7 +26,7 @@
 - DATA_FILE：数据文件路径，默认 /data/database.json；必须放在部署平台的持久化磁盘/目录中
 - DATA_BACKUP_FILE：可选，数据库自动备份文件路径，默认 DATA_FILE + .bak
 - 如果 DATA_FILE 目录不可写，程序不再使用 /tmp 临时目录，而是退回项目目录 ./data 并打印警告；这仍不能保证换服务器后数据保留
-- MAX_RESOURCES：最多保存多少条资源索引，默认 5000
+- MAX_RESOURCES：资源索引上限，默认 20000；达到上限前请做好 JSON 备份并评估磁盘/内存容量。
 
 ## 部署
 
@@ -45,6 +45,14 @@ npm start
 ```
 
 不要再使用 wrangler.toml 部署这个版本；当前项目是 Node.js 长轮询版本。
+
+## 数据主从关系（重要）
+
+- `DATA_FILE` 指向的 JSON 是机器人运行时的主数据源；目录、资源索引、用户状态和设置以 JSON 为准。
+- `database.json.bak` 和按小时生成的 JSON 快照用于本地恢复。建议定期把 JSON 与备份复制到另一台服务器或独立存储。
+- Google Sheets 仅作为外部备份/查看副本：机器人启动时只把 JSON 中的目录和资源写入表格，不会自动从 Google Sheets 导入或覆盖 JSON。表格连接失败不应阻止机器人启动和用户使用。
+- MySQL 仍保留为辅助持久化/兼容层；切换服务器前应先确认 JSON 文件及备份完整，不要只依赖外部表格或 MySQL。
+- 需要从 Google Sheets 手动恢复数据时，应先备份当前 JSON，再执行明确的人工恢复流程；不要把自动同步表格当作主库。
 
 ## 重要设置
 
