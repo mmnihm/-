@@ -4967,13 +4967,15 @@ async function sendResourceAlbum(token, chatId, items) {
   if(!valid.length) return {sent:0,lastMessageId:0,failed:0,sentItems:[]};
   let sent=0,lastMessageId=0,failed=0;
   const sentItems=[];
-  for(let i=0;i<valid.length;) {
-    const item=valid[i];
-    const canAlbum=x=>Boolean(x&&x.fileId&&["photo","video"].includes(String(x.fileType||"").toLowerCase()));
+  const canAlbum=x=>Boolean(x&&x.fileId&&["photo","video"].includes(String(x.fileType||"").toLowerCase()));
+  // 每批优先把照片/视频放在一起发送，避免随机结果里夹着文件后导致图片被拆散。
+  const ordered=[...valid.filter(canAlbum),...valid.filter(x=>!canAlbum(x))];
+  for(let i=0;i<ordered.length;) {
+    const item=ordered[i];
     // 优先把本批连续的照片/视频合成相册，不受原消息是否带 mediaGroupId 限制。
     if(canAlbum(item)) {
       const group=[]; let j=i;
-      while(j<valid.length&&group.length<10&&canAlbum(valid[j])) { group.push(valid[j]); j++; }
+      while(j<valid.length&&group.length<10&&canAlbum(ordered[j])) { group.push(ordered[j]); j++; }
       if(group.length>=2) {
         const sendGroup=async(sendToken)=>tg(sendToken,"sendMediaGroup",{
           chat_id:chatId,
@@ -5003,7 +5005,7 @@ async function sendResourceAlbum(token, chatId, items) {
     const groupId=String(item.mediaGroupId||"");
     if(groupId) {
       const group=[]; let j=i;
-      while(j<valid.length&&String(valid[j]?.chatId||"")===String(item.chatId||"")&&String(valid[j]?.mediaGroupId||"")===groupId) { group.push(valid[j]); j++; }
+      while(j<valid.length&&String(ordered[j]?.chatId||"")===String(item.chatId||"")&&String(ordered[j]?.mediaGroupId||"")===groupId) { group.push(ordered[j]); j++; }
       group.sort((x,y)=>Number(x.messageId)-Number(y.messageId));
       if(group.length>=2) {
         try {
