@@ -5313,7 +5313,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
     const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
     const summary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"")+inviteText;
-    await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total,ok));
+    await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total,items.length));
     return;
   } catch(e) {
     console.error("HISTORY DELIVERY:",e);
@@ -5399,7 +5399,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
   const extraMessage = postResourceMessage();
   const finalSummary = extraMessage ? summary+"\n\n"+extraMessage : summary;
-  await sendHtml(token,chatId,finalSummary,{...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length,ok):navigation),...(albumReplyId?{reply_to_message_id:albumReplyId}:{})});
+  await sendHtml(token,chatId,finalSummary,{...(options.mode?batchNavigation(options.mode,options.offset||0,options.total||valid.length,valid.length):navigation),...(albumReplyId?{reply_to_message_id:albumReplyId}:{})});
   return;
 }
 const states=new Map();
