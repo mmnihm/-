@@ -8120,10 +8120,6 @@ async function handleDirectoryCallback(token, q, child=false) {
   const safeDescription=String(d.description||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   if(data.startsWith("dir:")) {
-    if(!(await requireMemberAccess(token,chatId,uid,userMenu()))) {
-      void answer("请先加入指定会员群",true);
-      return;
-    }
     if(!all.length) {
       return safeEdit(token,{
         chat_id:chatId,
