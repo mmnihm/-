@@ -6493,7 +6493,7 @@ async function mainMessage(msg) {
     return sendHtml(TOKEN,uid,
       "<b>🔎 搜索资源</b>\\n\\n"+
       "请输入关键词，例如：作者名、标题或关键词。\\n\\n"+
-      "💡 支持模糊搜索，最多返回 10 条。\\n"+
+      "💡 支持模糊搜索，结果较多时可使用分页。\\n"+
       "↩️ 发送 <code>/cancel</code> 可退出搜索。",
       {reply_markup:{keyboard:[["❌ 取消搜索"],["🏠 开始"]],resize_keyboard:true,input_field_placeholder:"请输入搜索关键词"}}
     );
@@ -7354,7 +7354,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return safeEdit(token,{
         chat_id:chatId,
         message_id:messageId,
-        text:"<b>🔎 搜索资源</b>\\n\\n请输入关键词，例如：作者名、标题或关键词。\\n\\n💡 支持模糊搜索，最多返回 10 条。\\n↩️ 发送 <code>/cancel</code> 可退出搜索。",
+        text:"<b>🔎 搜索资源</b>\\n\\n请输入关键词，例如：作者名、标题或关键词。\\n\\n💡 支持模糊搜索，结果较多时可使用分页。\\n↩️ 发送 <code>/cancel</code> 可退出搜索。",
         parse_mode:"HTML",
         reply_markup:{inline_keyboard:[
           [{text:"❌ 取消搜索",callback_data:"src"}],
