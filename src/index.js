@@ -5608,6 +5608,18 @@ async function mainMessage(msg) {
   const key="m:"+uid;
   let s=states.get(key);
 
+  // 顶部/底部菜单必须优先于搜索、分页等旧状态；否则用户在搜索后点击目录会被当作搜索关键词。
+  if(!admin && (t==="📂 资源目录" || t==="📂资源目录")) {
+    states.delete(key);
+    console.log("📂 用户打开资源目录：用户="+uid+" 文件夹="+db.directories.length+" 资源="+db.resources.length);
+    try {
+      return await sendHtml(TOKEN,uid,directoryText(),{reply_markup:directoryInlineKeyboard()});
+    } catch(e) {
+      console.error("❌ 用户资源目录打开失败:",String(e?.telegramDescription||e?.message||e));
+      return sendHtml(TOKEN,uid,"<b>❌ 资源目录暂时无法打开</b>\\n\\n请稍后重试，或点击「🏠 开始」返回首页。",userMenu());
+    }
+  }
+
   // 搜索输入必须优先于会员检查、共享刷新和其他状态机处理。
   // 避免搜索页面已经打开，但用户发送关键词后被其他流程拦截而“没有反馈”。
   if((s?.step==="search" || s?.step==="search_results") && msg.chat?.type==="private" && !admin) {
@@ -8039,7 +8051,11 @@ async function handleDirectoryCallback(token, q, child=false) {
     resources: db.resources.length
   });
 
-  if(data==="noop" || data==="done") return;
+  if(data==="noop") {
+    await answer("当前没有可用的文件夹或资源",true);
+    return;
+  }
+  if(data==="done") return;
 
   if(data.startsWith("dirsp:")) {
     const page=Math.max(0,Number(data.slice(6))||0);
