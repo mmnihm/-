@@ -268,9 +268,12 @@ async function tg(token, method, body = {}) {
     if(typeof body.text==="string") body.text=prettyText(body.text);
     if(typeof body.caption==="string") body.caption=prettyText(body.caption);
   }
-  const maxAttempts = method === "getUpdates" ? 8 : 4;
+  // 按钮确认有严格时效：Telegram 的 callback 查询很快过期，
+  // 对它反复网络重试只会让用户一直看到转圈；其他 API 保持原有重试策略。
+  const isCallbackAck = method === "answerCallbackQuery";
+  const maxAttempts = method === "getUpdates" ? 8 : (isCallbackAck ? 1 : 4);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const timeoutMs = method === "getUpdates" ? 50000 : 20000;
+    const timeoutMs = method === "getUpdates" ? 50000 : (isCallbackAck ? 5000 : 20000);
     try {
       const r = await telegramHttpsRequest(token, method, body, timeoutMs);
       const j = r.json;
@@ -7171,7 +7174,21 @@ async function handleDirectoryCallback(token, q, child=false) {
     return;
   }
   callbackDedupe.set(callbackDedupeKey,callbackDedupeNow);
-  setTimeout(()=>callbackDedupe.delete(callbackDedupeKey),3000);
+  // 正常情况下 3 秒后释放；同时设硬上限，避免异常流量导致 Map 持续增长。
+  const callbackDedupeTimer=setTimeout(()=>callbackDedupe.delete(callbackDedupeKey),3000);
+  callbackDedupeTimer.unref?.();
+  if(callbackDedupe.size>5000) {
+    const cutoff=callbackDedupeNow-10000;
+    for(const [key,at] of callbackDedupe) {
+      if(at<cutoff) callbackDedupe.delete(key);
+      if(callbackDedupe.size<=4000) break;
+    }
+    while(callbackDedupe.size>5000) {
+      const firstKey=callbackDedupe.keys().next().value;
+      if(firstKey===undefined) break;
+      callbackDedupe.delete(firstKey);
+    }
+  }
 
   if(data==="adm:repo_unbind_confirm") {
     const current=repo();
