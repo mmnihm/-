@@ -2702,13 +2702,14 @@ async function processRepositoryAutoSyncQueue(){
 
       if(state.queue.length>=beforeQueueLength && state.queue.length){
         const stuckId=Number(state.queue[0]?.messageId||0);
-        state.queue.shift();
-        state.failed=Number(state.failed||0)+1;
-        state.lastError="";
-        state.status="running";
+        // 未确认队列已消费时，不得删除消息；暂停并保留断点，避免漏同步。
+        state.manualPaused=true;
+        state.status="paused";
+        state.lastError="队列未确认消费，已保留消息 "+String(state.sourceId||"")+"#"+stuckId;
         state.updatedAt=Date.now();
         saveDb();
-        console.warn("⏭️ AUTO SYNC 防止队列卡死，跳过未消费消息:",String(state.sourceId||"")+"#"+stuckId);
+        console.warn("⏸️ AUTO SYNC 队列未确认消费，暂停并保留消息:",String(state.sourceId||"")+"#"+stuckId);
+        break;
       }
 
       // 不人为等待；用户要求有多少发多少。Telegram 自身的 429 retry_after 仍由 tg() 自动处理。
