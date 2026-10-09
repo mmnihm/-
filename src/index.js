@@ -5021,22 +5021,18 @@ function search(q) {
 
 function withoutVideosForGuest(items, member, uid) {
   const expanded=expandOriginalAlbumItems(Array.isArray(items)?items:[]);
-  if(member || isAdmin(uid)) return {items:expanded,blocked:0,allowedVideos:expanded.filter(isVideoResource).length};
-  let remaining=nonMemberDailyRemaining(uid),allowedVideos=0,blocked=0;
-  const kept=[];
-  for(const item of expanded) {
-    if(!isVideoResource(item)) { kept.push(item); continue; }
-    if(remaining>0) { kept.push(item); remaining--; allowedVideos++; }
-    else blocked++;
-  }
-  return {items:kept,blocked,allowedVideos};
+  if(member || isAdmin(uid)) return {items:expanded,blocked:0,allowed:expanded.length};
+  const remaining=nonMemberDailyRemaining(uid);
+  const limit=remaining===Infinity?expanded.length:Math.max(0,remaining);
+  const kept=expanded.slice(0,limit);
+  return {items:kept,blocked:Math.max(0,expanded.length-kept.length),allowed:kept.length};
 }
 async function guestVideoNotice(token, chatId) {
-  return sendHtml(token, chatId, "<b>🎬 今日免费视频额度已用完</b>\n\n非会员每天可获取 <b>"+nonMemberDailyLimit()+"</b> 个视频。\n加入指定会员群后可不限量获取。", userMenu());
+  return sendHtml(token, chatId, "<b>🎁 今日免费资源额度已用完</b>\n\n非会员每天最多成功获取 <b>"+nonMemberDailyLimit()+"</b> 个资源，照片、视频和其他文件都计入额度。\n明天自动恢复；加入指定会员群后可不限量获取。", userMenu());
 }
 function consumeVideoQuota(uid,items){
   if(isAdmin(uid)) return;
-  const count=(Array.isArray(items)?items:[]).filter(isVideoResource).length;
+  const count=(Array.isArray(items)?items:[]).length;
   if(count>0) consumeNonMemberQuota(uid,count);
 }
 function isVideoResource(item){
@@ -5203,7 +5199,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const total=Math.max(0,Number(options.total)||db.resources.length);
     const extraMessage=postResourceMessage();
     const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
-    const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+    const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
     const summary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"")+inviteText;
     await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total));
     return;
@@ -5281,7 +5277,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     : {};
 
   const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
-  const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+  const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
   const summary = (fail ? "⚠️ 本批 "+ok+"/"+valid.length : "✅ 本批 "+ok+" 个")+inviteText;
 
   // 无论本批是否有失败，都必须保留“再来一组”按钮。
@@ -7214,7 +7210,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   for(const prefix of ["getfav:","getrecent:","gethot:","gettag:"]){
     if(data.startsWith(prefix)){
       const item=resourceByKey(data.slice(prefix.length));if(!item){void answer("资源不存在或已删除",true);return;}
-      const member=await allowed(TOKEN,uid);if(isVideoResource(item)&&!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0){void answer("今日免费视频额度已用完",true);return guestVideoNotice(token,chatId);}
+      const member=await allowed(TOKEN,uid);if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0){void answer("今日免费视频额度已用完",true);return guestVideoNotice(token,chatId);}
       try{void answer("正在获取资源…");await sendIndexedResource(token,chatId,item);recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);if(!member&&!isAdmin(uid))consumeNonMemberQuota(uid,1);else saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\n\n📦 "+escapeHtml(item.title||"未命名资源")+"\n\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
         [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
@@ -7806,7 +7802,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return;
     }
     const member=await allowed(TOKEN,uid);
-    if(isVideoResource(item) && !member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0) {
+    if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0) {
       void answer("今日免费额度已用完",true);
       return guestVideoNotice(token,chatId);
     }
@@ -7816,9 +7812,9 @@ async function handleDirectoryCallback(token, q, child=false) {
       recordStat(uid,"download",1);
       recordResourceDownload(item);
       recordRecent(uid,item);
-      if(isVideoResource(item) && !member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
+      if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,1); else saveDb();
       try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
-      return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源"+(isVideoResource(item)&&!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":""),resourceInlineKeyboard(s.results,page));
+      return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已发送：<b>"+escapeHtml(item.title||"未命名资源")+" </b>\n👇 可继续选择其他资源"+(isVideoResource(item)&&!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":""),resourceInlineKeyboard(s.results,page));
     } catch(e) {
       return safeEdit(token,{
         chat_id:chatId,
@@ -8126,7 +8122,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
       const next=sent>0?selectedBatch.nextOffset:0;
       const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
-      const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+      const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
       const summary=(sent>0
         ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"
         : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。")+inviteText;
@@ -8175,7 +8171,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   // 批量发送完成后单独发送一个控制消息，避免编辑原文件夹消息失败导致“下面没有按钮”。
   // 下一批仍然从 next 位置开始，不重复发送已经处理过的资源。
   const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
-  const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+  const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
   const finalText=(next < all.length
     ? "📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length+"\\n📤 本组已发送：<b>"+sent+"</b> 个"
     : "📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n✅ 已全部获取完成")+inviteText;
