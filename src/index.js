@@ -4873,42 +4873,117 @@ function contentProtectionText() {
 }
 async function sendResourceAlbum(token, chatId, items) {
   const valid=(Array.isArray(items)?items:[]).filter(x=>x&&x.chatId&&Number(x.messageId)>0);
-  if(!valid.length) return 0;
+  if(!valid.length) return {sent:0,lastMessageId:0};
+  // Prefer real media-group uploads so separate photos/videos become one Telegram album.
+  // If MTProto history access is not configured, retain the safe Bot API copy fallback.
+  const auth=db.settings?.historyAuth||{};
+  if(auth.session && (auth.apiId||TG_API_ID) && (auth.apiHash||TG_API_HASH)) {
+    try {
+      const client=await ensureHistoryClient(chatId);
+      const entity=await findHistoryEntity(client);
+      const prepared=[];
+      let failed=0;
+      for(const item of valid.slice(0,10)) {
+        try {
+          const found=await client.getMessages(entity,{ids:[Number(item.messageId)]});
+          const message=Array.isArray(found)?found[0]:found;
+          if(!message||!message.media) throw new Error("媒体不存在");
+          const file=message.file||{};
+          const mime=String(file.mimeType||"").toLowerCase();
+          const mediaClass=String(message.media?.className||"");
+          const mediaType=(mime.startsWith("image/")||/MessageMediaPhoto/i.test(mediaClass)||message.photo)?"photo":
+            (mime.startsWith("video/")||isVideoResource(item)||/MessageMediaDocument/i.test(mediaClass)&&mime.startsWith("video"))?"video":"";
+          if(!mediaType) {
+            prepared.push({item,mediaType:"",message});
+            continue;
+          }
+          const buffer=await client.downloadMedia(message,{});
+          if(!buffer||!buffer.length) throw new Error("媒体下载失败");
+          prepared.push({item,mediaType,buffer,name:String(file.name||item.title||(mediaType==="photo"?"photo.jpg":"video.mp4")),caption:String(item.caption||"")});
+        } catch(e) {
+          failed++;
+          console.warn("MEDIA GROUP PREPARE:",String(e?.message||e),"message=",item.messageId);
+        }
+      }
+      let sent=0,lastMessageId=0;
+      for(let i=0;i<prepared.length;) {
+        const entry=prepared[i];
+        if(entry.mediaType) {
+          let end=i;
+          while(end<prepared.length&&prepared[end].mediaType&&end-i<10) end++;
+          const group=prepared.slice(i,end);
+          if(group.length>=2) {
+            try {
+              const result=await tgUploadMediaAlbum(token,chatId,group);
+              sent+=result.length;
+              if(result.length) lastMessageId=Number(result[result.length-1]?.message_id)||lastMessageId;
+            } catch(e) {
+              console.warn("MEDIA GROUP SEND FAILED, fallback to individual:",String(e?.message||e));
+              for(const x of group) {
+                try {
+                  const method=x.mediaType==="photo"?"sendPhoto":"sendVideo";
+                  const result=await tgUploadBuffer(token,method,chatId,x.buffer,x.name,x.caption);
+                  sent++;lastMessageId=Number(result?.message_id)||lastMessageId;
+                } catch(err) {
+                  console.error("MEDIA ITEM SEND:",String(err?.message||err));
+                  try {
+                    const result=await sendIndexedResource(token,chatId,x.item);
+                    sent++;lastMessageId=Number(result?.message_id)||lastMessageId;
+                  } catch {}
+                }
+              }
+            }
+          } else {
+            try {
+              const method=entry.mediaType==="photo"?"sendPhoto":"sendVideo";
+              const result=await tgUploadBuffer(token,method,chatId,entry.buffer,entry.name,entry.caption);
+              sent++;lastMessageId=Number(result?.message_id)||lastMessageId;
+            } catch(e) {
+              try { const result=await sendIndexedResource(token,chatId,entry.item);sent++;lastMessageId=Number(result?.message_id)||lastMessageId; }
+              catch(err) { failed++; }
+            }
+          }
+          i=end;
+        } else {
+          try { const result=await sendIndexedResource(token,chatId,entry.item);sent++;lastMessageId=Number(result?.message_id)||lastMessageId; }
+          catch(e) { failed++; }
+          i++;
+        }
+      }
+      return {sent,lastMessageId,failed};
+    } catch(e) {
+      console.warn("MEDIA GROUP MTProto unavailable; fallback to copyMessages:",String(e?.message||e));
+    }
+  }
   const groups=new Map();
   for(const item of valid) {
     const key=String(item.chatId);
-    if(!groups.has(key)) groups.set(key, []);
+    if(!groups.has(key)) groups.set(key,[]);
     groups.get(key).push(item);
   }
-  let sent=0;
-  let lastMessageId=0;
-  for(const [fromChat, group] of groups) {
-    const ids=group.map(x=>Number(x.messageId)).slice(0,10);
-    try {
-      const copied=await tg(token, "copyMessages", {
-        chat_id:chatId,
-        from_chat_id:fromChat,
-        message_ids:ids,
-        ...(contentProtectionEnabled()?{protect_content:true}:{})
-      });
-      const ids=Array.isArray(copied)?copied.filter(x=>x&&x.message_id):[];
-      sent += ids.length;
-      if(ids.length) lastMessageId=ids[ids.length-1].message_id;
-      if(!ids.length) throw new Error("相册复制没有返回结果");
-    } catch(e) {
-      console.warn("⚠️ 相册发送失败，改为逐条发送:", String(e?.message||e));
-      for(const item of group.slice(0,10)) {
-        try {
-          const one=await sendIndexedResource(token, chatId, item);
-          sent++;
-          if(one?.message_id) lastMessageId=one.message_id;
-        } catch(err) {
-          console.error("ALBUM ITEM:", String(err?.message||err));
+  let sent=0,lastMessageId=0;
+  for(const [fromChat,group] of groups) {
+    for(let offset=0;offset<group.length;offset+=10) {
+      const chunk=group.slice(offset,offset+10);
+      try {
+        const copied=await tg(token,"copyMessages",{
+          chat_id:chatId,from_chat_id:fromChat,message_ids:chunk.map(x=>Number(x.messageId)),
+          ...(contentProtectionEnabled()?{protect_content:true}:{})
+        });
+        const ids=Array.isArray(copied)?copied.filter(x=>x&&x.message_id):[];
+        sent+=ids.length;
+        if(ids.length) lastMessageId=Number(ids[ids.length-1].message_id)||lastMessageId;
+        if(!ids.length) throw new Error("复制没有返回结果");
+      } catch(e) {
+        console.warn("⚠️ 成组复制失败，改为逐条发送:",String(e?.message||e));
+        for(const item of chunk) {
+          try { const one=await sendIndexedResource(token,chatId,item);sent++;if(one?.message_id)lastMessageId=one.message_id; }
+          catch(err) { console.error("ALBUM ITEM:",String(err?.message||err)); }
         }
       }
     }
   }
-  return {sent, lastMessageId};
+  return {sent,lastMessageId};
 }
 async function sendIndexedResource(token, chatId, item) {
   // file_id 属于生成它的 Bot，不能直接跨 Bot 使用。
@@ -5099,17 +5174,18 @@ function escapeHtml(value) {
   return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
-async function tgUploadVideoAlbum(token, chatId, entries) {
+async function tgUploadMediaAlbum(token, chatId, entries) {
   const list=(Array.isArray(entries)?entries:[]).slice(0,10);
-  if(list.length<2) throw new Error("视频相册至少需要 2 个视频");
+  if(list.length<2) throw new Error("媒体组至少需要 2 个文件");
   const form=new FormData();
   form.append("chat_id",String(chatId));
   if(contentProtectionEnabled()) form.append("protect_content","true");
   form.append("media",JSON.stringify(list.map((entry,index)=>({
-    type:"video",media:"attach://video"+index,
+    type:entry.mediaType,
+    media:"attach://media"+index,
     ...(entry.caption?{caption:String(entry.caption).slice(0,1024)}:{})
   }))));
-  list.forEach((entry,index)=>form.append("video"+index,new Blob([entry.buffer]),entry.name||("video"+index+".mp4")));
+  list.forEach((entry,index)=>form.append("media"+index,new Blob([entry.buffer]),entry.name||("media"+index)));
   const response=await fetch(api(token,"sendMediaGroup"),{method:"POST",body:form});
   const payload=await response.json();
   if(!payload.ok) throw new Error(payload.description||"sendMediaGroup failed");
@@ -5118,7 +5194,6 @@ async function tgUploadVideoAlbum(token, chatId, entries) {
   if(ids.length) scheduleAutoDelete(token,chatId,ids);
   return sent;
 }
-
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const member=await allowed(TOKEN,userId);
   if (!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",childMenu());
