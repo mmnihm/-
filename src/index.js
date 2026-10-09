@@ -1237,6 +1237,42 @@ async function initializeSharedBaserow() {
     await ensureBaserowRecoveryFields();
     normalizeSharedDirectories();
 
+    // 只读取 Google Sheets 的行 ID/消息键用于避免重复插入；不把表格内容导入或覆盖 JSON。
+    const fields=await getBaserowFields(true);
+    const rows=await listAllBaserowRows();
+    baserowRowsCache=new Map();
+    const chatField=baserowPickField(fields,["聊天ID","群组ID","频道ID","Chat ID","ChatID"]);
+    const messageField=baserowPickField(fields,["消息ID","资源ID","Message ID","MessageID"]);
+    const urlField=baserowPickField(fields,["网址","链接","链接地址","URL","Url","Link"]);
+    for(const row of rows) {
+      if(!row?.id) continue;
+      baserowRowsCache.set(String(row.id),row);
+      const title=String(row?.[baserowPickField(fields,["名称","资源名称","标题","资源","Name","Title","Resource","资源标题"])?.name]||"");
+      const folderMatch=title.match(/^__FOLDER__:(dir_[^:]+):/);
+      if(folderMatch) baserowRowsCache.set("folder:"+folderMatch[1],row);
+      let chat=chatField?String(row?.[chatField.name]??"").trim():"";
+      let message=messageField?Number(row?.[messageField.name]??0):0;
+      if((!chat || !Number.isFinite(message) || message<=0) && urlField) {
+        const url=String(row?.[urlField.name]??"");
+        let m=url.match(/t\.me\/c\/(\d+)\/(\d+)/i);
+        if(m) { chat="-100"+m[1]; message=Number(m[2]); }
+        else {
+          m=url.match(/t\.me\/([A-Za-z0-9_]{3,})\/(\d+)/i);
+          if(m) { chat="@"+m[1]; message=Number(m[2]); }
+        }
+      }
+      if(chat && Number.isFinite(message) && message>0) {
+        baserowRowsCache.set(chat+":"+message,row);
+        baserowRowsCache.set(String(chat).replace(/^-100/,"")+":"+message,row);
+      }
+    }
+    for(const item of (Array.isArray(db.resources)?db.resources:[])) {
+      if(item?.baserowRowId) continue;
+      const key=String(item?.chatId||"")+":"+Number(item?.messageId||0);
+      const row=baserowRowsCache.get(key) || baserowRowsCache.get(String(item?.chatId||"").replace(/^-100/,"")+":"+Number(item?.messageId||0));
+      if(row?.id) item.baserowRowId=row.id;
+    }
+
     // 单向：只把 JSON 中现有目录和资源写入 Google Sheets；不从表格导入/覆盖 JSON。
     for(const directory of (Array.isArray(db.directories)?db.directories:[])) {
       queueBaserowDirectorySync(directory);
