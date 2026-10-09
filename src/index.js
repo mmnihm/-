@@ -3700,7 +3700,8 @@ function premiumMembershipExpiry(uid) {
   return Number.isFinite(expiry)?expiry:0;
 }
 function hasActivePremiumMembership(uid) {
-  return premiumMembershipExpiry(uid)>Date.now();
+  const row=redemptionStore().premiumMemberships[String(uid)];
+  return row?.permanent===true || premiumMembershipExpiry(uid)>Date.now();
 }
 function extraVideoQuotaRemaining(uid) {
   const n=Number(redemptionStore().extraVideoQuota[String(uid)]||0);
@@ -3715,31 +3716,64 @@ function consumeExtraVideoQuota(uid,count) {
   return used;
 }
 function redeemCode(uid,rawCode) {
-  const store=redemptionStore();
-  const code=String(rawCode||"").trim().toUpperCase().replace(/\s+/g,"");
+  const store=redemptionStore(), code=String(rawCode||"").trim().toUpperCase().replace(/\s+/g,"");
   if(!code) return {ok:false,message:"请输入兑换码。"};
   const row=store.redemptionCodes[code];
   if(!row) return {ok:false,message:"兑换码不存在，请检查后重试。"};
   if(row.usedAt || row.usedBy) return {ok:false,message:"这个兑换码已经被使用，不能重复兑换。"};
   const amount=Math.floor(Number(row.amount)||0);
-  if(amount<1) return {ok:false,message:"兑换码奖励数据异常，请联系管理员。"};
-  const now=Date.now();
+  if(row.type!=="membership_permanent" && amount<1) return {ok:false,message:"兑换码奖励数据异常，请联系管理员。"};
+  const now=Date.now(); let reward="", expiry="";
   if(row.type==="membership_days") {
-    const oldExpiry=premiumMembershipExpiry(uid);
-    const expiresAt=Math.max(now,oldExpiry)+amount*86400000;
+    const oldExpiry=premiumMembershipExpiry(uid), expiresAt=Math.max(now,oldExpiry)+amount*86400000;
     store.premiumMemberships[String(uid)]={expiresAt,updatedAt:now,sourceCode:code};
-    row.rewardAppliedAt=now;
-    row.expiresAt=expiresAt;
+    row.rewardAppliedAt=now; row.expiresAt=expiresAt; reward="已增加 "+amount+" 天会员";
+    expiry=new Date(expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"});
+  } else if(row.type==="membership_permanent") {
+    store.premiumMemberships[String(uid)]={permanent:true,updatedAt:now,sourceCode:code};
+    row.rewardAppliedAt=now; row.permanent=true; reward="已开通永久会员"; expiry="永久有效";
   } else if(row.type==="video_credits") {
     store.extraVideoQuota[String(uid)]=extraVideoQuotaRemaining(uid)+amount;
-    row.rewardAppliedAt=now;
+    row.rewardAppliedAt=now; reward="额外视频额度 +"+amount+" 次；当前剩余额度 "+extraVideoQuotaRemaining(uid)+" 次";
   } else return {ok:false,message:"兑换码奖励类型无效，请联系管理员。"};
-  row.usedBy=String(uid); row.usedAt=now;
-  saveDb();
-  if(row.type==="membership_days") return {ok:true,message:"🎉 兑换成功！已增加 "+amount+" 天会员。\n会员到期时间："+new Date(row.expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"})+"。"};
-  return {ok:true,message:"🎉 兑换成功！额外视频额度 +"+amount+" 次。\n当前剩余额外视频额度："+extraVideoQuotaRemaining(uid)+" 次。"};
+  row.usedBy=String(uid); row.usedAt=now; saveDb();
+  let defaultMessage="";
+  if(row.type==="membership_days") defaultMessage="🎉 兑换成功！已增加 "+amount+" 天会员。\n会员到期时间："+expiry+"。";
+  else if(row.type==="membership_permanent") defaultMessage="🎉 兑换成功！已开通永久会员，永久有效。";
+  else defaultMessage="🎉 兑换成功！额外视频额度 +"+amount+" 次。\n当前剩余额外视频额度："+extraVideoQuotaRemaining(uid)+" 次。";
+  const template=String(db.settings?.redeemSuccessMessage||"").trim();
+  if(!template) return {ok:true,message:defaultMessage};
+  return {ok:true,message:template.replace(/\{reward\}/gi,reward).replace(/\{days\}/gi,row.type==="membership_days"?String(amount):"").replace(/\{expiry\}/gi,expiry).replace(/\{quota\}/gi,row.type==="video_credits"?String(extraVideoQuotaRemaining(uid)):"").replace(/\{type\}/gi,row.type==="membership_permanent"?"永久会员":row.type==="membership_days"?"会员":"额外视频额度")};
 }
-async function allowed(token, userId) {
+function shanghaiDateKey(value) {
+  const parts=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date(value));
+  const get=t=>parts.find(p=>p.type===t)?.value||"";
+  return get("year")+"-"+get("month")+"-"+get("day");
+}
+function shanghaiDateOrdinal(key) {
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(key||"");
+  return m?Math.floor(Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3]))/86400000):0;
+}
+async function checkMembershipExpiryReminders() {
+  if(!TOKEN) return;
+  const store=redemptionStore(), todayOrdinal=shanghaiDateOrdinal(shanghaiDateKey(Date.now()));
+  let changed=false;
+  for(const [uid,raw] of Object.entries(store.premiumMemberships)) {
+    if(!raw || typeof raw!=="object" || raw.permanent===true) continue;
+    const expiry=Number(raw.expiresAt||0);
+    if(!Number.isFinite(expiry) || expiry<=Date.now()) continue;
+    const daysLeft=shanghaiDateOrdinal(shanghaiDateKey(expiry))-todayOrdinal;
+    if(daysLeft!==3 && daysLeft!==0) continue;
+    const marker=daysLeft===3?"reminder3ForExpiry":"reminder0ForExpiry";
+    if(Number(raw[marker]||0)===expiry) continue;
+    const expiryText=new Date(expiry).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"});
+    try {
+      await sendHtml(TOKEN,uid,"<b>⏰ 会员到期提醒</b>\n━━━━━━━━━━━━━━\n\n"+(daysLeft===3?"你的会员还有 <b>3 天</b> 到期。":"你的会员将于今天到期。")+"\n到期时间："+escapeHtml(expiryText)+"\n\n如需继续使用会员权益，请及时续期。");
+      raw[marker]=expiry; changed=true;
+    } catch(e) { console.warn("⚠️ 会员到期提醒发送失败，用户="+uid+"："+String(e?.message||e)); }
+  }
+  if(changed) saveDb();
+}async function allowed(token, userId) {
   // 管理员、兑换获得的有效会员不受非会员额度限制。
   if (isAdmin(userId) || hasActivePremiumMembership(userId)) return true;
   const g = group();
@@ -3953,6 +3987,7 @@ function adminSettingsInline(){return{inline_keyboard:[
 ]};}
 function redeemAdminInline(){return{inline_keyboard:[
  [{text:"➕ 批量生成兑换码",callback_data:"adm:redeem_make"}],
+ [{text:"✏️ 编辑兑换成功消息",callback_data:"adm:redeem_message"}],
  [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
 ]};}
 function adminOpsInline(){return{inline_keyboard:[
