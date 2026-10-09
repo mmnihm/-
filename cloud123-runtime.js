@@ -7,7 +7,15 @@ const SOURCE = path.resolve("src/index.js");
 function patchSource() {
   const PROGRESS_PATCH_MARK = "CLOUD123_PROGRESS_V1";
   let src = fs.readFileSync(SOURCE, "utf8");
-  if (src.includes(PATCH_MARK) && !src.includes(PROGRESS_PATCH_MARK)) {
+  if (src.includes(PATCH_MARK) && !src.includes(PROGRESS_PATCH_MARK) &&
+      src.includes("const refreshUploadProgress = async") &&
+      src.indexOf("const refreshUploadProgress = async") < src.indexOf("const uploadOne = async (item) => {")) {
+    src = src.replace("/* " + PATCH_MARK + " */", "/* " + PATCH_MARK + " */\nconst " + PROGRESS_PATCH_MARK + "=true;");
+    fs.writeFileSync(SOURCE, src);
+    console.log("ℹ️ CLOUD123 实时进度 helper 已存在，跳过重复注入");
+    return true;
+  }
+  if (src.includes(PATCH_MARK) && !src.includes(PROGRESS_PATCH_MARK) && !src.includes("const refreshUploadProgress = async")) {
     const progressHelper = String.raw`
     const uploadProgress = new Map();
     let lastProgressEdit = 0;
