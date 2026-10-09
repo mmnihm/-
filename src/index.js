@@ -8040,7 +8040,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data.startsWith("quota:")){
     if(child||!isAdmin(uid)){void answer("无权限",true);return;}
     const op=data.slice(6);
-    if(op==="+1"||op==="-1"){db.settings.nonMemberDailyLimit=Math.max(0,nonMemberDailyLimit()+(op==="+1"?1:-1));saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
+    if(op==="+1"||op==="-1"){db.settings.nonMemberDailyLimit=Math.min(3,Math.max(0,nonMemberDailyLimit()+(op==="+1"?1:-1)));saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:quotaSettingsText(),parse_mode:"HTML",reply_markup:{inline_keyboard:[
       [{text:"➕ +1",callback_data:"quota:+1"},{text:"➖ -1",callback_data:"quota:-1"}],
       [{text:"✏️ 自定义",callback_data:"quota:set"}],
       [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
