@@ -8101,6 +8101,8 @@ async function handleDirectoryCallback(token, q, child=false) {
   const safeDescription=String(d.description||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   if(data.startsWith("dir:")) {
+    // 先移除旧目录键盘，避免操作按钮留在新发文件上方。
+    try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
     if(!all.length) {
       return safeEdit(token,{
         chat_id:chatId,
@@ -8140,23 +8142,18 @@ async function handleDirectoryCallback(token, q, child=false) {
       const summary=(sent>0
         ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"
         : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。")+inviteText;
-      return tg(token,"editMessageText",{
-        chat_id:chatId,
-        message_id:progressMessage?.message_id,
-        text:summary,
-        parse_mode:"HTML",
-        reply_markup:folderProgressKeyboard(d.id,all.length,next)
-      });
+      try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
+      return sendHtml(token,chatId,summary,{reply_markup:folderProgressKeyboard(d.id,all.length,next)});
     } catch(e) {
       console.error("DIRECTORY ALBUM SEND FAILED:",String(e?.message||e));
       const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
-      if(progressMessage?.message_id) {
-        return tg(token,"editMessageText",{chat_id:chatId,message_id:progressMessage.message_id,text:errText,parse_mode:"HTML",reply_markup:folderProgressKeyboard(d.id,all.length,0)});
-      }
-      return sendHtml(token,chatId,errText, {reply_markup:folderProgressKeyboard(d.id,all.length,0)});
+      try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
+      return sendHtml(token,chatId,errText,{reply_markup:folderProgressKeyboard(d.id,all.length,0)});
     }
   }
 
+  // “获取下一组”按钮所在的旧控制消息不再保留键盘；新控制消息会放在本组文件之后。
+  try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
   if(offset>=all.length) return;
 
   const member=await allowed(TOKEN,uid);
@@ -8194,13 +8191,8 @@ async function handleDirectoryCallback(token, q, child=false) {
   const finalText=(next < all.length
     ? "📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length+"\\n📤 本组已发送：<b>"+sent+"</b> 个"
     : "📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n✅ 已全部获取完成")+inviteText;
-  return tg(token,"editMessageText",{
-    chat_id:chatId,
-    message_id:progressMessage?.message_id,
-    text:finalText,
-    parse_mode:"HTML",
-    reply_markup:folderProgressKeyboard(d.id,all.length,next)
-  });
+  try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
+  return sendHtml(token,chatId,finalText,{reply_markup:folderProgressKeyboard(d.id,all.length,next)});
 }
 
 let mainPollingActive = false;
