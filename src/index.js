@@ -8225,8 +8225,8 @@ async function handleDirectoryCallback(token, q, child=false) {
         chat_id:chatId,
         message_id:progressMessage?.message_id,
         text:summary,
-        reply_markup:folderProgressKeyboard(d.id,all.length,next),
-        ...(album?.lastMessageId?{reply_to_message_id:album.lastMessageId}:{})
+        parse_mode:"HTML",
+        reply_markup:folderProgressKeyboard(d.id,all.length,next)
       });
     } catch(e) {
       console.error("DIRECTORY ALBUM SEND FAILED:",String(e?.message||e));
@@ -8249,7 +8249,17 @@ async function handleDirectoryCallback(token, q, child=false) {
   const guest=withoutVideosForGuest(batch, member, uid);
   batch=guest.items;
   if(!batch.length) return guestVideoNotice(token, chatId);
-  const album=await sendResourceAlbum(token,chatId,batch);
+  let progressMessage;
+  let album;
+  try {
+    progressMessage=await tg(token,"sendMessage",{chat_id:chatId,text:"⏳ 正在整理本组照片和视频，请稍候……"});
+    album=await sendResourceAlbum(token,chatId,batch);
+  } catch(e) {
+    console.error("DIRECTORY BATCH SEND FAILED:",String(e?.message||e));
+    const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
+    if(progressMessage?.message_id) return tg(token,"editMessageText",{chat_id:chatId,message_id:progressMessage.message_id,text:errText,parse_mode:"HTML",reply_markup:folderProgressKeyboard(d.id,all.length,offset)});
+    return sendHtml(token,chatId,errText,{reply_markup:folderProgressKeyboard(d.id,all.length,offset)});
+  }
   const sent=Number(album?.sent||0);
   if(sent) recordStat(uid,"download",sent);
 
@@ -8260,18 +8270,13 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
   // 批量发送完成后单独发送一个控制消息，避免编辑原文件夹消息失败导致“下面没有按钮”。
   // 下一批仍然从 next 位置开始，不重复发送已经处理过的资源。
-  if(next < all.length) {
-    return tg(token,"sendMessage",{
-      chat_id:chatId,
-      text:"📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length,
-      parse_mode:"HTML",
-      reply_markup:folderProgressKeyboard(d.id,all.length,next),
-      ...(album?.lastMessageId?{reply_to_message_id:album.lastMessageId}:{})
-    });
-  }
-  return tg(token,"sendMessage",{
+  const finalText=next < all.length
+    ? "📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length+"\\n📤 本组已发送：<b>"+sent+"</b> 个"
+    : "📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n✅ 已全部获取完成";
+  return tg(token,"editMessageText",{
     chat_id:chatId,
-    text:"📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"\\n\\n✅ 已全部获取完成",
+    message_id:progressMessage?.message_id,
+    text:finalText,
     parse_mode:"HTML",
     reply_markup:folderProgressKeyboard(d.id,all.length,next)
   });
