@@ -6299,12 +6299,15 @@ async function mainMessage(msg) {
     const shareToken=t.slice("/start share_".length).trim();
     const item=getResourceByShareToken(shareToken);
     if(!item) return sendHtml(TOKEN,uid,"<b>🔗 分享资源</b>\n\n❌ 这个分享链接已失效或资源不存在。",userMenu());
+    const member=await allowed(TOKEN,uid);
+    const guest=withoutVideosForGuest([item],member,uid);
+    if(!guest.items.length) return guestVideoNotice(TOKEN,uid);
     try {
       await sendIndexedResource(TOKEN,uid,item);
       recordStat(uid,"download",1);
       recordResourceDownload(item);
       recordRecent(uid,item);
-      saveDb();
+      if(!member&&!isAdmin(uid)) consumeVideoQuota(uid,[item]); else saveDb();
       return sendHtml(TOKEN,uid,
         "<b>🔗 分享资源</b>\n"+
         "━━━━━━━━━━━━━━\n\n"+
@@ -7165,12 +7168,15 @@ async function childMessage(child,msg,token) {
     const shareToken=t.slice("/start share_".length).trim();
     const item=getResourceByShareToken(shareToken);
     if(!item) return sendHtml(token,uid,"<b>🔗 分享资源</b>\n\n❌ 这个分享链接已失效或资源不存在。",childMenu());
+    const member=await allowed(TOKEN,uid);
+    const guest=withoutVideosForGuest([item],member,uid);
+    if(!guest.items.length) return guestVideoNotice(token,uid);
     try {
       await sendIndexedResource(token,uid,item);
       recordStat(uid,"download",1);
       recordResourceDownload(item);
       recordRecent(uid,item);
-      saveDb();
+      if(!member&&!isAdmin(uid)) consumeVideoQuota(uid,[item]); else saveDb();
       return sendHtml(token,uid,"<b>🔗 分享资源</b>\n━━━━━━━━━━━━━━\n\n📦 <b>"+escapeHtml(item.title||"未命名资源")+"</b>\n📁 文件夹：<b>"+escapeHtml(db.directories.find(d=>String(d.id)===String(item.directoryId))?.name||"未分类")+"</b>\n\n✅ 资源已发送。",childMenu());
     } catch {
       return sendHtml(token,uid,"<b>❌ 资源获取失败</b>\n\n请稍后重试。",childMenu());
