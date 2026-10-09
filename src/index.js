@@ -3654,7 +3654,37 @@ function consumeExtraVideoQuota(uid,count) {
   if(used>0) store[id]=before-used;
   return used;
 }
-function redeemCode(uid,rawCode) {
+async function notifyRedeemAdmins(token,uid,code,row,userInfo,usedAt) {
+  const admins=[...new Set([
+    ...[...ADMIN_IDS].map(String),
+    ...(Array.isArray(db.settings?.admins)?db.settings.admins.map(String):[])
+  ])].filter(id=>/^\d+$/.test(id)&&Number(id)>0);
+  if(!admins.length) {
+    console.warn("兑换码已使用，但未配置可接收通知的管理员");
+    return;
+  }
+  const firstName=[userInfo?.first_name,userInfo?.last_name].filter(Boolean).join(" ").trim();
+  const name=firstName||userInfo?.username||"未获取到昵称";
+  const username=userInfo?.username?"@"+userInfo.username:"无用户名";
+  const type=row.type==="membership_permanent"?"永久会员":
+    row.type==="membership_days"?"会员时长（"+Math.floor(Number(row.amount)||0)+" 天）":
+    row.type==="video_credits"?"额外视频额度（"+Math.floor(Number(row.amount)||0)+" 次）":String(row.type||"未知奖励");
+  const when=new Date(usedAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false});
+  const message="<b>🎟️ 兑换码使用通知</b>\n━━━━━━━━━━━━━━\n"+
+    "👤 <b>用户：</b>"+escapeHtml(name)+"\n"+
+    "🔖 <b>用户名：</b>"+escapeHtml(username)+"\n"+
+    "🆔 <b>用户 ID：</b><code>"+escapeHtml(String(uid))+"</code>\n"+
+    "🎫 <b>兑换码：</b><code>"+escapeHtml(code)+"</code>\n"+
+    "🎁 <b>兑换内容：</b>"+escapeHtml(type)+"\n"+
+    "🕒 <b>使用时间：</b>"+escapeHtml(when)+"\n"+
+    "✅ <b>结果：</b>兑换成功";
+  const results=await Promise.allSettled(admins.map(adminId=>tg(token,"sendMessage",{
+    chat_id:Number(adminId),text:message,parse_mode:"HTML",disable_web_page_preview:true
+  })));
+  const failed=results.filter(r=>r.status==="rejected"||r.value==null).length;
+  if(failed) console.warn("兑换码通知发送失败:",failed+"/"+admins.length);
+}
+function redeemCode(uid,rawCode,userInfo=null,botToken=TOKEN) {
   const store=redemptionStore(), code=String(rawCode||"").trim().toUpperCase().replace(/\s+/g,"");
   if(!code) return {ok:false,message:"请输入兑换码。"};
   const row=store.redemptionCodes[code];
@@ -3682,6 +3712,10 @@ function redeemCode(uid,rawCode) {
     row.rewardAppliedAt=now; reward="额外视频额度 +"+amount+" 次；当前剩余额度 "+extraVideoQuotaRemaining(uid)+" 次";
   } else return {ok:false,message:"兑换码奖励类型无效，请联系管理员。"};
   row.usedBy=String(uid); row.usedAt=now; saveDb();
+  // 兑换成功后异步通知所有配置管理员；通知失败不影响用户兑换结果。
+  void notifyRedeemAdmins(botToken,uid,code,row,userInfo,now).catch(err=>{
+    console.error("兑换码管理员通知失败:",String(err?.message||err));
+  });
   let defaultMessage="";
   if(row.type==="membership_days") defaultMessage="🎉 兑换成功！已增加 "+amount+" 天会员。\n会员到期时间："+expiry+"。";
   else if(row.type==="membership_permanent") defaultMessage="🎉 兑换成功！已开通永久会员，永久有效。";
@@ -5902,7 +5936,7 @@ async function mainMessage(msg) {
 
   if(s?.step==="redeem_code_input" && !admin) {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消兑换。",userMenu()); }
-    const result=redeemCode(uid,rawText);
+    const result=redeemCode(uid,rawText,msg.from,TOKEN);
     states.delete(key);
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
   }
@@ -5912,7 +5946,7 @@ async function mainMessage(msg) {
       states.set(key,{step:"redeem_code_input"});
       return sendHtml(TOKEN,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码。\n发送 /cancel 可取消。",userMenu());
     }
-    const result=redeemCode(uid,code);
+    const result=redeemCode(uid,code,msg.from,TOKEN);
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
   }
   if(admin && s?.step==="redeem_ban_user") {
@@ -7208,14 +7242,14 @@ async function childMessage(child,msg,token) {
   const rawText=String(t||"").trim();
   if(s?.step==="redeem_code_input") {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(token,uid,"已取消兑换。",childMenu()); }
-    const result=redeemCode(uid,rawText);
+    const result=redeemCode(uid,rawText,msg.from,token);
     states.delete(key);
     return sendHtml(token,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),childMenu());
   }
   if(rawText.toLowerCase().startsWith("/redeem")) {
     const code=rawText.replace(/^\/redeem(?:@\w+)?\s*/i,"").trim();
     if(!code) { states.set(key,{step:"redeem_code_input"}); return sendHtml(token,uid,"<b>🎟️ 使用兑换码</b>\n\n请发送兑换码。\n发送 /cancel 可取消。",childMenu()); }
-    const result=redeemCode(uid,code);
+    const result=redeemCode(uid,code,msg.from,token);
     return sendHtml(token,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),childMenu());
   }
 
