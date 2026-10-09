@@ -2426,8 +2426,14 @@ async function repositoryAutoSyncBatch(batch){
   if(!state.enabled||!sourceId||!targetId||!Array.isArray(batch)||!batch.length)return false;
 
   const jobs=batch
-    .map(x=>({messageId:Number(x?.messageId||0),queuedAt:x?.queuedAt||Date.now(),mediaGroupId:String(x?.mediaGroupId||"")}))
-    .filter(x=>x.messageId>0);
+    .map(x=>({
+      messageId:Number(x?.messageId||0),
+      fromChatId:String(x?.fromChatId||sourceId),
+      queuedAt:x?.queuedAt||Date.now(),
+      mediaGroupId:String(x?.mediaGroupId||""),
+      historical:Boolean(x?.historical)
+    }))
+    .filter(x=>x.messageId>0 && sameAutoSyncChat(x.fromChatId,sourceId));
 
   if(!jobs.length)return true;
 
@@ -2626,7 +2632,12 @@ async function processRepositoryAutoSyncQueue(){
       // 永远以旧仓库 message_id 为唯一顺序依据。
       // Telegram 的 copyMessages 会保留原生相册分组，所以不需要为了“相册”把消息拆成单条。
       state.queue=state.queue
-        .filter(x=>Number(x?.messageId||0)>0)
+        .filter(x=>{
+          const origin=String(x?.fromChatId||state.sourceId||"");
+          if(sameAutoSyncChat(origin,state.sourceId)) return Number(x?.messageId||0)>0;
+          console.warn("⏭️ AUTO SYNC 清理非旧仓库队列项:",origin+"#"+String(x?.messageId||0));
+          return false;
+        })
         .sort((a,b)=>Number(a?.messageId||0)-Number(b?.messageId||0));
 
       const first=state.queue[0];
@@ -2716,9 +2727,8 @@ function queueRepositoryAutoSyncMessage(msg){
   const fromChatId=String(msg.chat.id);
   if(sameAutoSyncChat(fromChatId,state.targetId))return;
   const fromSource=sameAutoSyncChat(fromChatId,state.sourceId);
-  const liveGroup=["group","supergroup","channel"].includes(String(msg.chat?.type||""));
-  const hasMedia=Boolean(msg.document||msg.video||msg.audio||msg.animation||msg.photo||msg.voice||msg.video_note||msg.media_group_id);
-  if(!fromSource && !(liveGroup && hasMedia))return;
+  // 实时自动同步只接受已绑定的旧仓库，禁止其他群组/频道媒体混入队列。
+  if(!fromSource)return;
   const messageId=Number(msg.message_id);if(!messageId)return;
   const exists=state.queue.some(x=>Number(x.messageId)===messageId&&sameAutoSyncChat(x.fromChatId||state.sourceId,fromChatId));
   const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&sameAutoSyncChat(x.migratedFrom?.chatId,fromChatId)&&Number(x.migratedFrom?.messageId||0)===messageId);
@@ -2839,13 +2849,29 @@ async function enableRepositoryAutoSync(uid,sourceId,targetId,sourceTitle,target
   state.lastMessageId=Number(lastMessageId||0); state.queue=[]; state.lastError=""; state.skipped=0;
   state.updatedAt=Date.now(); saveDb(); return state;
 }
+async function repositoryAutoSyncOne(job){
+  const state=repositoryAutoSyncState();
+  const messageId=Number(job?.messageId||0);
+  const sourceId=String(state.sourceId||"");
+  if(!state.enabled||!sourceId||!state.targetId) throw new Error("自动同步尚未完成绑定");
+  if(!messageId) throw new Error("测试消息 ID 无效");
+  const already=db.resources.some(x=>String(x.chatId)===String(state.targetId)&&sameAutoSyncChat(x.migratedFrom?.chatId,sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
+  if(already) return true;
+  if(!state.queue.some(x=>Number(x?.messageId||0)===messageId&&sameAutoSyncChat(x?.fromChatId||sourceId,sourceId))){
+    state.queue.push({messageId,fromChatId:sourceId,historical:true,queuedAt:Date.now()});
+    state.queue.sort((a,b)=>Number(a.messageId)-Number(b.messageId));
+    saveDb();
+  }
+  await processRepositoryAutoSyncQueue();
+  return db.resources.some(x=>String(x.chatId)===String(state.targetId)&&sameAutoSyncChat(x.migratedFrom?.chatId,sourceId)&&Number(x.migratedFrom?.messageId||0)===messageId);
+}
 async function testRepositoryAutoSync(uid){
   const state=repositoryAutoSyncState();
   if(!state.enabled||!state.sourceId||!state.targetId) throw new Error("自动同步尚未完成绑定");
   const candidates=db.resources
-    .filter(x=>String(x.chatId)===String(state.sourceId)&&Number(x.messageId)>0)
+    .filter(x=>sameAutoSyncChat(x.chatId,state.sourceId)&&Number(x.messageId)>0)
     .sort((a,b)=>Number(b.messageId)-Number(a.messageId));
-  const sourceItem=candidates.find(item=>!db.resources.some(y=>String(y.chatId)===String(state.targetId)&&Number(y.migratedFrom?.chatId||0)===Number(state.sourceId)&&Number(y.migratedFrom?.messageId||0)===Number(item.messageId)));
+  const sourceItem=candidates.find(item=>!db.resources.some(y=>String(y.chatId)===String(state.targetId)&&sameAutoSyncChat(y.migratedFrom?.chatId,state.sourceId)&&Number(y.migratedFrom?.messageId||0)===Number(item.messageId)));
   if(!sourceItem) throw new Error("旧仓库目前没有可测试的新资源");
   const ok=await repositoryAutoSyncOne({messageId:Number(sourceItem.messageId)});
   if(!ok) throw new Error(state.lastError||"测试同步失败");
