@@ -4919,17 +4919,26 @@ function directoryText(page=0) {
     const key = String(r.directoryId);
     counts.set(key, (counts.get(key) || 0) + 1);
   }
-  const activeDirectories = db.directories.filter(d => (counts.get(String(d.id)) || 0) > 0);
+  // 与目录按钮使用相同的排序规则，保证页码和实际展示顺序一致。
+  const activeDirectories = sortedDirectories(
+    db.directories.filter(d => (counts.get(String(d.id)) || 0) > 0)
+  );
   const pageSize = 10;
   const pages = Math.max(1, Math.ceil(activeDirectories.length / pageSize));
   const current = Math.min(Math.max(0, Number(page) || 0), pages - 1);
+  const first = activeDirectories.length ? current * pageSize + 1 : 0;
+  const last = Math.min((current + 1) * pageSize, activeDirectories.length);
   return [
-    "📂 <b>资源目录</b>", "━━━━━━━━━━━━━━", "",
-    "📚 总资源：<b>" + db.resources.length + "</b> 条",
-    "📁 有资源的文件夹：<b>" + activeDirectories.length + "</b> 个",
-    "📄 当前页：<b>" + (current + 1) + " / " + pages + "</b>", "",
-    activeDirectories.length ? "👇 <i>点击文件夹名称查看资源</i>" : "📭 <i>暂时没有可浏览的文件夹</i>"
-  ].join("\n");
+    "📂 <b>资源目录</b>",
+    "━━━━━━━━━━━━━━",
+    "",
+    "📚 资源记录：<b>" + db.resources.length + "</b> 条",
+    "📁 可浏览文件夹：<b>" + activeDirectories.length + "</b> 个",
+    "📄 当前页：<b>" + (current + 1) + " / " + pages + "</b>",
+    activeDirectories.length ? "🗂️ 本页显示：<b>" + first + "–" + last + "</b> 个文件夹" : "",
+    "",
+    activeDirectories.length ? "👇 <i>点击文件夹名称查看资源</i>" : "📭 <i>暂时没有可浏览的文件夹，请稍后再试</i>"
+  ].filter(line => line !== "").join("\\n");
 }
 function configText() {
   const g = group(), r = repo(), scan = db.settings.historyScan || {};
