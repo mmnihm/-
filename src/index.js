@@ -5185,7 +5185,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const ok=Number(album?.sent||0),fail=Math.max(Number(album?.failed||0),items.length-ok);
     if(ok>0) {
       recordStat(userId,"download",ok);
-      for(const item of items.slice(0,ok)){recordResourceDownload(item);recordRecent(userId,item);}
+      for(const item of (Array.isArray(album?.sentItems)?album.sentItems:items.slice(0,ok))){recordResourceDownload(item);recordRecent(userId,item);}
       if(!member&&!isAdmin(userId)) consumeVideoQuota(userId,Array.isArray(album?.sentItems)?album.sentItems:items.slice(0,ok));
       else saveDb();
     } else saveDb();
@@ -5193,7 +5193,9 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
     const extraMessage=postResourceMessage();
-    const summary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"");
+    const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
+    const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+    const summary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"")+inviteText;
     await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total));
     return;
   } catch(e) {
@@ -5252,14 +5254,14 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   ok=Number(album?.sent||0);
   albumReplyId=Number(album?.lastMessageId||0);
   fail=Math.max(Number(album?.failed||0),valid.length-ok);
-  for(const item of valid.slice(0,ok)) {
+  for(const item of (Array.isArray(album?.sentItems)?album.sentItems:valid.slice(0,ok))) {
     recordResourceDownload(item);
     recordRecent(userId,item);
   }
 
   if(ok>0) {
     recordStat(userId,"download",ok);
-    if(!member && !isAdmin(userId)) consumeVideoQuota(userId,valid.filter(isVideoResource).slice(0,ok));
+    if(!member && !isAdmin(userId)) consumeVideoQuota(userId,Array.isArray(album?.sentItems)?album.sentItems:valid.filter(isVideoResource).slice(0,ok));
     else saveDb();
   } else {
     saveDb();
@@ -5269,7 +5271,9 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     ? batchNavigation(options.mode,options.offset||0,options.total||valid.length)
     : {};
 
-  const summary = (fail ? "⚠️ 本批 "+ok+"/"+valid.length : "✅ 本批 "+ok+" 个");
+  const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
+  const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+  const summary = (fail ? "⚠️ 本批 "+ok+"/"+valid.length : "✅ 本批 "+ok+" 个")+inviteText;
 
   // 无论本批是否有失败，都必须保留“再来一组”按钮。
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
@@ -8107,9 +8111,11 @@ async function handleDirectoryCallback(token, q, child=false) {
       const sent=Number(album?.sent||0);
       // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
       const next=sent>0?selectedBatch.nextOffset:0;
-      const summary=sent>0
+      const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
+      const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+      const summary=(sent>0
         ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"
-        : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。";
+        : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。")+inviteText;
       return tg(token,"editMessageText",{
         chat_id:chatId,
         message_id:progressMessage?.message_id,
@@ -8158,9 +8164,11 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
   // 批量发送完成后单独发送一个控制消息，避免编辑原文件夹消息失败导致“下面没有按钮”。
   // 下一批仍然从 next 位置开始，不重复发送已经处理过的资源。
-  const finalText=next < all.length
+  const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
+  const inviteText=quotaDone?"\\n\\n🎁 今日免费视频额度已用完。加入指定会员群后可继续获取视频。":"";
+  const finalText=(next < all.length
     ? "📁 <b>"+safe+"</b>  ·  "+next+"/"+all.length+"\\n📤 本组已发送：<b>"+sent+"</b> 个"
-    : "📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n✅ 已全部获取完成";
+    : "📁 <b>"+safe+"</b>"+(safeDescription?"\\n📝 "+safeDescription:"")+"\\n\\n📚 共 <b>"+all.length+"</b> 个资源\\n📤 本组已发送：<b>"+sent+"</b> 个\\n📦 已发送：<b>"+next+"</b> / <b>"+all.length+"</b>\\n\\n✅ 已全部获取完成")+inviteText;
   return tg(token,"editMessageText",{
     chat_id:chatId,
     message_id:progressMessage?.message_id,
