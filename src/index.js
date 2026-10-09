@@ -4692,11 +4692,11 @@ function folderProgressKeyboard(directoryId,count,nextOffset) {
   return {inline_keyboard:rows};
 }
 function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).sort((a,b)=>Number(a.messageId)-Number(b.messageId)); }
-function directoryBatchItems(all, offset=0, limit=10) {
+function directoryBatchItems(all, offset=0, limit=10, preserveAlbum=true) {
   const list=Array.isArray(all)?all:[];
   let i=Math.max(0,Number(offset)||0);
   const picked=[];
-  if(i>0 && i<list.length && list[i]?.mediaGroupId && String(list[i-1]?.mediaGroupId||"")===String(list[i]?.mediaGroupId||"")) {
+  if(preserveAlbum && i>0 && i<list.length && list[i]?.mediaGroupId && String(list[i-1]?.mediaGroupId||"")===String(list[i]?.mediaGroupId||"")) {
     const groupId=String(list[i].mediaGroupId);
     while(i>0 && String(list[i-1]?.mediaGroupId||"")===groupId) i--;
   }
@@ -5201,16 +5201,17 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     const quotaDone=!member&&!isAdmin(userId)&&nonMemberDailyRemaining(userId)<=0;
     const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
     const summary="<b>📦 本批资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📤 成功发送：<b>"+ok+"</b> 条\\n⚠️ 失败："+fail+" 条\\n📚 本批："+items.length+" 条\\n\\n"+(mode==="random"?"🎲 可以继续随机获取下一批。":"🆕 可以继续浏览下一批最新资源。")+(extraMessage?"\\n\\n"+extraMessage:"")+inviteText;
-    await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total));
+    await sendHtml(token,chatId,summary,batchNavigation(mode,offset,total,ok));
     return;
   } catch(e) {
     console.error("HISTORY DELIVERY:",e);
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\\n\\n原因："+escapeHtml(e.message||e),childMenu());
   }
 }
-function batchNavigation(mode,offset,total){
+function batchNavigation(mode,offset,total,advance=10){
   const rows=[];
-  const next=Number(offset||0)+10;
+  const step=Number(advance)>0?Number(advance):10;
+  const next=Number(offset||0)+step;
   if(mode==="random"){
     rows.push([{text:"🎲 再来一组",callback_data:"batch:random"}]);
   } else if(mode==="latest"){
@@ -5284,7 +5285,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   // 自定义“获取资源后提示”直接放进最后的汇总消息，按钮始终挂在最下面。
   const extraMessage = postResourceMessage();
   const finalSummary = extraMessage ? summary+"\n\n"+extraMessage : summary;
-  await sendHtml(token,chatId,finalSummary,{...navigation,...(albumReplyId?{reply_to_message_id:albumReplyId}:{})});
+  await sendHtml(token,chatId,finalSummary,{...batchNavigation(options.mode,options.offset||0,options.total||valid.length,ok),...(albumReplyId?{reply_to_message_id:albumReplyId}:{})});
   return;
 }
 const states=new Map();
@@ -6225,15 +6226,15 @@ async function mainMessage(msg) {
       return send(TOKEN,uid,"🏁 <b>本文件夹已到末尾</b>\\n\\n没有更多资源可以获取了。");
     }
 
-    const pageInfo=directoryBatchItems(all,offset,10);
-    const page=pageInfo.items;
     const member=await allowed(TOKEN,uid);
+    const pageInfo=directoryBatchItems(all,offset,10,member);
+    const page=pageInfo.items;
     const guest=withoutVideosForGuest(page,member,uid);
     const allowedPage=guest.items;
     if(!allowedPage.length) return guestVideoNotice(TOKEN,uid);
     const sendResult=await sendDirectoryBatch(TOKEN,uid,allowedPage);
     const sent=Number(sendResult?.sent||0);
-    const nextOffset=sent?pageInfo.nextOffset:offset;
+    const nextOffset=sent?(member?pageInfo.nextOffset:Math.min(offset+sent,all.length)):offset;
     if(sent>0&&!member&&!isAdmin(uid)) consumeVideoQuota(uid,Array.isArray(sendResult?.sentItems)?sendResult.sentItems:[]);
     states.set(key,{step:"directory_page",directoryId:s.directoryId,offset:nextOffset});
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
@@ -8119,7 +8120,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return sendHtml(token,chatId,"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",{reply_markup:directoryInlineKeyboard()});
     }
     const member=await allowed(TOKEN,uid);
-    const selectedBatch=directoryBatchItems(all,0,10);
+    const selectedBatch=directoryBatchItems(all,0,10,member);
     const guest=withoutVideosForGuest(selectedBatch.items,member,uid);
     if(!guest.items.length) return guestVideoNotice(token,chatId);
     const first=guest.items;
@@ -8142,7 +8143,7 @@ async function handleDirectoryCallback(token, q, child=false) {
         else saveDb();
       }
       // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
-      const next=sent>0?selectedBatch.nextOffset:0;
+      const next=sent>0?(member?selectedBatch.nextOffset:Math.min(sent,all.length)):0;
       const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
       const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
       const summary=(sent>0
@@ -8163,7 +8164,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(offset>=all.length) return;
 
   const member=await allowed(TOKEN,uid);
-  const selectedBatch=directoryBatchItems(all,offset,10);
+  const selectedBatch=directoryBatchItems(all,offset,10,member);
   let batch=selectedBatch.items;
   const guest=withoutVideosForGuest(batch, member, uid);
   batch=guest.items;
@@ -8183,7 +8184,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(sent) recordStat(uid,"download",sent);
 
   // 只有至少发送成功一条，才推进到下一批；0 条成功时保留当前 offset 供重试。
-  const next=Math.min(sent>0?selectedBatch.nextOffset:offset,all.length);
+  const next=Math.min(sent>0?(member?selectedBatch.nextOffset:offset+sent):offset,all.length);
   if(sent) {
     const sentItems=Array.isArray(album?.sentItems)?album.sentItems:batch.slice(0,sent);
     for(const item of sentItems) { recordResourceDownload(item); recordRecent(uid,item); }
