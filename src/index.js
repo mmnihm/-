@@ -7356,7 +7356,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return sendHtml(token,chatId,directoryText(),{reply_markup:directoryInlineKeyboard()});
     }
     if(action==="random" || action==="latest") {
-      try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+      void tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
       if(action==="random") {
         await answer("正在随机获取");
         return deliver(token,uid,uid,random10(uid),token,{mode:"random",offset:0,total:db.resources.length});
@@ -8014,7 +8014,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return sendHtml(token,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",child ? childMenu() : userMenu());
     }
     // 再来一组/下一批前清除旧控制键盘，新按钮只挂在新一组文件之后。
-    try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+    void tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
     if(!(await requireMemberAccess(token,chatId,uid,child ? childMenu() : userMenu()))) {
       void answer("请先加入指定会员群",true);
       return;
@@ -8128,7 +8128,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       } else {
         saveDb();
       }
-      try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+      void tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
       return sendHtml(token,chatId,"🔎 <b>搜索结果</b>\n━━━━━━━━━━━━━━\n🔍 关键词：<b>"+escapeHtml(s.query)+"</b>\n📚 找到 <b>"+s.results.length+"</b> 个资源\n📄 第 <b>"+(page+1)+" / "+Math.max(1,Math.ceil(s.results.length/10))+"</b> 页\n\n✅ 已成组发送：<b>"+sent+" </b> 个资源"+(sent<guest.items.length?"（失败 "+(guest.items.length-sent)+" 个）":"")+"\n👇 可继续选择其他资源"+(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0?"\n\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":""),resourceInlineKeyboard(s.results,page));
     } catch(e) {
       return safeEdit(token,{
@@ -8411,7 +8411,7 @@ async function handleDirectoryCallback(token, q, child=false) {
 
   if(data.startsWith("dir:")) {
     // 先移除旧目录键盘，避免操作按钮留在新发文件上方。
-    try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+    void tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
     if(!all.length) {
       return sendHtml(token,chatId,"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",{reply_markup:directoryInlineKeyboard()});
     }
@@ -8456,7 +8456,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   // “获取下一组”按钮所在的旧控制消息不再保留键盘；新控制消息会放在本组文件之后。
-  try { await tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}); } catch(e) {}
+  void tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
   if(offset>=all.length) return;
 
   const member=await allowed(TOKEN,uid);
