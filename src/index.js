@@ -5436,10 +5436,21 @@ function random10(userId) {
     }
   }
   if(!batch.length) return [];
-  history.push(...pickedKeys);
-  db.settings.randomHistory[key]=[...new Set(history)].slice(-arr.length);
-  saveDb();
+  // 随机历史只在资源实际发送成功后记录；避免发送失败也把资源标记为已看。
   return batch;
+}
+function recordRandomHistory(userId, items) {
+  const sentItems=Array.isArray(items)?items:[];
+  if(!sentItems.length) return;
+  if(!db.settings.randomHistory || typeof db.settings.randomHistory!=="object") db.settings.randomHistory={};
+  const key=String(userId);
+  const validIds=new Set((Array.isArray(db.resources)?db.resources:[]).map(x=>resourceKey(x)));
+  const existing=Array.isArray(db.settings.randomHistory[key])
+    ? db.settings.randomHistory[key].filter(id=>validIds.has(String(id)))
+    : [];
+  const added=sentItems.map(resourceKey).filter(id=>validIds.has(id));
+  db.settings.randomHistory[key]=[...new Set([...existing,...added])].slice(-Math.max(1,validIds.size));
+  saveDb();
 }
 function isPermanentResourceError(error) {
   const msg=String(error?.message||error||"");
@@ -5542,6 +5553,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
   try {
     const album=await sendResourceAlbum(token,chatId,items,{singleEach:false});
     const ok=Number(album?.sent||0),fail=Math.max(Number(album?.failed||0),items.length-ok);
+    if(options.mode==="random") recordRandomHistory(userId,Array.isArray(album?.sentItems)?album.sentItems:[]);
     if(ok>0) {
       recordStat(userId,"download",ok);
       for(const item of (Array.isArray(album?.sentItems)?album.sentItems:items.slice(0,ok))){recordResourceDownload(item);recordRecent(userId,item);}
@@ -5566,6 +5578,25 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
     return sendHtml(token,chatId,"<b>❌ 资源获取失败</b>\\n\\n原因："+escapeHtml(e.message||e),childMenu());
   }
 }
+// 同一用户/聊天同一时间只允许一批资源发送，避免快速连点不同旧按钮造成并发重复发送。
+const activeResourceDeliveries = new Set();
+function guardResourceDelivery(fn) {
+  return async function(token, chatId, userId, ...rest) {
+    const key=String(chatId)+":"+String(userId);
+    if(activeResourceDeliveries.has(key)) {
+      try { await sendHtml(token,chatId,"<b>⏳ 正在处理上一批资源</b>\\n\\n请稍候片刻，避免重复发送。",{}); } catch {}
+      return;
+    }
+    activeResourceDeliveries.add(key);
+    try { return await fn.call(this,token,chatId,userId,...rest); }
+    finally { activeResourceDeliveries.delete(key); }
+  };
+}
+const deliverUnlocked = deliver;
+deliver = guardResourceDelivery(deliverUnlocked);
+const deliverFromHistoryUnlocked = deliverFromHistory;
+deliverFromHistory = guardResourceDelivery(deliverFromHistoryUnlocked);
+
 function batchNavigation(mode,offset,total,advance=10,pageOffsets=null){
   const rows=[];
   const step=Number(advance)>0?Number(advance):10;
@@ -5631,6 +5662,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     throw e;
   }
   ok=Number(album?.sent||0);
+  if(options.mode==="random") recordRandomHistory(userId,Array.isArray(album?.sentItems)?album.sentItems:[]);
   if(!member&&!isAdmin(userId)&&valid.length>ok) releaseNonMemberQuotaReservation(userId,valid.length-ok);
   albumReplyId=Number(album?.lastMessageId||0);
   fail=Math.max(Number(album?.failed||0),valid.length-ok);
