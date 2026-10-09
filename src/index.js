@@ -3808,6 +3808,17 @@ function postResourceMessage() {
 }
 
 function resourceKey(item){return String(item?.chatId??"")+":"+String(item?.messageId??"");}
+ // Avoid repeatedly requesting source messages already confirmed missing; keep DB records intact.
+const unavailableOriginalMessageKeys = new Set();
+function rememberUnavailableOriginal(item) {
+  const key=resourceKey(item);
+  if(!key || key.endsWith(":0")) return;
+  unavailableOriginalMessageKeys.add(key);
+  if(unavailableOriginalMessageKeys.size>5000) {
+    const first=unavailableOriginalMessageKeys.values().next().value;
+    unavailableOriginalMessageKeys.delete(first);
+  }
+}
 function resourceByKey(key){const s=String(key||"");const p=s.lastIndexOf(":");if(p<1)return null;const chatId=s.slice(0,p),messageId=Number(s.slice(p+1));return db.resources.find(x=>String(x.chatId)===chatId&&Number(x.messageId)===messageId)||null;}
 function userFavorites(uid){const k=String(uid);const a=Array.isArray(db.settings.userFavorites?.[k])?db.settings.userFavorites[k]:[];const v=a.filter(x=>!!resourceByKey(x));db.settings.userFavorites[k]=v.slice(0,500);return db.settings.userFavorites[k];}
 function isFavorite(uid,item){return userFavorites(uid).includes(resourceKey(item));}
@@ -5016,14 +5027,17 @@ function expandOriginalAlbumItems(items) {
 async function sendResourceAlbum(token, chatId, items, options={}) {
   // 原样复制仓库消息：只把仓库里本来属于同一相册的连续消息一起复制，
   // 不按文件类型重新排序，不把独立照片/视频拼成新相册。
-  const valid=(Array.isArray(items)?items:[])
+  const inputItems=Array.isArray(items)?items:[];
+  const valid=inputItems
     .filter(x=>x&&x.chatId!==undefined&&x.chatId!==null&&String(x.chatId).trim()&&Number(x.messageId)>0)
+    .filter(x=>!unavailableOriginalMessageKeys.has(resourceKey(x)))
     .sort((a,b)=>{
       const sameChat=String(a.chatId)===String(b.chatId);
       return sameChat?Number(a.messageId)-Number(b.messageId):0;
     });
-  if(!valid.length) return {sent:0,lastMessageId:0,failed:0,sentItems:[]};
-  let sent=0,lastMessageId=0,failed=0;
+  const skippedUnavailable=inputItems.filter(x=>x&&unavailableOriginalMessageKeys.has(resourceKey(x))).length;
+  if(!valid.length) return {sent:0,lastMessageId:0,failed:skippedUnavailable,sentItems:[]};
+  let sent=0,lastMessageId=0,failed=skippedUnavailable;
   const sentItems=[];
   for(let i=0;i<valid.length;) {
     const item=valid[i];
@@ -5112,8 +5126,12 @@ async function sendResourceAlbum(token, chatId, items, options={}) {
         }
       } else {
         failed+=Math.max(1,group.length);
+        if(missingOriginal) {
+          for(const failedItem of (group.length?group:[item])) rememberUnavailableOriginal(failedItem);
+        }
         console.error("ORIGINAL MESSAGE COPY FAILED:",errorText,
-          "sourceChat=",item.chatId,"message=",item.messageId,"mediaGroupId=",groupId||"none");
+          "sourceChat=",item.chatId,"message=",item.messageId,"mediaGroupId=",groupId||"none",
+          missingOriginal?"| added to process-local skip list to prevent repeated Telegram requests":"");
       }
     }
     i+=group.length>=2?group.length:1;
