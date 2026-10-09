@@ -5893,7 +5893,7 @@ async function mainMessage(msg) {
   const t=msg.text||"";
   const rawText=String(msg.text||"").trim();
   const admin=isAdmin(uid);
-  if(!admin && db.settings?.redeemAccessBans?.[String(uid)]) return sendHtml(TOKEN,uid,"⛔ <b>此账号已被禁止使用机器人。</b>\\n如有疑问，请联系管理员。");
+  if(!admin && db.settings?.redeemAccessBans?.[String(uid)]) return sendHtml(TOKEN,uid,"⛔ <b>此账号已被禁止使用机器人。</b>\n如有疑问，请联系管理员。");
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
   let s=states.get(key);
@@ -7200,7 +7200,7 @@ async function childMessage(child,msg,token) {
   // 子机器人消息处理不能等待 Google Sheets，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id;
-  if(!isAdmin(uid) && db.settings?.redeemAccessBans?.[String(uid)]) return sendHtml(token,uid,"⛔ <b>此账号已被禁止使用机器人。</b>\\n如有疑问，请联系管理员。");
+  if(!isAdmin(uid) && db.settings?.redeemAccessBans?.[String(uid)]) return sendHtml(token,uid,"⛔ <b>此账号已被禁止使用机器人。</b>\n如有疑问，请联系管理员。");
   await ensureUserInlineMode(token, uid);
   // 子机器人上传状态与回调统一使用 token-aware key，多个子机器人互不串任务。
   const key=uploadStateKey(uid,true,token);
@@ -7708,7 +7708,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     const bannedCount=Object.keys(db.settings?.redeemAccessBans||{}).length;
     await answer("打开兑换码管理");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"<b>🎟️ 兑换码管理</b>\\n━━━━━━━━━━━━━━\\n\\n📦 总计："+all.length+" 个\\n🟢 未使用："+unused+" 个\\n☑️ 已兑换："+used+" 个\\n🚫 已封禁机器人使用权限："+bannedCount+" 人\\n\\n👇 可批量生成兑换码，或封禁指定用户并将其移出会员群。",
+      text:"<b>🎟️ 兑换码管理</b>\n━━━━━━━━━━━━━━\n\n📦 总计："+all.length+" 个\n🟢 未使用："+unused+" 个\n☑️ 已兑换："+used+" 个\n🚫 已封禁机器人使用权限："+bannedCount+" 人\n\n👇 可批量生成兑换码，或封禁指定用户并将其移出会员群。",
       parse_mode:"HTML",reply_markup:redeemAdminInline()});
   }
   if(data==="adm:group") return mainMessage({chat:{id:chatId,type:"private"},from:{id:uid},text:"🔐 指定群管理"});
@@ -7755,7 +7755,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       saveDb();
       await answer("请输入要封禁的用户 ID");
       return safeEdit(token,{chat_id:chatId,message_id:messageId,
-        text:"<b>🚫 封禁会员使用权限</b>\\n━━━━━━━━━━━━━━\\n\\n请发送要封禁用户的 Telegram 数字 ID。\\n\\n执行后会：\\n• 禁止该用户使用主机器人及子机器人\\n• 尝试将其移出当前配置的指定会员群\\n• 保留会员记录、兑换码记录和其他数据\\n\\n注意：群移出需要机器人具备群管理权限。\\n发送 /cancel 可取消。",
+        text:"<b>🚫 封禁会员使用权限</b>\n━━━━━━━━━━━━━━\n\n请发送要封禁用户的 Telegram 数字 ID。\n\n执行后会：\n• 禁止该用户使用主机器人及子机器人\n• 尝试将其移出当前配置的指定会员群\n• 保留会员记录、兑换码记录和其他数据\n\n注意：群移出需要机器人具备群管理权限。\n发送 /cancel 可取消。",
         parse_mode:"HTML",
         reply_markup:{inline_keyboard:[[{text:"⬅️ 取消并返回",callback_data:"adm:redeem"}]]}
       });
