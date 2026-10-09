@@ -5528,8 +5528,15 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
   let lastError="";
 
   let albumReplyId=0;
-  const album=await sendResourceAlbum(sourceToken,chatId,valid,{singleEach:options.mode==="random"});
+  let album;
+  try {
+    album=await sendResourceAlbum(sourceToken,chatId,valid,{singleEach:options.mode==="random"});
+  } catch(e) {
+    if(!member&&!isAdmin(userId)) releaseNonMemberQuotaReservation(userId,valid.length);
+    throw e;
+  }
   ok=Number(album?.sent||0);
+  if(!member&&!isAdmin(userId)&&valid.length>ok) releaseNonMemberQuotaReservation(userId,valid.length-ok);
   albumReplyId=Number(album?.lastMessageId||0);
   fail=Math.max(Number(album?.failed||0),valid.length-ok);
   for(const item of (Array.isArray(album?.sentItems)?album.sentItems:valid.slice(0,ok))) {
