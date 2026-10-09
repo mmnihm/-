@@ -5098,73 +5098,65 @@ function expandOriginalAlbumItems(items) {
 }
 
 async function sendResourceAlbum(token, chatId, items) {
-  const valid=(Array.isArray(items)?items:[]).filter(x=>x&&x.chatId&&Number(x.messageId)>0);
+  // 原样复制仓库消息：只把仓库里本来属于同一相册的连续消息一起复制，
+  // 不按文件类型重新排序，不把独立照片/视频拼成新相册。
+  const valid=(Array.isArray(items)?items:[])
+    .filter(x=>x&&x.chatId!==undefined&&x.chatId!==null&&String(x.chatId).trim()&&Number(x.messageId)>0)
+    .sort((a,b)=>{
+      const sameChat=String(a.chatId)===String(b.chatId);
+      return sameChat?Number(a.messageId)-Number(b.messageId):0;
+    });
   if(!valid.length) return {sent:0,lastMessageId:0,failed:0,sentItems:[]};
   let sent=0,lastMessageId=0,failed=0;
   const sentItems=[];
-  const canAlbum=x=>Boolean(x&&x.fileId&&["photo","video"].includes(String(x.fileType||"").toLowerCase()));
-  // 每批优先把照片/视频放在一起发送，避免随机结果里夹着文件后导致图片被拆散。
-  const ordered=[...valid.filter(canAlbum),...valid.filter(x=>!canAlbum(x))];
-  for(let i=0;i<ordered.length;) {
-    const item=ordered[i];
-    // 优先把本批连续的照片/视频合成相册，不受原消息是否带 mediaGroupId 限制。
-    if(canAlbum(item)) {
-      const group=[]; let j=i;
-      while(j<ordered.length&&group.length<10&&canAlbum(ordered[j])) { group.push(ordered[j]); j++; }
+  for(let i=0;i<valid.length;) {
+    const item=valid[i];
+    const groupId=String(item.mediaGroupId||"");
+    const group=[];
+    let j=i;
+    if(groupId) {
+      while(j<valid.length &&
+        String(valid[j].chatId)===String(item.chatId) &&
+        String(valid[j].mediaGroupId||"")===groupId &&
+        Number(valid[j].messageId)===Number(item.messageId)+(j-i)) {
+        group.push(valid[j]); j++;
+      }
+    }
+    try {
+      let copied;
       if(group.length>=2) {
-        const sendGroup=async(sendToken)=>tg(sendToken,"sendMediaGroup",{
+        copied=await tg(token,"copyMessages",{
           chat_id:chatId,
-          media:group.map(x=>({type:String(x.fileType).toLowerCase(),media:x.fileId,...(x.caption?{caption:String(x.caption).slice(0,1024)}:{})})),
+          from_chat_id:String(item.chatId),
+          message_ids:group.map(x=>Number(x.messageId)),
           ...(contentProtectionEnabled()?{protect_content:true}:{})
         });
-        try {
-          let result;
-          try { result=await sendGroup(token); }
-          catch(e) { if(token===TOKEN) throw e; console.warn("MEDIA GROUP RETRY WITH MAIN BOT:",String(e?.message||e)); result=await sendGroup(TOKEN); }
-          const ids=Array.isArray(result)?result.filter(x=>x&&x.message_id):[];
-          sent+=ids.length;
-          if(ids.length) lastMessageId=Number(ids[ids.length-1].message_id)||lastMessageId;
-          sentItems.push(...group.slice(0,ids.length));
-          if(ids.length<group.length) failed+=group.length-ids.length;
-          for(const id of ids) scheduleAutoDelete(token,chatId,[id.message_id]);
-        } catch(e) {
-          console.warn("MEDIA GROUP SEND FAILED; fallback to individual sends:",String(e?.message||e));
-          for(const member of group) {
-            try { const result=await sendIndexedResource(token,chatId,member); sent++;sentItems.push(member);lastMessageId=Number(result?.message_id)||lastMessageId; }
-            catch(err) { failed++;console.error("MEDIA GROUP ITEM FAILED:",String(err?.message||err),"message=",member.messageId); }
-          }
-        }
-        i=j; continue;
+        const ids=Array.isArray(copied)?copied.filter(x=>x&&x.message_id):[];
+        sent+=ids.length;
+        sentItems.push(...group.slice(0,ids.length));
+        if(ids.length) lastMessageId=Number(ids[ids.length-1].message_id)||lastMessageId;
+        if(ids.length<group.length) failed+=group.length-ids.length;
+        for(const id of ids) scheduleAutoDelete(token,chatId,[id.message_id]);
+        i=j;
+        continue;
       }
+      copied=await tg(token,"copyMessage",{
+        chat_id:chatId,
+        from_chat_id:String(item.chatId),
+        message_id:Number(item.messageId),
+        ...(contentProtectionEnabled()?{protect_content:true}:{})
+      });
+      if(copied&&copied.message_id) {
+        sent++; sentItems.push(item);
+        lastMessageId=Number(copied.message_id)||lastMessageId;
+        scheduleAutoDelete(token,chatId,[copied.message_id]);
+      } else failed++;
+    } catch(e) {
+      failed+=Math.max(1,group.length);
+      console.error("ORIGINAL MESSAGE COPY FAILED:",String(e?.message||e),
+        "sourceChat=",item.chatId,"message=",item.messageId,"mediaGroupId=",groupId||"none");
     }
-    const groupId=String(item.mediaGroupId||"");
-    if(groupId) {
-      const group=[]; let j=i;
-      while(j<ordered.length&&String(ordered[j]?.chatId||"")===String(item.chatId||"")&&String(ordered[j]?.mediaGroupId||"")===groupId) { group.push(ordered[j]); j++; }
-      group.sort((x,y)=>Number(x.messageId)-Number(y.messageId));
-      if(group.length>=2) {
-        try {
-          const copied=await tg(token,"copyMessages",{chat_id:chatId,from_chat_id:String(item.chatId),message_ids:group.map(x=>Number(x.messageId)),...(contentProtectionEnabled()?{protect_content:true}:{})});
-          const ids=Array.isArray(copied)?copied.filter(x=>x&&x.message_id):[];
-          sent+=ids.length;
-          if(ids.length) lastMessageId=Number(ids[ids.length-1].message_id)||lastMessageId;
-          sentItems.push(...group.slice(0,ids.length));
-          if(ids.length<group.length) failed+=group.length-ids.length;
-          if(!ids.length) throw new Error("原相册复制没有返回结果");
-          for(const id of ids) scheduleAutoDelete(token,chatId,[id.message_id]);
-        } catch(e) {
-          console.warn("ORIGINAL ALBUM COPY FAILED; fallback to individual sends:",String(e?.message||e));
-          for(const member of group) {
-            try { const result=await sendIndexedResource(token,chatId,member); sent++;sentItems.push(member);lastMessageId=Number(result?.message_id)||lastMessageId; }
-            catch(err) { failed++;console.error("ORIGINAL ALBUM ITEM FAILED:",String(err?.message||err),"message=",member.messageId); }
-          }
-        }
-        i=j; continue;
-      }
-    }
-    i++;
-    try { const result=await sendIndexedResource(token,chatId,item); sent++;sentItems.push(item);lastMessageId=Number(result?.message_id)||lastMessageId; }
-    catch(e) { failed++;console.error("RESOURCE SEND FAILED:",String(e?.message||e),"message=",item.messageId); }
+    i+=group.length>=2?group.length:1;
   }
   return {sent,lastMessageId,failed,sentItems};
 }
@@ -6490,7 +6482,7 @@ async function mainMessage(msg) {
     }
 
     const member=await allowed(TOKEN,uid);
-    const pageInfo=directoryBatchItems(all,offset,10,member);
+    const pageInfo=directoryBatchItems(all,offset,10,true);
     const page=pageInfo.items;
     const guest=withoutVideosForGuest(page,member,uid,member);
     const allowedPage=guest.items;
@@ -8447,7 +8439,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       return sendHtml(token,chatId,"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",{reply_markup:directoryInlineKeyboard()});
     }
     const member=await allowed(TOKEN,uid);
-    const selectedBatch=directoryBatchItems(all,0,10,member);
+    const selectedBatch=directoryBatchItems(all,0,10,true);
     const guest=withoutVideosForGuest(selectedBatch.items,member,uid,member);
     if(!guest.items.length) return guestVideoNotice(token,chatId);
     const first=guest.items;
@@ -8456,7 +8448,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     try {
       progressMessage=await tg(token,"sendMessage",{
         chat_id:chatId,
-        text:"⏳ 正在整理本组照片和视频，请稍候……"
+        text:"⏳ 正在原样转发仓库消息，请稍候……"
       });
       const album=await sendResourceAlbum(token,chatId,first);
       const sent=Number(album?.sent||0);
