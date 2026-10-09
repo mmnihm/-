@@ -5098,8 +5098,8 @@ function consumeVideoQuota(uid,items){
   const baseRemaining=Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid));
   const baseCount=Math.min(list.length,baseRemaining);
   if(baseCount>0) consumeNonMemberQuota(uid,baseCount);
-  const overflow=list.slice(baseCount);
-  const bonusVideos=overflow.filter(isVideoResource).length;
+  // guest filtering only appends bonus-eligible videos after the daily free-resource portion.
+  const bonusVideos=Math.max(0,list.length-baseCount);
   if(bonusVideos>0) consumeExtraVideoQuota(uid,bonusVideos);
   saveDb();
 }
