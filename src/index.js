@@ -4152,25 +4152,10 @@ const replyKeyboardClearedChats = new Set();
 async function ensureUserInlineMode(token, chatId) {
   const key = tokenFingerprint(token) + ":" + String(chatId);
   if (replyKeyboardClearedChats.has(key)) return;
-  if (String(chatId) === String(TOKEN.split(":")[0] || "")) {
-    replyKeyboardClearedChats.add(key);
-    return;
-  }
-  try {
-    await tg(token, "sendMessage", {
-      chat_id: chatId,
-      text: "\u2063",
-      reply_markup: {remove_keyboard:true}
-    });
-    replyKeyboardClearedChats.add(key);
-  } catch (e) {
-    const message = String(e?.message || e);
-    if (/can't send messages to the bot|bot was blocked|chat not found/i.test(message)) {
-      replyKeyboardClearedChats.add(key);
-      return;
-    }
-    console.warn("⚠️ 清理旧键盘失败:", message);
-  }
+  // Do not send a standalone invisible message to remove the old reply keyboard.
+  // Telegram may reject it as "message text is empty"; when accepted it appears
+  // as a blank message before the real menu. Inline keyboards work without it.
+  replyKeyboardClearedChats.add(key);
 }
 
 function adminMenu(){return{reply_markup:adminRootInline()};}
