@@ -3907,7 +3907,7 @@ function adminBotInline(){return{inline_keyboard:[
  [{text:"🤖 克隆机器人",callback_data:"adm:clone"}],
  [{text:"⬅️ 返回管理",callback_data:"admin:root"}]
 ]};}
-function quotaSettingsText(){return"<b>🎁 会员 / 非会员额度</b>\n━━━━━━━━━━━━━━\n\n👤 非会员每日免费：<b>"+nonMemberDailyLimit()+"</b> 个资源\n💎 会员：不限量\n\n👇 修改额度";}
+function quotaSettingsText(){return"<b>🎬 会员 / 非会员视频额度</b>\n━━━━━━━━━━━━━━\n\n👤 非会员每日可获取视频：<b>"+nonMemberDailyLimit()+"</b> 个\n💎 会员：视频不限量\n📂 普通目录/搜索浏览不受此额度限制\n\n👇 修改每日视频额度";}
 
 function userHomeInlineKeyboard() {
   return {reply_markup:{inline_keyboard:[
@@ -4955,13 +4955,25 @@ function search(q) {
 }
 
 function withoutVideosForGuest(items, member, uid) {
-  if(member || isAdmin(uid)) return {items:items||[], blocked:0};
   const list=Array.isArray(items)?items:[];
-  const kept=list.filter(x=>!isVideoResource(x));
-  return {items:kept, blocked:list.length-kept.length};
+  if(member || isAdmin(uid)) return {items:list, blocked:0, allowedVideos:list.filter(isVideoResource).length};
+  const remaining=nonMemberDailyRemaining(uid);
+  let allowedVideos=0, blocked=0;
+  const kept=[];
+  for(const item of list){
+    if(!isVideoResource(item)){kept.push(item);continue;}
+    if(allowedVideos<remaining){kept.push(item);allowedVideos++;}
+    else blocked++;
+  }
+  return {items:kept, blocked, allowedVideos};
 }
 async function guestVideoNotice(token, chatId) {
-  return sendHtml(token, chatId, "<b>🔐 未加入指定群</b>\n\n可以浏览目录和搜索。\n视频不会发送，加入指定群后才能获取视频。", userMenu());
+  return sendHtml(token, chatId, "<b>🎬 今日免费视频额度已用完</b>\n\n非会员每天可获取 <b>"+nonMemberDailyLimit()+"</b> 个视频。\n加入指定会员群后可不限量获取。", userMenu());
+}
+function consumeVideoQuota(uid,items){
+  if(isAdmin(uid)) return;
+  const count=(Array.isArray(items)?items:[]).filter(isVideoResource).length;
+  if(count>0) consumeNonMemberQuota(uid,count);
 }
 function isVideoResource(item){
   const type=String(item?.fileType||"").toLowerCase();
@@ -5131,7 +5143,7 @@ async function deliverFromHistory(token,chatId,userId,items,options={}) {
       }
       await sleep(150);
     }
-    if(ok>0){recordStat(userId,"download",ok); if(!member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok); else saveDb();}
+    if(ok>0){recordStat(userId,"download",ok); if(!member && !isAdmin(userId)) consumeVideoQuota(userId,valid.filter(isVideoResource).slice(0,ok)); else saveDb();}
     const mode=options.mode==="random"?"random":"latest";
     const offset=Math.max(0,Number(options.offset)||0);
     const total=Math.max(0,Number(options.total)||db.resources.length);
@@ -5224,7 +5236,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
 
   if(ok>0) {
     recordStat(userId,"download",ok);
-    if(!member && !isAdmin(userId)) consumeNonMemberQuota(userId,ok);
+    if(!member && !isAdmin(userId)) consumeVideoQuota(userId,valid.filter(isVideoResource).slice(0,ok));
     else saveDb();
   } else {
     saveDb();
@@ -7165,7 +7177,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   for(const prefix of ["getfav:","getrecent:","gethot:","gettag:"]){
     if(data.startsWith(prefix)){
       const item=resourceByKey(data.slice(prefix.length));if(!item){void answer("资源不存在或已删除",true);return;}
-      const member=await allowed(TOKEN,uid);if(!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0){void answer("今日免费额度已用完",true);return sendQuotaNotice(token,chatId,uid,userMenu());}
+      const member=await allowed(TOKEN,uid);if(isVideoResource(item)&&!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0){void answer("今日免费视频额度已用完",true);return guestVideoNotice(token,chatId);}
       try{void answer("正在获取资源…");await sendIndexedResource(token,chatId,item);recordStat(uid,"download",1);recordResourceDownload(item);recordRecent(uid,item);if(!member&&!isAdmin(uid))consumeNonMemberQuota(uid,1);else saveDb();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 已发送资源</b>\n\n📦 "+escapeHtml(item.title||"未命名资源")+"\n\n👇 可以继续浏览",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:isFavorite(uid,item)?"⭐ 已收藏":"☆ 收藏",callback_data:"favtoggle:"+resourceKey(item)}],
         [{text:"⬅️ 返回我的资源",callback_data:"hub"}]
@@ -7755,9 +7767,9 @@ async function handleDirectoryCallback(token, q, child=false) {
       return;
     }
     const member=await allowed(TOKEN,uid);
-    if(!member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0) {
+    if(isVideoResource(item) && !member && !isAdmin(uid) && nonMemberDailyRemaining(uid)<=0) {
       void answer("今日免费额度已用完",true);
-      return sendQuotaNotice(token,chatId,uid,child ? childMenu() : userMenu());
+      return guestVideoNotice(token,chatId);
     }
     void answer("正在获取资源…");
     try {
