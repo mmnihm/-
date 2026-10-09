@@ -56,7 +56,7 @@ function patchSource() {
     }
     src = src.replace('"⚡ 小文件最多 5 个并发；单批总传输不超过 1GB。",', '"⚡ 小文件最多 5 个并发；大文件单个上传。",');
     src = src.replace('"⚙️ 同时只处理 1 个文件，避免占满服务器磁盘。",', '"⚡ ≤200MB：5 个并发；>200MB：单个上传。",');
-    src = src.replace("/* " + PATCH_MARK + " */", "/* " + PATCH_MARK + " */\\nconst " + PROGRESS_PATCH_MARK + "=true;");
+    src = src.replace("/* " + PATCH_MARK + " */", "/* " + PATCH_MARK + " */\nconst " + PROGRESS_PATCH_MARK + "=true;");
     fs.writeFileSync(SOURCE, src);
     console.log("📊 CLOUD123 实时上传进度补丁已贴");
     return true;
@@ -85,9 +85,9 @@ function patchSource() {
     const localProgress = [
       "      /* CLOUD123_UPLOAD_PROGRESS_SCOPE_FIX */",
       "      const uploadProgress = globalThis.__CLOUD123_UPLOAD_PROGRESS || (globalThis.__CLOUD123_UPLOAD_PROGRESS = new Map());"
-    ].join("\\n");
+    ].join("\n");
     if (src.includes(uploadOneAnchor)) {
-      src = src.replace(uploadOneAnchor, uploadOneAnchor + "\\n" + localProgress);
+      src = src.replace(uploadOneAnchor, uploadOneAnchor + "\n" + localProgress);
       fs.writeFileSync(SOURCE, src);
       console.log("🛠️ CLOUD123 已修复 uploadOne 进度变量作用域");
       return true;
@@ -122,10 +122,10 @@ function patchSource() {
       "        });",
       "      } catch {} finally { progressEditing=false; }",
       "    };",
-    ].join("\\n");
+    ].join("\n");
     const uploadAnchor = "    const uploadOne = async (item) => {";
     if (!src.includes(uploadAnchor)) throw new Error("123云盘进度修复：找不到 uploadOne 插入点");
-    src = src.replace(uploadAnchor, progressHelper + "\\n" + uploadAnchor);
+    src = src.replace(uploadAnchor, progressHelper + "\n" + uploadAnchor);
     console.log("🛠️ CLOUD123 已恢复实时上传进度 helper");
     fs.writeFileSync(SOURCE, src);
     return true;
