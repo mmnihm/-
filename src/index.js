@@ -7227,7 +7227,10 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
   callbackDedupe.set(callbackDedupeKey,callbackDedupeNow);
   // 正常情况下 3 秒后释放；同时设硬上限，避免异常流量导致 Map 持续增长。
-  const callbackDedupeTimer=setTimeout(()=>{\n    // 只有当前这次点击仍是最新记录时才清理，避免旧定时器误删后来点击的防重记录。\n    if(callbackDedupe.get(callbackDedupeKey)===callbackDedupeNow) callbackDedupe.delete(callbackDedupeKey);\n  },3000);
+  const callbackDedupeTimer=setTimeout(()=>{
+    // 只有当前这次点击仍是最新记录时才清理，避免旧定时器误删后来点击的防重记录。
+    if(callbackDedupe.get(callbackDedupeKey)===callbackDedupeNow) callbackDedupe.delete(callbackDedupeKey);
+  },3000);
   callbackDedupeTimer.unref?.();
   if(callbackDedupe.size>5000) {
     const cutoff=callbackDedupeNow-10000;
