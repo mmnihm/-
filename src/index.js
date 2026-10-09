@@ -5562,9 +5562,18 @@ function supportUserKeyboard() {
 }
 function supportAdminText() {
   const rows=supportActiveSessions();
-  if(!rows.length) return "<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n📭 当前没有进行中的客服会话。";
+  if(!rows.length) return "<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n📭 当前没有进行中的客服会话。\\n\\n用户可以通过「💬 联系客服」重新发起会话。";
   return "<b>💬 在线客服</b>\\n━━━━━━━━━━━━━━\\n\\n📨 进行中：<b>"+rows.length+"</b> 个\\n\\n"+
-    rows.slice(0,20).map((x,i)=>(i+1)+". 👤 <code>"+escapeHtml(String(x.userId))+"</code>\\n   🕒 "+new Date(Number(x.updatedAt||Date.now())).toLocaleString("zh-CN")).join("\\n");
+    rows.slice(0,20).map((x,i)=>(i+1)+". 👤 <code>"+escapeHtml(String(x.userId))+"</code>\\n   🕒 "+new Date(Number(x.updatedAt||Date.now())).toLocaleString("zh-CN")).join("\\n")+
+    (rows.length>20?"\\n\\n仅显示最近 20 个会话。":"");
+}
+function supportAdminKeyboard() {
+  const rows=supportActiveSessions().slice(0,20).map(x=>[
+    {text:"🔚 结束 "+String(x.userId),callback_data:"support:admin_end:"+String(x.userId)}
+  ]);
+  rows.push([{text:"🔗 设置客服链接",callback_data:"support:link"}]);
+  rows.push([{text:"🔄 刷新",callback_data:"support:admin"},{text:"⬅️ 返回",callback_data:"admin:ops"}]);
+  return {inline_keyboard:rows};
 }
 
 
@@ -7421,8 +7430,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     await answer("已结束客服会话");
     return safeEdit(token,{chat_id:chatId,message_id:messageId,
-      text:"<b>💬 客服会话已结束</b>\\n━━━━━━━━━━━━━━\\n用户 <code>"+escapeHtml(String(targetUserId))+"</code> 的会话已由管理员结束。",
-      parse_mode:"HTML"});
+      text:"<b>💬 客服会话已结束</b>\\n━━━━━━━━━━━━━━\\n用户 <code>"+escapeHtml(String(targetUserId))+"</code> 的会话已由管理员结束。\\n\\n当前进行中的会话："+supportActiveSessions().length+" 个。",
+      parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"💬 返回在线客服",callback_data:"support:admin"}],[{text:"⬅️ 返回管理",callback_data:"admin:ops"}]]}});
   }
   if(data==="support:end") {
     supportRememberToken(token);
@@ -7432,7 +7441,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       parse_mode:"HTML",reply_markup:userHomeInlineKeyboard().reply_markup});
   }
   if(data==="support:admin" && isAdmin(uid)) {
-    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:supportAdminText()+"\n\n🔗 客服链接："+(supportLink()?escapeHtml(supportLink()):"未设置"),parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"🔗 设置客服链接",callback_data:"support:link"}],[{text:"🔄 刷新",callback_data:"support:admin"},{text:"⬅️ 返回",callback_data:"admin:ops"}]]}});
+    return safeEdit(token,{chat_id:chatId,message_id:messageId,text:supportAdminText()+"\\n\\n🔗 客服链接："+(supportLink()?escapeHtml(supportLink()):"未设置")+"\\n\\n👇 可直接点击对应用户的「结束」按钮，立即关闭该会话。",parse_mode:"HTML",reply_markup:supportAdminKeyboard()});
   }
   if(data==="support:link" && isAdmin(uid)) {
     states.set("m:"+uid,{step:"support_link"});
