@@ -3725,10 +3725,16 @@ function redeemCode(uid,rawCode) {
   if(row.type!=="membership_permanent" && amount<1) return {ok:false,message:"兑换码奖励数据异常，请联系管理员。"};
   const now=Date.now(); let reward="", expiry="";
   if(row.type==="membership_days") {
-    const oldExpiry=premiumMembershipExpiry(uid), expiresAt=Math.max(now,oldExpiry)+amount*86400000;
-    store.premiumMemberships[String(uid)]={expiresAt,updatedAt:now,sourceCode:code};
-    row.rewardAppliedAt=now; row.expiresAt=expiresAt; reward="已增加 "+amount+" 天会员";
-    expiry=new Date(expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"});
+    const currentMembership=store.premiumMemberships[String(uid)];
+    if(currentMembership?.permanent===true) {
+      row.rewardAppliedAt=now; row.permanentMembershipAlready=true;
+      reward="账号已是永久会员，永久权益保持不变"; expiry="永久有效";
+    } else {
+      const oldExpiry=premiumMembershipExpiry(uid), expiresAt=Math.max(now,oldExpiry)+amount*86400000;
+      store.premiumMemberships[String(uid)]={expiresAt,updatedAt:now,sourceCode:code};
+      row.rewardAppliedAt=now; row.expiresAt=expiresAt; reward="已增加 "+amount+" 天会员";
+      expiry=new Date(expiresAt).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"});
+    }
   } else if(row.type==="membership_permanent") {
     store.premiumMemberships[String(uid)]={permanent:true,updatedAt:now,sourceCode:code};
     row.rewardAppliedAt=now; row.permanent=true; reward="已开通永久会员"; expiry="永久有效";
@@ -3758,7 +3764,13 @@ async function checkMembershipExpiryReminders() {
   if(!TOKEN) return;
   const store=redemptionStore(), todayOrdinal=shanghaiDateOrdinal(shanghaiDateKey(Date.now()));
   let changed=false;
-  for(const [uid,raw] of Object.entries(store.premiumMemberships)) {
+  for(const [uid,entry] of Object.entries(store.premiumMemberships)) {
+    let raw=entry;
+    if(typeof raw==="number" && Number.isFinite(raw)) {
+      raw={expiresAt:raw};
+      store.premiumMemberships[uid]=raw;
+      changed=true;
+    }
     if(!raw || typeof raw!=="object" || raw.permanent===true) continue;
     const expiry=Number(raw.expiresAt||0);
     if(!Number.isFinite(expiry) || expiry<=Date.now()) continue;
