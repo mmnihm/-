@@ -7568,7 +7568,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       [{text:"✏️ 自定义",callback_data:"quota:set"}],
       [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
     ]}});}
-    if(op==="set"){states.set("m:"+uid,{step:"nonmember_quota_edit"});void answer("请输入新的每日额度");return sendHtml(token,uid,"<b>🎁 修改非会员每日额度</b>\n\n请发送 0～100 的整数。",adminMenu());}
+    if(op==="set"){states.set("m:"+uid,{step:"nonmember_quota_edit"});void answer("请输入新的每日额度");return sendHtml(token,uid,"<b>🎁 修改非会员每日视频额度</b>\n\n请发送每日允许获取的视频数量（0～100 的整数）。",adminMenu());}
   }
 
   if(data==="move_cancel" || data.startsWith("move_to:")) {
