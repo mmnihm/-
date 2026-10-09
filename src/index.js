@@ -4905,7 +4905,7 @@ function expandOriginalAlbumItems(items) {
 }
 
 async function sendResourceAlbum(token, chatId, items) {
-  const valid=expandOriginalAlbumItems(items).filter(x=>x&&x.chatId&&Number(x.messageId)>0);
+  const valid=(Array.isArray(items)?items:[]).filter(x=>x&&x.chatId&&Number(x.messageId)>0);
   if(!valid.length) return {sent:0,lastMessageId:0,failed:0,sentItems:[]};
   let sent=0,lastMessageId=0,failed=0;
   const sentItems=[];
@@ -6181,7 +6181,7 @@ async function mainMessage(msg) {
     catch(e) { return send(TOKEN,uid,"❌ 扫描授权失败：\n\n"+e.message,adminMenu()); }
   }
 
-  if(t==="📂 资源目录") {
+  if(t==="📂 资源目录" || t==="📂资源目录") {
     states.delete(key);
     console.log("📂 资源目录：用户="+uid+" 文件夹="+db.directories.length+" 资源="+db.resources.length);
     try {
@@ -6210,8 +6210,13 @@ async function mainMessage(msg) {
 
     const pageInfo=directoryBatchItems(all,offset,10);
     const page=pageInfo.items;
-    const sent=await sendDirectoryBatch(TOKEN,uid,page);
+    const member=await allowed(TOKEN,uid);
+    const guest=withoutVideosForGuest(page,member,uid);
+    const allowedPage=guest.items;
+    if(!allowedPage.length) return guestVideoNotice(TOKEN,uid);
+    const sent=await sendDirectoryBatch(TOKEN,uid,allowedPage);
     const nextOffset=sent?pageInfo.nextOffset:offset;
+    if(sent>0&&!member&&!isAdmin(uid)) consumeVideoQuota(uid,allowedPage.filter(isVideoResource).slice(0,sent));
     states.set(key,{step:"directory_page",directoryId:s.directoryId,offset:nextOffset});
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
     const safe=String(d?.name||"资源文件夹").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -8018,7 +8023,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     });
   }
 
-  void answer();
+  const directoryAction=data==="dirs"||data.startsWith("dirsp:")||data.startsWith("dir:")||data.startsWith("get:");
+  void answer(directoryAction?"正在打开/发送目录资源…":"");
 
   if(data==="adm:shared_refresh"){
     await refreshSharedData(true);
