@@ -4710,44 +4710,33 @@ function directoryBatchItems(all, offset=0, limit=10) {
   }
   return {items:picked,nextOffset:i};
 }
-function sendDirectoryBatch(token, chatId, items) {
-  let sent = 0;
-  return (async () => {
-    for (const item of items) {
-      try {
-        // 解绑资源仓库后，旧资源对象可能仍被当前页面/旧状态暂时持有。
-        // 这里再次校验当前绑定，避免后台继续访问已经解绑的 Chat。
-        const currentRepo=repo();
-        if(!currentRepo || String(currentRepo.chatId||"")!==String(item?.chatId||"")) {
-          console.warn("⏭️ 文件夹批量发送：资源仓库已解绑/已切换，跳过旧资源 chat=",String(item?.chatId||""),"resource=",String(item?.messageId||""));
-          continue;
-        }
-        await sendIndexedResource(token, chatId, item);
-        sent++;
-      } catch(e) {
-        const desc=String(e?.telegramDescription||e?.message||e||"");
-        console.error("DIRECTORY SEND:",desc,"chat=",item?.chatId,"message=",item?.messageId);
-        // 机器人被踢出/禁止访问时，立即清理该仓库，避免同一批任务反复重试。
-        if(/bot was kicked|kicked from the supergroup|bot is not a member|forbidden:.*(?:chat|group|channel)|机器人被踢|禁止访问/i.test(desc)) {
-          const badChat=String(item?.chatId||"").trim();
-          const currentRepo=repo();
-          if(currentRepo && String(currentRepo.chatId||"")===badChat) {
-            const oldResources=Array.isArray(db.resources)?db.resources:[];
-            const removed=oldResources.filter(x=>String(x?.chatId||"")===badChat);
-            db.resources=oldResources.filter(x=>String(x?.chatId||"")!==badChat);
-            db.settings.repository=null;
-            db.settings.resourceSources=Array.isArray(db.settings.resourceSources)
-              ? db.settings.resourceSources.filter(x=>String(x?.chatId||"")!==badChat)
-              : [];
-            saveDb();
-            console.warn("🧹 文件夹批量发送：仓库访问失效，已自动解绑并清理资源 chat=",badChat,"removed=",removed.length);
-          }
-        }
+async function sendDirectoryBatch(token, chatId, items) {
+  const valid=(Array.isArray(items)?items:[]).filter(item=>{
+    const currentRepo=repo();
+    const ok=Boolean(currentRepo&&String(currentRepo.chatId||"")===String(item?.chatId||""));
+    if(!ok) console.warn("⏭️ 文件夹批量发送：资源仓库已解绑/已切换，跳过旧资源 chat=",String(item?.chatId||""),"resource=",String(item?.messageId||""));
+    return ok;
+  });
+  if(!valid.length)return 0;
+  try {
+    const result=await sendResourceAlbum(token,chatId,valid);
+    return Number(result?.sent||0);
+  } catch(e) {
+    const desc=String(e?.telegramDescription||e?.message||e||"");
+    console.error("DIRECTORY SEND:",desc);
+    if(/bot was kicked|kicked from the supergroup|bot is not a member|forbidden:.*(?:chat|group|channel)|机器人被踢|禁止访问/i.test(desc)) {
+      const currentRepo=repo(),badChat=String(currentRepo?.chatId||"").trim();
+      if(currentRepo&&badChat) {
+        const removed=(Array.isArray(db.resources)?db.resources:[]).filter(x=>String(x?.chatId||"")===badChat);
+        db.resources=db.resources.filter(x=>String(x?.chatId||"")!==badChat);
+        db.settings.repository=null;
+        db.settings.resourceSources=Array.isArray(db.settings.resourceSources)?db.settings.resourceSources.filter(x=>String(x?.chatId||"")!==badChat):[];
+        saveDb();
+        console.warn("🧹 文件夹批量发送：仓库访问失效，已自动解绑并清理资源 chat=",badChat,"removed=",removed.length);
       }
-      await sleep(40);
     }
-    return sent;
-  })();
+    return 0;
+  }
 }
 function directoryText() {
   return ["📂 <b>资源目录</b>","━━━━━━━━━━━━━━","","📚 总资源：<b>"+db.resources.length+"</b> 条","📁 文件夹：<b>"+db.directories.length+"</b> 个","","👇 <i>请选择文件夹查看资源</i>"].join("\n");
@@ -6231,7 +6220,6 @@ async function mainMessage(msg) {
   }
 
   if(s?.step==="directory_page") {
-    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) { states.delete(key); return; }
     if(t==="🏠 开始") { states.delete(key); return sendHtml(TOKEN,uid,"<b>👋 欢迎使用资源平台</b>\\n\\n📚 <b>资源功能</b>：目录 · 搜索 · 随机 · 最新\\n\\n👇 <i>请选择下方功能开始使用</i>",admin?adminMenu():userMenu()); }
     if(t==="📂 返回文件夹") { states.set(key,{step:"directory"}); return sendHtml(TOKEN,uid,directoryText(),directoryKeyboard()); }
     if(t!=="➡️ 下一步") return send(TOKEN,uid,"⚠️ 请点击「➡️ 下一步」继续。");
@@ -6243,9 +6231,10 @@ async function mainMessage(msg) {
       return send(TOKEN,uid,"🏁 <b>本文件夹已到末尾</b>\\n\\n没有更多资源可以获取了。");
     }
 
-    const page=all.slice(offset,offset+10);
+    const pageInfo=directoryBatchItems(all,offset,10);
+    const page=pageInfo.items;
     const sent=await sendDirectoryBatch(TOKEN,uid,page);
-    const nextOffset=offset+page.length;
+    const nextOffset=sent?pageInfo.nextOffset:offset;
     states.set(key,{step:"directory_page",directoryId:s.directoryId,offset:nextOffset});
     const d=db.directories.find(x=>String(x.id)===String(s.directoryId));
     const safe=String(d?.name||"资源文件夹").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
