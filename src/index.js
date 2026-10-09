@@ -4012,6 +4012,7 @@ function adminSettingsInline(){return{inline_keyboard:[
 ]};}
 function redeemAdminInline(){return{inline_keyboard:[
  [{text:"➕ 批量生成兑换码",callback_data:"adm:redeem_make"}],
+ [{text:"🚫 封禁会员并移出指定群",callback_data:"adm:redeem_ban"}],
  [{text:"✏️ 编辑兑换成功消息",callback_data:"adm:redeem_message"}],
  [{text:"⬅️ 返回系统设置",callback_data:"admin:settings"}]
 ]};}
@@ -5892,11 +5893,12 @@ async function mainMessage(msg) {
   const t=msg.text||"";
   const rawText=String(msg.text||"").trim();
   const admin=isAdmin(uid);
+  if(!admin && db.settings?.redeemAccessBans?.[String(uid)]) return sendHtml(TOKEN,uid,"⛔ <b>此账号已被禁止使用机器人。</b>\\n如有疑问，请联系管理员。");
   if (!admin) await ensureUserInlineMode(TOKEN, uid);
   const key="m:"+uid;
   let s=states.get(key);
   const persistedRedeemState=db.settings?.redeemAdminStates?.[String(uid)];
-  if(admin && persistedRedeemState && /^redeem_(?:reward_amount|batch_count|success_message)$/.test(String(persistedRedeemState.step||""))){s=persistedRedeemState;states.set(key,s);}
+  if(admin && persistedRedeemState && /^redeem_(?:reward_amount|batch_count|success_message|ban_user)$/.test(String(persistedRedeemState.step||""))){s=persistedRedeemState;states.set(key,s);}
 
   if(s?.step==="redeem_code_input" && !admin) {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消兑换。",userMenu()); }
@@ -5912,6 +5914,44 @@ async function mainMessage(msg) {
     }
     const result=redeemCode(uid,code);
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
+  }
+  if(admin && s?.step==="redeem_ban_user") {
+    if(rawText==="/cancel") {
+      states.delete(key);
+      if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)];
+      saveDb();
+      return sendHtml(TOKEN,uid,"已取消封禁操作，会员数据未修改。",{reply_markup:redeemAdminInline()});
+    }
+    const targetId=rawText.replace(/^@/,"").trim();
+    if(!/^\d{1,20}$/.test(targetId) || !Number.isSafeInteger(Number(targetId)) || Number(targetId)<=0) {
+      return sendHtml(TOKEN,uid,"❌ 用户 ID 格式不正确。请发送 Telegram 数字 ID，或发送 /cancel 取消。");
+    }
+    if(isAdmin(targetId)) return sendHtml(TOKEN,uid,"⛔ 不能封禁管理员账号。请发送其他用户 ID，或发送 /cancel 取消。");
+    if(!db.settings.redeemAccessBans || typeof db.settings.redeemAccessBans!=="object" || Array.isArray(db.settings.redeemAccessBans)) db.settings.redeemAccessBans={};
+    db.settings.redeemAccessBans[targetId]={userId:targetId,bannedAt:Date.now(),bannedBy:String(uid),source:"redeem_admin"};
+    states.delete(key);
+    if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)];
+    for(const cacheKey of membershipCache.keys()) if(cacheKey.endsWith(":"+targetId)) membershipCache.delete(cacheKey);
+    saveDb();
+    logAdmin(uid,"封禁机器人使用权限并移出指定群","用户ID="+targetId);
+    let groupResult="未配置指定会员群，已仅封禁机器人使用权限。";
+    const required=group();
+    if(required?.chatId) {
+      try {
+        await tg(TOKEN,"banChatMember",{chat_id:required.chatId,user_id:Number(targetId)});
+        try {
+          await tg(TOKEN,"unbanChatMember",{chat_id:required.chatId,user_id:Number(targetId),only_if_banned:true});
+          groupResult="已从指定会员群移出（允许以后重新加入，但机器人使用权限仍被封禁）。";
+        } catch(unbanError) {
+          groupResult="已执行群封禁，但解除群封禁失败；该用户可能仍无法重新加入。请检查机器人群管理权限。";
+          console.warn("⚠️ 封禁用户后解除群封禁失败:",String(unbanError?.telegramDescription||unbanError?.message||unbanError));
+        }
+      } catch(groupError) {
+        groupResult="机器人使用权限已封禁；移出指定会员群失败，请检查群 ID 和机器人管理员权限。";
+        console.warn("⚠️ 移出指定会员群失败:",String(groupError?.telegramDescription||groupError?.message||groupError));
+      }
+    }
+    return sendHtml(TOKEN,uid,"<b>🚫 已封禁用户</b>\n━━━━━━━━━━━━━━\n\n用户 ID：<code>"+escapeHtml(targetId)+"</code>\n机器人使用权限：<b>已封禁</b>\n会员/兑换码历史数据：<b>保留未删除</b>\n指定会员群："+escapeHtml(groupResult)+"\n\n如需解除机器人封禁，需要后续增加单独的解封入口。",{reply_markup:redeemAdminInline()});
   }
   if(admin && s?.step==="redeem_success_message") {
     if(rawText==="/cancel") { states.delete(key); if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)]; saveDb(); return sendHtml(TOKEN,uid,"已取消，兑换成功消息保持不变。",adminSettingsMenu()); }
@@ -7160,6 +7200,7 @@ async function childMessage(child,msg,token) {
   // 子机器人消息处理不能等待 Google Sheets，避免 /start 和菜单被共享同步卡住。
   if(msg.chat?.type!=="private") return;
   const uid=msg.from.id;
+  if(!isAdmin(uid) && db.settings?.redeemAccessBans?.[String(uid)]) return sendHtml(token,uid,"⛔ <b>此账号已被禁止使用机器人。</b>\\n如有疑问，请联系管理员。");
   await ensureUserInlineMode(token, uid);
   // 子机器人上传状态与回调统一使用 token-aware key，多个子机器人互不串任务。
   const key=uploadStateKey(uid,true,token);
@@ -7325,6 +7366,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       console.warn("⚠️ callback确认失败（继续处理按钮）:", String(e?.telegramDescription || e?.message || e));
     }
   };
+  const activeBan=db.settings?.redeemAccessBans?.[String(uid)];
+  if(activeBan && !isAdmin(uid)) { await answer("该账号已被禁止使用机器人",true); return; }
 
   // 内联按钮防重复点击：Telegram/网络重试可能在极短时间内产生多个 callback，
   // 如果同时执行“下一页/返回/开始同步”等动作，就会出现重复页面或跳转错乱。
@@ -7701,7 +7744,7 @@ async function handleDirectoryCallback(token, q, child=false) {
     }
     if(data==="admin:root")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:adminStatusText(),parse_mode:"HTML",reply_markup:adminRootInline()});
     if(data==="admin:home")return sendHtml(token,uid,"<b>👋 已返回首页</b>\n\n请选择功能。",userMenu());
-    if(data==="adm:redeem_make") {
+    if(data==="adm:redeem_ban") {\n      const banState={step:"redeem_ban_user"};\n      states.set("m:"+uid,banState);\n      if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};\n      db.settings.redeemAdminStates[String(uid)]=banState; saveDb();\n      await answer("请输入要封禁的用户 ID");\n      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🚫 封禁会员使用权限</b>\\n━━━━━━━━━━━━━━\\n\\n请发送要封禁用户的 Telegram 数字 ID。\\n\\n执行后会：\\n• 禁止该用户使用主机器人及子机器人\\n• 尝试将其移出当前配置的指定会员群\\n• 保留会员记录、兑换码记录和其他数据\\n\\n注意：群移出需要机器人具备群管理权限。\\n发送 /cancel 可取消。",parse_mode:"HTML",reply_markup:{inline_keyboard:[[{text:"⬅️ 取消并返回",callback_data:"adm:redeem"}]]}});\n    }\n    if(data==="adm:redeem_make") {
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🎟️ 批量生成兑换码</b>\n\n请选择每个兑换码的奖励类型。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:"💎 会员天数",callback_data:"adm:redeem_type:membership_days"}],
         [{text:"♾️ 永久会员",callback_data:"adm:redeem_type:membership_permanent"}],
