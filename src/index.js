@@ -4690,6 +4690,26 @@ function folderProgressKeyboard(directoryId,count,nextOffset) {
   return {inline_keyboard:rows};
 }
 function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).sort((a,b)=>Number(a.messageId)-Number(b.messageId)); }
+function directoryBatchItems(all, offset=0, limit=10) {
+  const list=Array.isArray(all)?all:[];
+  let i=Math.max(0,Number(offset)||0);
+  const picked=[];
+  if(i>0 && i<list.length && list[i]?.mediaGroupId && String(list[i-1]?.mediaGroupId||"")===String(list[i]?.mediaGroupId||"")) {
+    const groupId=String(list[i].mediaGroupId);
+    while(i>0 && String(list[i-1]?.mediaGroupId||"")===groupId) i--;
+  }
+  while(i<list.length) {
+    const item=list[i], groupId=String(item?.mediaGroupId||"");
+    let end=i+1;
+    if(groupId) while(end<list.length && String(list[end]?.chatId||"")===String(item?.chatId||"") && String(list[end]?.mediaGroupId||"")===groupId) end++;
+    const size=end-i;
+    if(picked.length && picked.length+size>limit) break;
+    picked.push(...list.slice(i,end));
+    i=end;
+    if(picked.length>=limit) break;
+  }
+  return {items:picked,nextOffset:i};
+}
 function sendDirectoryBatch(token, chatId, items) {
   let sent = 0;
   return (async () => {
@@ -6249,7 +6269,6 @@ async function mainMessage(msg) {
   }
 
   if(t==="📂 资源目录") {
-    if(!(await requireMemberAccess(TOKEN,uid,uid,userMenu()))) return;
     states.delete(key);
     console.log("📂 资源目录：用户="+uid+" 文件夹="+db.directories.length+" 资源="+db.resources.length);
     try {
@@ -8105,10 +8124,6 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(data==="noop" || data==="done") return;
 
   if(data.startsWith("dirsp:")) {
-    if(!(await requireMemberAccess(token,chatId,uid,userMenu()))) {
-      void answer("请先加入指定会员群",true);
-      return;
-    }
     const page=Math.max(0,Number(data.slice(6))||0);
     return safeEdit(token,{
       chat_id:chatId,
@@ -8120,10 +8135,6 @@ async function handleDirectoryCallback(token, q, child=false) {
   }
 
   if(data==="dirs") {
-    if(!(await requireMemberAccess(token,chatId,uid,userMenu()))) {
-      void answer("请先加入指定会员群",true);
-      return;
-    }
     return safeEdit(token,{
       chat_id:chatId,
       message_id:messageId,
@@ -8176,7 +8187,8 @@ async function handleDirectoryCallback(token, q, child=false) {
       });
     }
     const member=await allowed(TOKEN,uid);
-    const guest=withoutVideosForGuest(all.slice(0,10),member,uid);
+    const selectedBatch=directoryBatchItems(all,0,10);
+    const guest=withoutVideosForGuest(selectedBatch.items,member,uid);
     if(!guest.items.length) return guestVideoNotice(token,chatId);
     const first=guest.items;
     // 先在聊天里显示进度，避免媒体下载/相册整理期间用户误以为按钮没反应。
@@ -8189,7 +8201,7 @@ async function handleDirectoryCallback(token, q, child=false) {
       const album=await sendResourceAlbum(token,chatId,first);
       const sent=Number(album?.sent||0);
       // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
-      const next=sent>0?first.length:0;
+      const next=sent>0?selectedBatch.nextOffset:0;
       const summary=sent>0
         ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"
         : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。";
@@ -8217,7 +8229,8 @@ async function handleDirectoryCallback(token, q, child=false) {
     return;
   }
   const member=true;
-  let batch=all.slice(offset,offset+10);
+  const selectedBatch=directoryBatchItems(all,offset,10);
+  let batch=selectedBatch.items;
   const guest=withoutVideosForGuest(batch, member, uid);
   batch=guest.items;
   if(!batch.length) return guestVideoNotice(token, chatId);
@@ -8236,7 +8249,7 @@ async function handleDirectoryCallback(token, q, child=false) {
   if(sent) recordStat(uid,"download",sent);
 
   // 只有至少发送成功一条，才推进到下一批；0 条成功时保留当前 offset 供重试。
-  const next=Math.min(offset+(sent>0?batch.length:0),all.length);
+  const next=Math.min(sent>0?selectedBatch.nextOffset:offset,all.length);
   if(sent) {
     if(!member && !isAdmin(uid)) consumeNonMemberQuota(uid,sent);
     else saveDb();
