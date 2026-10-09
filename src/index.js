@@ -5677,7 +5677,7 @@ async function mainMessage(msg) {
   const key="m:"+uid;
   let s=states.get(key);
   const persistedRedeemState=db.settings?.redeemAdminStates?.[String(uid)];
-  if(admin && persistedRedeemState && /^redeem_(?:reward_amount|batch_count)$/.test(String(persistedRedeemState.step||""))){s=persistedRedeemState;states.set(key,s);}
+  if(admin && persistedRedeemState && /^redeem_(?:reward_amount|batch_count|success_message)$/.test(String(persistedRedeemState.step||""))){s=persistedRedeemState;states.set(key,s);}
 
   if(s?.step==="redeem_code_input" && !admin) {
     if(rawText==="/cancel") { states.delete(key); return sendHtml(TOKEN,uid,"已取消兑换。",userMenu()); }
@@ -5693,6 +5693,14 @@ async function mainMessage(msg) {
     }
     const result=redeemCode(uid,code);
     return sendHtml(TOKEN,uid,(result.ok?"<b>✅ 兑换成功</b>":"<b>❌ 兑换失败</b>")+"\n\n"+escapeHtml(result.message),userMenu());
+  }
+  if(admin && s?.step==="redeem_success_message") {
+    if(rawText==="/cancel") { states.delete(key); if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)]; saveDb(); return sendHtml(TOKEN,uid,"已取消，兑换成功消息保持不变。",adminSettingsMenu()); }
+    if(!rawText) return sendHtml(TOKEN,uid,"❌ 消息不能为空。请发送新消息，或发送 /cancel 取消。");
+    db.settings.redeemSuccessMessage=rawText.slice(0,3500);
+    states.delete(key); if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)];
+    saveDb(); logAdmin(uid,"编辑兑换成功消息","更新兑换成功提示模板");
+    return sendHtml(TOKEN,uid,"✅ <b>兑换成功消息已保存</b>\n\n可用变量：\n<code>{type}</code> 奖励类型\n<code>{reward}</code> 奖励内容\n<code>{days}</code> 会员天数\n<code>{expiry}</code> 到期时间\n<code>{quota}</code> 剩余视频额度\n\n当前消息：\n"+escapeHtml(db.settings.redeemSuccessMessage),adminSettingsMenu());
   }
   if(admin && s?.step==="redeem_reward_amount") {
     if(rawText==="/cancel") { states.delete(key); if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)]; saveDb(); return sendHtml(TOKEN,uid,"已取消生成。",adminSettingsMenu()); }
@@ -5719,7 +5727,8 @@ async function mainMessage(msg) {
     states.delete(key);
     if(db.settings?.redeemAdminStates) delete db.settings.redeemAdminStates[String(uid)];
     saveDb();
-    const text="<b>✅ 兑换码生成完成</b>\n━━━━━━━━━━━━━━\n奖励："+(s.rewardType==="membership_days"?"会员 "+s.rewardAmount+" 天":"额外视频 "+s.rewardAmount+" 次")+"\n生成数量："+count+"\n\n"+codes.map((code,i)=>(i+1)+". <code>"+code+"</code>").join("\n");
+    const rewardLabel=s.rewardType==="membership_permanent"?"永久会员":s.rewardType==="membership_days"?"会员 "+s.rewardAmount+" 天":"额外视频 "+s.rewardAmount+" 次";
+    const text="<b>✅ 兑换码生成完成</b>\n━━━━━━━━━━━━━━\n奖励："+rewardLabel+"\n生成数量："+count+"\n\n"+codes.map((code,i)=>(i+1)+". <code>"+code+"</code>").join("\n");
     return sendHtml(TOKEN,uid,text,{reply_markup:redeemAdminInline()});
   }
   if(admin && rawText==="🎟️ 兑换码管理") {
@@ -7427,13 +7436,29 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(data==="adm:redeem_make") {
       return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🎟️ 批量生成兑换码</b>\n\n请选择每个兑换码的奖励类型。",parse_mode:"HTML",reply_markup:{inline_keyboard:[
         [{text:"💎 会员天数",callback_data:"adm:redeem_type:membership_days"}],
+        [{text:"♾️ 永久会员",callback_data:"adm:redeem_type:membership_permanent"}],
         [{text:"🎬 额外视频额度",callback_data:"adm:redeem_type:video_credits"}],
         [{text:"⬅️ 返回兑换码管理",callback_data:"adm:redeem"}]
       ]}});
     }
+    if(data==="adm:redeem_message") {
+      const current=String(db.settings?.redeemSuccessMessage||"");
+      const redeemState={step:"redeem_success_message"};
+      states.set("m:"+uid,redeemState);
+      if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};
+      db.settings.redeemAdminStates[String(uid)]=redeemState; saveDb();
+      return sendHtml(TOKEN,uid,"<b>✏️ 编辑兑换成功消息</b>\n\n请直接发送用户兑换成功后看到的消息。可用变量：\n<code>{type}</code> 奖励类型\n<code>{reward}</code> 奖励内容\n<code>{days}</code> 会员天数\n<code>{expiry}</code> 到期时间\n<code>{quota}</code> 剩余视频额度\n\n"+(current?"当前自定义消息：\n"+escapeHtml(current)+"\n\n":"当前使用系统默认消息。\n\n")+"发送 /cancel 可取消。",adminMenu());
+    }
     if(data.startsWith("adm:redeem_type:")) {
       const type=data.slice("adm:redeem_type:".length);
-      if(!["membership_days","video_credits"].includes(type)) { void answer("奖励类型无效",true); return; }
+      if(!["membership_days","membership_permanent","video_credits"].includes(type)) { void answer("奖励类型无效",true); return; }
+      if(type==="membership_permanent") {
+        const redeemState={step:"redeem_batch_count",rewardType:type,rewardAmount:1};
+        states.set("m:"+uid,redeemState);
+        if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};
+        db.settings.redeemAdminStates[String(uid)]=redeemState; saveDb();
+        return sendHtml(TOKEN,uid,"<b>♾️ 生成永久会员兑换码</b>\n\n每个兑换码奖励：永久会员。\n请输入本次生成数量（1～100）。\n发送 /cancel 可取消。",adminMenu());
+      }
       const redeemState={step:"redeem_reward_amount",rewardType:type};
       states.set("m:"+uid,redeemState);
       if(!db.settings.redeemAdminStates||typeof db.settings.redeemAdminStates!=="object") db.settings.redeemAdminStates={};
@@ -8580,6 +8605,8 @@ async function boot(){
   if (!backgroundTimersStarted) {
     backgroundTimersStarted = true;
     setInterval(() => { processAutoDeleteQueue().catch(e=>console.warn("⚠️ 自动删除任务异常：",e.message)); }, 30000);
+    checkMembershipExpiryReminders().catch(e=>console.warn("⚠️ 会员到期提醒检查失败：",String(e?.message||e)));
+    setInterval(() => { checkMembershipExpiryReminders().catch(e=>console.warn("⚠️ 会员到期提醒检查失败：",String(e?.message||e))); }, 60*60*1000);
     setInterval(() => {
       const s = runtimeStatus();
       console.log("🫀 HEARTBEAT:", "connected="+s.mainConnected, "uptime="+s.uptimeSeconds+"s", "lastPoll="+(s.lastPollAt||"-"), "lastUpdate="+(s.lastUpdateAt||"-"), "error="+(s.lastError||"-"));
