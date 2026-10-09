@@ -3685,10 +3685,15 @@ async function notifyRedeemAdmins(token,uid,code,row,userInfo,usedAt) {
   if(failed) console.warn("兑换码通知发送失败:",failed+"/"+admins.length);
 }
 function redeemCode(uid,rawCode,userInfo=null,botToken=TOKEN) {
-  const store=redemptionStore(), code=String(rawCode||"").trim().toUpperCase().replace(/\s+/g,"");
-  if(!code) return {ok:false,message:"请输入兑换码。"};
+  const store=redemptionStore();
+  // 兑换码输入容错：忽略大小写、空格、连字符及常见分隔符，并兼容全角字符。
+  // 找到后仍使用数据库中原始键值，确保奖励记录和管理员通知保持一致。
+  const normalizeRedeemCode=value=>String(value??"").normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]/g,"");
+  const inputCode=normalizeRedeemCode(rawCode);
+  if(!inputCode) return {ok:false,message:"请输入兑换码。"};
+  const code=Object.keys(store.redemptionCodes).find(savedCode=>normalizeRedeemCode(savedCode)===inputCode);
+  if(!code) return {ok:false,message:"兑换码不存在，请检查后重试。"};
   const row=store.redemptionCodes[code];
-  if(!row) return {ok:false,message:"兑换码不存在，请检查后重试。"};
   if(row.usedAt || row.usedBy) return {ok:false,message:"这个兑换码已经被使用，不能重复兑换。"};
   const amount=Math.floor(Number(row.amount)||0);
   if(row.type!=="membership_permanent" && amount<1) return {ok:false,message:"兑换码奖励数据异常，请联系管理员。"};
