@@ -5084,7 +5084,7 @@ function withoutVideosForGuest(items, member, uid, expandAlbums=true) {
   const kept=expanded.slice(0,limit);
   let bonusLeft=extraVideoQuotaRemaining(uid);
   for(const item of expanded.slice(limit)) {
-    if(isVideoResource(item) && bonusLeft>0) { kept.push(item); bonusLeft--; }
+    if(isVideoResource(item) && bonusLeft>0) { kept.push({...item,__bonusVideoQuota:true}); bonusLeft--; }
   }
   return {items:kept,blocked:Math.max(0,expanded.length-kept.length),allowed:kept.length};
 }
@@ -5095,11 +5095,9 @@ function consumeVideoQuota(uid,items){
   if(isAdmin(uid) || hasActivePremiumMembership(uid)) return;
   const list=Array.isArray(items)?items:[];
   if(!list.length) return;
-  const baseRemaining=Math.max(0,nonMemberDailyLimit()-nonMemberDailyUsed(uid));
-  const baseCount=Math.min(list.length,baseRemaining);
+  const bonusVideos=list.filter(item=>item?.__bonusVideoQuota===true).length;
+  const baseCount=Math.max(0,list.length-bonusVideos);
   if(baseCount>0) consumeNonMemberQuota(uid,baseCount);
-  // guest filtering only appends bonus-eligible videos after the daily free-resource portion.
-  const bonusVideos=Math.max(0,list.length-baseCount);
   if(bonusVideos>0) consumeExtraVideoQuota(uid,bonusVideos);
   saveDb();
 }
