@@ -5265,7 +5265,7 @@ async function tgUploadMediaAlbum(token, chatId, entries) {
 async function deliverFromHistory(token,chatId,userId,items,options={}) {
   const member=await allowed(TOKEN,userId);
   if(!Array.isArray(items)||!items.length) return sendHtml(token,chatId,"<b>📭 暂无相关资源</b>\\n\\n暂时没有找到可用内容。",childMenu());
-  const guest=withoutVideosForGuest(items,member,userId,options.mode!=="latest");
+  const guest=withoutVideosForGuest(items,member,userId,options.mode!=="latest" && options.mode!=="random");
   items=guest.items;
   if(!items.length) return guestVideoNotice(token,chatId);
   try {
@@ -5323,7 +5323,7 @@ async function deliver(token,chatId,userId,items,sourceToken=TOKEN,options={}) {
     Number(x.messageId) > 0
   );
 
-  const guest=withoutVideosForGuest(valid, member, userId,options.mode!=="latest");
+  const guest=withoutVideosForGuest(valid, member, userId,options.mode!=="latest" && options.mode!=="random");
   valid=guest.items;
   if(!valid.length) return guestVideoNotice(token, chatId);
 
