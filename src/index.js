@@ -3933,9 +3933,56 @@ function resourceTags(item){const a=[];const d=db.directories.find(x=>String(x.i
 function allResourceTags(){const m={};for(const x of db.resources)for(const t of resourceTags(x))(m[t]??=[]).push(x);return m;}
 function userFeatureKeyboard(){return{inline_keyboard:[
  [{text:"⭐ 我的收藏",callback_data:"hub:fav"},{text:"🕘 最近浏览",callback_data:"hub:recent"}],
- [{text:"🔥 热门资源",callback_data:"hub:hot"},{text:"🏷️ 标签分类",callback_data:"hub:tags"}],
+ [{text:"♻️ 为您推荐",callback_data:"hub:hot"},{text:"🏷️ 标签分类",callback_data:"hub:tags"}],
  [{text:"⬅️ 返回资源目录",callback_data:"dirs"}]
 ]};}
+function recommendedDirectory(){
+  const recentCounts=new Map();
+  const recent=db.settings?.userRecent&&typeof db.settings.userRecent==="object"?db.settings.userRecent:{};
+  for(const ids of Object.values(recent)){
+    if(!Array.isArray(ids)) continue;
+    for(const key of ids){
+      const item=resourceByKey(key);
+      if(!item||item.directoryId===undefined||item.directoryId===null) continue;
+      const id=String(item.directoryId);
+      recentCounts.set(id,(recentCounts.get(id)||0)+1);
+    }
+  }
+  const candidates=[];
+  for(const d of (Array.isArray(db.directories)?db.directories:[])){
+    const items=db.resources.filter(x=>String(x?.directoryId??"")===String(d.id));
+    if(!items.length) continue;
+    const downloads=items.reduce((sum,x)=>sum+Math.max(0,Number(x?.downloads)||0),0);
+    candidates.push({directory:d,items,recentOpens:recentCounts.get(String(d.id))||0,downloads});
+  }
+  candidates.sort((a,b)=>b.recentOpens-a.recentOpens||b.downloads-a.downloads||b.items.length-a.items.length);
+  return candidates[0]||null;
+}
+function recommendedResourceCounts(items){
+  const counts={photos:0,videos:0,files:0};
+  for(const item of (Array.isArray(items)?items:[])){
+    const type=String(item?.fileType||"").toLowerCase();
+    if(type==="photo"||type==="photos") counts.photos++;
+    else if(isVideoResource(item)) counts.videos++;
+    else counts.files++;
+  }
+  return counts;
+}
+function recommendedDirectoryText(entry){
+  if(!entry) return "<b>♻️ 为您推荐</b>\\n━━━━━━━━━━━━━━\\n\\n📭 暂时没有可推荐的资源文件夹。";
+  const d=entry.directory, counts=recommendedResourceCounts(entry.items);
+  const name=escapeHtml(String(d.name||"未命名资源"));
+  return "<b>♻️ 为您推荐</b>\\n━━━━━━━━━━━━━━\\n\\n📦 文件描述：<b>"+name+"</b>\\n📸 图片："+counts.photos+" 个\\n🎬 视频："+counts.videos+" 个\\n📄 文件："+counts.files+" 个";
+}
+function recommendedDirectoryKeyboard(entry){
+  if(!entry) return {inline_keyboard:[[{text:"⬅️ 返回",callback_data:"hub"}]]};
+  const id=String(entry.directory.id);
+  return {inline_keyboard:[
+    [{text:"🎬 获取视频",callback_data:"recget:video:"+id},{text:"📸 获取图片",callback_data:"recget:photo:"+id}],
+    [{text:"📦 全部获取",callback_data:"recget:all:"+id}],
+    [{text:"🔄 刷新推荐",callback_data:"hub:hot"},{text:"⬅️ 返回",callback_data:"hub"}]
+  ]};
+}
 function userFeatureText(){return"✨ <b>我的资源</b>\n━━━━━━━━━━━━━━\n\n⭐ 收藏、🕘 最近浏览、🔥 热门资源、🏷️ 标签分类\n\n👇 请选择功能";}
 function userFeatureListKeyboard(items,prefix,back="hub"){const rows=[];const list=items.slice(0,20);for(let i=0;i<list.length;i+=2){const row=[];for(let j=i;j<i+2&&j<list.length;j++){const x=list[j];row.push({text:(j+1)+". "+String(x.title||"未命名资源").slice(0,24),callback_data:prefix+resourceKey(x)});}rows.push(row);}if(!rows.length)rows.push([{text:"📭 暂无资源",callback_data:"noop"}]);rows.push([{text:"⬅️ 返回",callback_data:back}]);return{inline_keyboard:rows};}
 function userFeatureListText(title,items,extra=""){return"<b>"+title+"</b>\n━━━━━━━━━━━━━━\n\n📚 共 <b>"+items.length+"</b> 个资源"+(extra?"\n"+extra:"")+"\n\n👇 点击资源名称获取";}
@@ -7908,8 +7955,43 @@ async function handleDirectoryCallback(token, q, child=false) {
     if(mode==="home")return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureText(),parse_mode:"HTML",reply_markup:userFeatureKeyboard()});
     if(mode==="fav"){const items=userFavorites(uid).map(resourceByKey).filter(Boolean);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("⭐ 我的收藏",items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"getfav:")});}
     if(mode==="recent"){const ids=Array.isArray(db.settings.userRecent?.[String(uid)])?db.settings.userRecent[String(uid)]:[];const items=ids.map(resourceByKey).filter(Boolean);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🕘 最近浏览",items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"getrecent:")});}
-    if(mode==="hot"){const items=[...db.resources].sort((a,b)=>Number(b.downloads||0)-Number(a.downloads||0)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🔥 热门资源",items,"按获取次数排序"),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gethot:")});}
+    if(mode==="hot"){const entry=recommendedDirectory();return safeEdit(token,{chat_id:chatId,message_id:messageId,text:recommendedDirectoryText(entry),parse_mode:"HTML",reply_markup:recommendedDirectoryKeyboard(entry)});}
     if(mode==="tags"){const map=allResourceTags();const tags=Object.keys(map).sort((a,b)=>map[b].length-map[a].length).slice(0,30);const rows=[];for(let i=0;i<tags.length;i+=2)rows.push(tags.slice(i,i+2).map(t=>({text:"🏷️ "+t.slice(0,18)+" · "+map[t].length,callback_data:"tag:"+t.slice(0,40)})));if(!rows.length)rows.push([{text:"📭 暂无标签",callback_data:"noop"}]);rows.push([{text:"⬅️ 返回",callback_data:"hub"}]);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>🏷️ 标签分类</b>\n━━━━━━━━━━━━━━\n\n📚 标签数：<b>"+tags.length+"</b>\n\n👇 请选择标签",parse_mode:"HTML",reply_markup:{inline_keyboard:rows}});}
+  }
+  if(data.startsWith("recget:")){
+    const match=data.match(/^recget:(video|photo|all):([^:]+)$/);
+    if(!match){void answer("推荐按钮无效，请刷新推荐",true);return;}
+    const kind=match[1],directoryId=match[2];
+    const directory=db.directories.find(x=>String(x.id)===directoryId);
+    if(!directory){void answer("文件夹已更新，请刷新推荐",true);return;}
+    const all=db.resources.filter(x=>String(x?.directoryId??"")===directoryId);
+    const selected=kind==="video"?all.filter(isVideoResource):kind==="photo"?all.filter(x=>String(x?.fileType||"").toLowerCase()==="photo"):all;
+    if(!selected.length){void answer("这个分类暂时没有资源");return;}
+    const member=await allowed(TOKEN,uid);
+    const guest=withoutVideosForGuest(selected,member,uid,false);
+    if(!guest.items.length){void answer("今日免费资源额度已用完",true);return guestVideoNotice(token,chatId);}
+    await answer("正在获取资源…");
+    let settled=false;
+    try{
+      const result=await sendResourceAlbum(token,chatId,guest.items,{singleEach:false});
+      const sent=Math.max(0,Number(result?.sent)||0);
+      const sentItems=Array.isArray(result?.sentItems)?result.sentItems:guest.items.slice(0,sent);
+      if(sent>0){
+        recordStat(uid,"download",sent);
+        for(const item of sentItems){recordResourceDownload(item);recordRecent(uid,item);}
+        if(!member&&!isAdmin(uid))consumeVideoQuota(uid,sentItems);else saveDb();
+      }else{
+        if(!member&&!isAdmin(uid))releaseNonMemberQuotaReservation(uid,guest.items.length);
+        saveDb();
+      }
+      settled=true;
+      const updated=recommendedDirectory();
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 推荐资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📦 文件夹："+escapeHtml(String(directory.name||"未命名资源"))+"\\n📤 成功发送："+sent+" 个\\n⚠️ 失败："+Math.max(0,guest.items.length-sent)+" 个\\n\\n👇 还可以继续获取其他类型",parse_mode:"HTML",reply_markup:recommendedDirectoryKeyboard(updated)});
+    }catch(e){
+      if(!settled&&!member&&!isAdmin(uid))releaseNonMemberQuotaReservation(uid,guest.items.length);
+      console.error("RECOMMENDED DIRECTORY DELIVERY:",String(e?.telegramDescription||e?.message||e));
+      return sendHtml(token,chatId,"<b>❌ 推荐资源获取失败</b>\\n\\n原因："+escapeHtml(String(e?.telegramDescription||e?.message||e)).slice(0,500),{});
+    }
   }
   if(data.startsWith("tag:")){void answer();const tag=data.slice(4),items=db.resources.filter(x=>resourceTags(x).includes(tag)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🏷️ "+escapeHtml(tag),items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gettag:","hub:tags")});}
   if(data.startsWith("favtoggle:")){const item=resourceByKey(data.slice(10));if(!item){void answer("资源不存在",true);return;}const on=toggleFavorite(uid,item);void answer(on?"⭐ 已收藏":"☆ 已取消收藏");return;}
