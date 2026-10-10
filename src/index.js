@@ -4833,7 +4833,19 @@ async function finalizeUploadUnlocked(uid, state, token=TOKEN, stateKey=uploadSt
     waitBaserowSyncQueue().catch(e=>console.warn("⚠️ 上传后的表格同步失败：",String(e?.message||e)));
   }
   recordStat(uid,"upload",1);
-  if(backupBotConfig().token) { for(const item of db.resources.slice(0,stored)) backupResourceFile(item).catch(e=>console.warn("⚠️ 备份文件失败:",String(e?.message||e))); }
+  if(backupBotConfig().token) {
+    const backupBatch=db.resources.slice(0,stored).filter(item=>item && !item.backupFileId);
+    (async()=>{
+      for(const item of backupBatch) {
+        try {
+          await backupResourceFile(item);
+        } catch(e) {
+          console.warn("⚠️ 备份文件失败:",String(e?.message||e));
+        }
+        await sleep(800);
+      }
+    })().catch(e=>console.warn("⚠️ 后台备份队列异常:",String(e?.message||e)));
+  }
   recordStat(uid,"uploadedResource",stored);
   touchSharedData(uid);
   saveDb();
@@ -5171,7 +5183,12 @@ async function processAutoDeleteQueue() {
         if(batch.length) await tg(token,"deleteMessages",{chat_id:item.chatId,message_ids:batch});
       }
     } catch(e) {
-      console.warn("⚠️ 自动删除失败，5分钟后重试：",e.message);
+      const errText=String(e?.message||e);
+      if(/Unauthorized/i.test(errText)) {
+        console.warn("⚠️ 自动删除停止重试：Token 无效或不匹配，旧任务不再循环重试");
+        continue;
+      }
+      console.warn("⚠️ 自动删除失败，5分钟后重试：",errText);
       item.deleteAt=Date.now()+5*60000;
       keep.push(item);
     }
