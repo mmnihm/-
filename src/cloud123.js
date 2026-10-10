@@ -168,9 +168,9 @@ export function createWebDavClient(config = {}) {
         } catch (e) {
           lastError = e;
           const message = String(e?.message || e);
-          const locked = /(?:HTTP\\s*)?423|Locked/i.test(message);
+          const locked = /(?:HTTP\s*)?423|Locked/i.test(message);
           const retryable = locked ||
-            /(?:HTTP\\s*)?(?:408|429|5\\d\\d)\\b|content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network|UND_ERR_HEADERS_TIMEOUT|Headers Timeout Error|EPIPE|UND_ERR_SOCKET/i.test(message);
+            /(?:HTTP\s*)?(?:408|429|5\d\d)\\b|content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network|UND_ERR_HEADERS_TIMEOUT|Headers Timeout Error|EPIPE|UND_ERR_SOCKET/i.test(message);
           console.warn("⚠️ 123云盘上传:", fileName, "attempt=" + attempt + "/" + maxAttempts, message);
           if (!retryable || attempt === maxAttempts) break;
           // 423 使用 10/30/60 秒退避，避免连续请求继续撞上服务端锁。
