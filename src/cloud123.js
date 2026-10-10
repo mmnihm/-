@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Transform } from "node:stream";
+import { Agent } from "undici";
+
+const webDavDispatcher = new Agent({
+  connectTimeout: 30000,
+  headersTimeout: 30 * 60 * 1000,
+  bodyTimeout: 30 * 60 * 1000
+});
 
 function cleanBaseUrl(value) {
   const raw = String(value || "").trim();
@@ -34,7 +40,8 @@ async function request(url, options = {}) {
     return await fetch(url, {
       ...options,
       headers,
-      signal: controller.signal
+      signal: controller.signal,
+      dispatcher: webDavDispatcher
     });
   } catch (e) {
     if (e?.name === "AbortError") throw new Error("123云盘请求超时");
@@ -121,39 +128,49 @@ export function createWebDavClient(config = {}) {
       let lastError = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const body = await fs.promises.readFile(localPath);
-          if (body.length !== stat.size) throw new Error("本地文件大小发生变化");
-          if (typeof onProgress === "function") {
-            try { onProgress(0, body.length); } catch {}
+          const currentStat = await fs.promises.stat(localPath);
+          if (!currentStat.isFile() || currentStat.size !== stat.size) {
+            throw new Error("本地文件大小发生变化");
           }
-          const r = await request(target, {
-            method: "PUT",
-            username,
-            password,
-            headers: {
-              "content-type": "application/octet-stream",
-              "content-length": String(body.length)
-            },
-            body,
-            timeoutMs: Math.max(180000, Math.min(30 * 60 * 1000, 180000 + Math.ceil(body.length / 1024 / 1024) * 4000))
-          });
+          const body = fs.createReadStream(localPath);
+          if (typeof onProgress === "function") {
+            try { onProgress(0, stat.size); } catch {}
+          }
+          let r;
+          try {
+            r = await request(target, {
+              method: "PUT",
+              username,
+              password,
+              headers: {
+                "content-type": "application/octet-stream",
+                "content-length": String(stat.size)
+              },
+              body,
+              duplex: "half",
+              timeoutMs: Math.max(180000, Math.min(30 * 60 * 1000, 180000 + Math.ceil(stat.size / 1024 / 1024) * 4000))
+            });
+          } catch (e) {
+            body.destroy();
+            throw e;
+          }
           if (![200,201,204].includes(r.status)) {
             let detail = "";
             try { detail = (await r.text()).slice(0,300); } catch {}
             throw new Error("123云盘上传失败 HTTP " + r.status + (detail ? "：" + detail : ""));
           }
           if (typeof onProgress === "function") {
-            try { onProgress(body.length, body.length); } catch {}
+            try { onProgress(stat.size, stat.size); } catch {}
           }
-          return {size: body.length};
+          return {size: stat.size};
         } catch (e) {
           lastError = e;
           const message = String(e?.message || e);
           const locked = /423|Locked/.test(message);
-          const retryable = locked || /content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network/i.test(message);
+          const retryable = !locked && /content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network|UND_ERR_HEADERS_TIMEOUT|Headers Timeout Error/i.test(message);
           console.warn("⚠️ 123云盘上传重试:", fileName, attempt + "/3", message);
           if (!retryable || attempt === 3) break;
-          await new Promise(resolve => setTimeout(resolve, locked ? 20000 * attempt : 3000 * attempt));
+          await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
         }
       }
       throw lastError || new Error("123云盘上传失败");
