@@ -4866,11 +4866,11 @@ function folderSummaryKeyboard(directoryId,count,offset=0) {
   const rows=[];
   if(offset<count) {
     rows.push([{
-      text:offset===0?"📦 获取全部资源":"📦 获取剩余资源",
+      text:offset===0?"📦 开始获取资源":"📦 获取剩余资源",
       callback_data:"get:"+directoryId+":"+offset
     }]);
   }
-  if(offset>0) rows.push([{text:"⬅️ 返回资源目录",callback_data:"dirs"}]);
+  rows.push([{text:"⬅️ 返回资源目录",callback_data:"dirs"}]);
   return {inline_keyboard:rows};
 }
 function folderProgressKeyboard(directoryId,count,nextOffset) {
@@ -4880,6 +4880,19 @@ function folderProgressKeyboard(directoryId,count,nextOffset) {
   return {inline_keyboard:rows};
 }
 function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId)===String(id)).sort((a,b)=>Number(a.messageId)-Number(b.messageId)); }
+function directoryResourceCounts(items) {
+  const list=Array.isArray(items)?items:[];
+  let videos=0, files=0;
+  const albums=new Set();
+  for(const item of list) {
+    const groupId=String(item?.mediaGroupId||"").trim();
+    const chatId=String(item?.chatId||"");
+    if(groupId) albums.add(chatId+":"+groupId);
+    if(isVideoResource(item)) videos++;
+    else if(!groupId) files++;
+  }
+  return {videos,albums:albums.size,files,total:list.length};
+}
 function directoryBatchItems(all, offset=0, limit=10, preserveAlbum=true) {
   const list=Array.isArray(all)?all:[];
   let i=Math.max(0,Number(offset)||0);
@@ -8860,53 +8873,23 @@ async function handleDirectoryCallback(token, q, child=false) {
   const safeDescription=String(d.description||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   if(data.startsWith("dir:")) {
-    // 先移除旧目录键盘，避免操作按钮留在新发文件上方。
-    void tg(token,"editMessageReplyMarkup",{chat_id:chatId,message_id:messageId,reply_markup:{inline_keyboard:[]}}).catch(()=>{});
-    if(!all.length) {
-      return sendHtml(token,chatId,"📁 <b>"+safe+"</b>\\n\\n📭 这个文件夹目前没有可获取的资源。",{reply_markup:directoryInlineKeyboard()});
-    }
-    const member=await allowed(TOKEN,uid);
-    const selectedBatch=directoryBatchItems(all,0,10,true);
-    const guest=withoutVideosForGuest(selectedBatch.items,member,uid,member);
-    if(!guest.items.length) return guestVideoNotice(token,chatId);
-    const first=guest.items;
-    // 先在聊天里显示进度，避免媒体下载/相册整理期间用户误以为按钮没反应。
-    let progressMessage;
-    let quotaSettled=false;
-    try {
-      progressMessage=await tg(token,"sendMessage",{
-        chat_id:chatId,
-        text:"⏳ 正在原样转发仓库消息，请稍候……"
-      });
-      const album=await sendResourceAlbum(token,chatId,first);
-      const sent=Number(album?.sent||0);
-      if(!member&&!isAdmin(uid)&&first.length>sent) releaseNonMemberQuotaReservation(uid,first.length-sent);
-      if(sent>0) {
-        recordStat(uid,"download",sent);
-        for(const item of (Array.isArray(album?.sentItems)?album.sentItems:first.slice(0,sent))) {
-          recordResourceDownload(item);
-          recordRecent(uid,item);
-        }
-        if(!member&&!isAdmin(uid)) consumeVideoQuota(uid,Array.isArray(album?.sentItems)?album.sentItems:first.slice(0,sent));
-        else saveDb();
-      }
-      quotaSettled=true;
-      // 发送数量为 0 时不推进进度，避免资源没发出去却被跳过。
-      const next=sent>0?(member?selectedBatch.nextOffset:Math.min(sent,all.length)):0;
-      const quotaDone=!member&&!isAdmin(uid)&&nonMemberDailyRemaining(uid)<=0;
-      const inviteText=quotaDone?"\\n\\n🎁 今日免费资源额度已用完。照片、视频和文件都计入额度。":"";
-      const summary=(sent>0
-        ? "📁 "+safe+(safeDescription?" · 📝 "+safeDescription:"")+"  ·  "+next+"/"+all.length+"\\n📤 本组已发送："+sent+" 个"
-        : "⚠️ <b>本组没有成功发送</b>\\n📁 "+safe+"\\n请点「再来一组」重试；本次不会跳过这批资源。")+inviteText;
-      try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
-      return sendHtml(token,chatId,summary,{reply_markup:folderProgressKeyboard(d.id,all.length,next)});
-    } catch(e) {
-      if(!quotaSettled&&!member&&!isAdmin(uid)) releaseNonMemberQuotaReservation(uid,first.length);
-      console.error("DIRECTORY ALBUM SEND FAILED:",String(e?.message||e));
-      const errText="⚠️ <b>本组发送失败</b>\\n\\n"+escapeHtml(e?.message||e)+"\\n请稍后重试或返回目录重新选择。";
-      try { if(progressMessage?.message_id) await tg(token,"deleteMessage",{chat_id:chatId,message_id:progressMessage.message_id}); } catch(e) {}
-      return sendHtml(token,chatId,errText,{reply_markup:folderProgressKeyboard(d.id,all.length,0)});
-    }
+    const counts=directoryResourceCounts(all);
+    const statsText=
+      "📁 <b>"+safe+"</b>"+
+      (safeDescription?"\n📝 "+safeDescription:"")+
+      "\n━━━━━━━━━━━━━━"+
+      "\n🎬 视频：<b>"+counts.videos+"</b> 个"+
+      "\n🖼️ 相册：<b>"+counts.albums+"</b> 组"+
+      "\n📄 其他文件：<b>"+counts.files+"</b> 个"+
+      "\n📦 资源记录：<b>"+counts.total+"</b> 条"+
+      (all.length?"\n\n👇 点击下方按钮开始获取资源":"\n\n📭 这个文件夹目前没有可获取的资源。");
+    return safeEdit(token,{
+      chat_id:chatId,
+      message_id:messageId,
+      text:statsText,
+      parse_mode:"HTML",
+      reply_markup:folderSummaryKeyboard(d.id,all.length,0)
+    });
   }
 
   // “获取下一组”按钮所在的旧控制消息不再保留键盘；新控制消息会放在本组文件之后。
