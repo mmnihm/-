@@ -126,7 +126,9 @@ export function createWebDavClient(config = {}) {
       await this.ensureDirectory(remoteDir);
       const target = joinUrl(baseUrl, remoteDir) + encodePathPart(fileName);
       let lastError = null;
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      // 有限重试，423 锁定与网络瞬时错误采用不同退避策略。
+      const maxAttempts = 4;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           const currentStat = await fs.promises.stat(localPath);
           if (!currentStat.isFile() || currentStat.size !== stat.size) {
@@ -166,11 +168,17 @@ export function createWebDavClient(config = {}) {
         } catch (e) {
           lastError = e;
           const message = String(e?.message || e);
-          const locked = /423|Locked/.test(message);
-          const retryable = !locked && /content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network|UND_ERR_HEADERS_TIMEOUT|Headers Timeout Error/i.test(message);
-          console.warn("⚠️ 123云盘上传重试:", fileName, attempt + "/3", message);
-          if (!retryable || attempt === 3) break;
-          await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
+          const locked = /(?:HTTP\\s*)?423|Locked/i.test(message);
+          const retryable = locked ||
+            /(?:HTTP\\s*)?(?:408|429|5\\d\\d)\\b|content-length|请求超时|fetch failed|ECONNRESET|ETIMEDOUT|network|UND_ERR_HEADERS_TIMEOUT|Headers Timeout Error|EPIPE|UND_ERR_SOCKET/i.test(message);
+          console.warn("⚠️ 123云盘上传:", fileName, "attempt=" + attempt + "/" + maxAttempts, message);
+          if (!retryable || attempt === maxAttempts) break;
+          // 423 使用 10/30/60 秒退避，避免连续请求继续撞上服务端锁。
+          const delay = locked
+            ? [10000, 30000, 60000][attempt - 1]
+            : Math.min(20000, 5000 * attempt);
+          console.warn("⏳ " + Math.ceil(delay / 1000) + " 秒后重试上传:", fileName);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
       throw lastError || new Error("123云盘上传失败");
