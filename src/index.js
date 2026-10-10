@@ -3434,8 +3434,24 @@ async function cloud123ScanAndUpload(uid, options={}) {
       }
 
       const originalName=cloud123RemoteName(message.file?.name || item.title || ("resource-"+item.messageId));
-      const tempDir=path.join("/tmp","cloud123-upload");
+      // Prefer the separate data disk on VPS so large media cannot fill the root filesystem.
+      const tempRoot = fs.existsSync("/data") ? "/data" : "/tmp";
+      const tempDir=path.join(tempRoot,"cloud123-upload");
       fs.mkdirSync(tempDir,{recursive:true});
+      // Remove abandoned temporary files left by a forced process exit; keep recent files untouched.
+      try {
+        const entries = await fs.promises.readdir(tempDir, {withFileTypes:true});
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          const stalePath = path.join(tempDir, entry.name);
+          try {
+            const staleStat = await fs.promises.stat(stalePath);
+            if (Date.now() - staleStat.mtimeMs > 6 * 60 * 60 * 1000) {
+              await fs.promises.rm(stalePath, {force:true});
+            }
+          } catch {}
+        }
+      } catch {}
       const tempPath=path.join(tempDir,String(item.messageId)+"-"+crypto.randomUUID()+"-"+originalName);
       try {
         let downloadError=null;
