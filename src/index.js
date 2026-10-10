@@ -3969,10 +3969,10 @@ function recommendedResourceCounts(items){
   return counts;
 }
 function recommendedDirectoryText(entry){
-  if(!entry) return "<b>♻️ 为您推荐</b>\\n━━━━━━━━━━━━━━\\n\\n📭 暂时没有可推荐的资源文件夹。";
+  if(!entry) return "<b>♻️ 为您推荐</b>\n━━━━━━━━━━━━━━\n\n📭 暂时没有可推荐的资源文件夹。";
   const d=entry.directory, counts=recommendedResourceCounts(entry.items);
   const name=escapeHtml(String(d.name||"未命名资源"));
-  return "<b>♻️ 为您推荐</b>\\n━━━━━━━━━━━━━━\\n\\n📦 文件描述：<b>"+name+"</b>\\n📸 图片："+counts.photos+" 个\\n🎬 视频："+counts.videos+" 个\\n📄 文件："+counts.files+" 个";
+  return "<b>♻️ 为您推荐</b>\n━━━━━━━━━━━━━━\n\n📦 文件描述：<b>"+name+"</b>\n📸 图片："+counts.photos+" 个\n🎬 视频："+counts.videos+" 个\n📄 文件："+counts.files+" 个";
 }
 function recommendedDirectoryKeyboard(entry){
   if(!entry) return {inline_keyboard:[[{text:"⬅️ 返回",callback_data:"hub"}]]};
@@ -7979,18 +7979,18 @@ async function handleDirectoryCallback(token, q, child=false) {
       if(sent>0){
         recordStat(uid,"download",sent);
         for(const item of sentItems){recordResourceDownload(item);recordRecent(uid,item);}
-        if(!member&&!isAdmin(uid))consumeVideoQuota(uid,sentItems);else saveDb();
+        if(!member&&!isAdmin(uid)){consumeVideoQuota(uid,sentItems);if(guest.items.length>sent)releaseNonMemberQuotaReservation(uid,guest.items.length-sent);}else saveDb();
       }else{
         if(!member&&!isAdmin(uid))releaseNonMemberQuotaReservation(uid,guest.items.length);
         saveDb();
       }
       settled=true;
       const updated=recommendedDirectory();
-      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 推荐资源获取完成</b>\\n━━━━━━━━━━━━━━\\n\\n📦 文件夹："+escapeHtml(String(directory.name||"未命名资源"))+"\\n📤 成功发送："+sent+" 个\\n⚠️ 失败："+Math.max(0,guest.items.length-sent)+" 个\\n\\n👇 还可以继续获取其他类型",parse_mode:"HTML",reply_markup:recommendedDirectoryKeyboard(updated)});
+      return safeEdit(token,{chat_id:chatId,message_id:messageId,text:"<b>✅ 推荐资源获取完成</b>\n━━━━━━━━━━━━━━\n\n📦 文件夹："+escapeHtml(String(directory.name||"未命名资源"))+"\n📤 成功发送："+sent+" 个\n⚠️ 失败："+Math.max(0,guest.items.length-sent)+" 个\n\n👇 还可以继续获取其他类型",parse_mode:"HTML",reply_markup:recommendedDirectoryKeyboard(updated)});
     }catch(e){
       if(!settled&&!member&&!isAdmin(uid))releaseNonMemberQuotaReservation(uid,guest.items.length);
       console.error("RECOMMENDED DIRECTORY DELIVERY:",String(e?.telegramDescription||e?.message||e));
-      return sendHtml(token,chatId,"<b>❌ 推荐资源获取失败</b>\\n\\n原因："+escapeHtml(String(e?.telegramDescription||e?.message||e)).slice(0,500),{});
+      return sendHtml(token,chatId,"<b>❌ 推荐资源获取失败</b>\n\n原因："+escapeHtml(String(e?.telegramDescription||e?.message||e)).slice(0,500),{});
     }
   }
   if(data.startsWith("tag:")){void answer();const tag=data.slice(4),items=db.resources.filter(x=>resourceTags(x).includes(tag)).slice(0,20);return safeEdit(token,{chat_id:chatId,message_id:messageId,text:userFeatureListText("🏷️ "+escapeHtml(tag),items),parse_mode:"HTML",reply_markup:userFeatureListKeyboard(items,"gettag:","hub:tags")});}
