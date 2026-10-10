@@ -8,6 +8,7 @@
     "check": "node --check src/index.js"
   },
   "dependencies": {
+    "undici": "^6.21.3",
     "teleproto": "1.229.1",
     "mysql2": "^3.15.1"
   }
