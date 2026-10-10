@@ -5971,9 +5971,19 @@ async function supportHandleAdminReply(token,msg) {
     const key=supportSessionKey(token,route.userId);
     if(supportSessionStore().supportSessions[key]) supportSessionStore().supportSessions[key].updatedAt=Date.now();
     saveDb();
+    try {
+      await sendHtml(token,msg.chat.id,"✅ <b>客服回复成功</b>\\n\\n消息已成功发送给用户 <code>"+escapeHtml(String(route.userId))+"</code>。");
+    } catch(noticeError) {
+      console.warn("⚠️ 客服回复成功提示发送失败:",String(noticeError?.message||noticeError));
+    }
     return true;
   } catch(e) {
-    await sendHtml(token,msg.chat.id,"❌ 回复用户失败：<code>"+escapeHtml(String(e?.telegramDescription||e?.message||e).slice(0,300))+"</code>");
+    const reason=String(e?.telegramDescription||e?.message||e||"未知错误").slice(0,300);
+    try {
+      await sendHtml(token,msg.chat.id,"❌ <b>客服回复失败</b>\\n\\n用户：<code>"+escapeHtml(String(route.userId))+"</code>\\n原因：<code>"+escapeHtml(reason)+"</code>");
+    } catch(noticeError) {
+      console.warn("⚠️ 客服回复失败提示发送失败:",String(noticeError?.message||noticeError));
+    }
     return true;
   }
 }
