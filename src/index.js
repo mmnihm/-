@@ -4930,15 +4930,24 @@ function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId
 function directoryResourceCounts(items) {
   const list=Array.isArray(items)?items:[];
   let videos=0, files=0;
-  const albums=new Set();
+  const photoAlbums=new Set();
   for(const item of list) {
     const groupId=String(item?.mediaGroupId||"").trim();
     const chatId=String(item?.chatId||"");
-    if(groupId) albums.add(chatId+":"+groupId);
-    if(isVideoResource(item)) videos++;
-    else if(!groupId) files++;
+    const type=String(item?.fileType||"").toLowerCase();
+    const isPhoto=type==="photo"||type==="photos"||type==="image"||type==="images"||Boolean(item?.photo);
+    const isVideo=isVideoResource(item);
+    if(isVideo) {
+      videos++;
+    } else if(isPhoto) {
+      // 只把包含图片的原生媒体组计为相册；不再把视频组重复计入相册。
+      if(groupId) photoAlbums.add(chatId+":"+groupId);
+      else files++;
+    } else if(!groupId) {
+      files++;
+    }
   }
-  return {videos,albums:albums.size,files,total:list.length};
+  return {videos,albums:photoAlbums.size,files,total:list.length};
 }
 function directoryBatchItems(all, offset=0, limit=10, preserveAlbum=true) {
   const list=Array.isArray(all)?all:[];
