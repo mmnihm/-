@@ -4930,20 +4930,29 @@ function directoryItems(id) { return db.resources.filter(r=>String(r.directoryId
 function directoryResourceCounts(items) {
   const list=Array.isArray(items)?items:[];
   let videos=0, files=0;
+  const groupHasVideo=new Set();
+  const photoGroups=new Set();
+  for(const item of list) {
+    const groupId=String(item?.mediaGroupId||"").trim();
+    if(!groupId) continue;
+    const key=String(item?.chatId||"")+":"+groupId;
+    if(isVideoResource(item)) groupHasVideo.add(key);
+    const type=String(item?.fileType||"").toLowerCase();
+    if(type==="photo"||type==="photos"||type==="image"||type==="images"||Boolean(item?.photo)) photoGroups.add(key);
+  }
   const photoAlbums=new Set();
   for(const item of list) {
     const groupId=String(item?.mediaGroupId||"").trim();
-    const chatId=String(item?.chatId||"");
+    const key=String(item?.chatId||"")+":"+groupId;
     const type=String(item?.fileType||"").toLowerCase();
     const isPhoto=type==="photo"||type==="photos"||type==="image"||type==="images"||Boolean(item?.photo);
     const isVideo=isVideoResource(item);
     if(isVideo) {
       videos++;
-    } else if(isPhoto) {
-      // 只把包含图片的原生媒体组计为相册；不再把视频组重复计入相册。
-      if(groupId) photoAlbums.add(chatId+":"+groupId);
-      else files++;
-    } else if(!groupId) {
+    } else if(groupId) {
+      // 混合媒体组归到视频组，不重复计入相册；纯图片组才计为相册。
+      if(photoGroups.has(key)&&!groupHasVideo.has(key)) photoAlbums.add(key);
+    } else if(!isPhoto) {
       files++;
     }
   }
