@@ -6,10 +6,15 @@ const token = process.env.BOT_TOKEN;
 if (!token) throw new Error("请设置 BOT_TOKEN 环境变量");
 
 const apiUrl = "https://api.telegram.org/bot" + token + "/";
-const rawDataDir = String(process.env.DATA_DIR || "./data").trim().replace(/["']/g, "").trim();
-const dir = path.resolve(rawDataDir || "./data");
+const configuredDataDir = String(process.env.DATA_DIR || "/app/data");
+// Hostless 偶尔会把环境变量的引号一起传入；彻底剥离引号和首尾空白。
+const rawDataDir = configuredDataDir.replace(/[\u0000-\u001f]/g, "").replace(/["\']/g, "").trim();
+const dir = path.resolve(rawDataDir || "/app/data");
 const file = path.join(dir, "support-data.json");
 fs.mkdirSync(dir, { recursive: true });
+console.log("BOOT_VERSION=hostless-path-fix-2026-10-17");
+console.log("DATA_DIR_CONFIG=" + JSON.stringify(configuredDataDir));
+console.log("DATA_DIR_RESOLVED=" + JSON.stringify(dir));
 
 const configuredAdminId = String(process.env.ADMIN_ID || "").trim();
 let db = {
