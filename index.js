@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import http from "node:http";
 
 const token = process.env.BOT_TOKEN;
 if (!token) throw new Error("请设置 BOT_TOKEN 环境变量");
@@ -294,5 +295,24 @@ process.on("SIGINT", () => {
   try { save(); } finally { process.exit(0); }
 });
 
-console.log("客服机器人启动，数据文件：" + file);
-loop();
+const port = Number(process.env.PORT || 3000);
+const server = http.createServer((req, res) => {
+  // Hostless 健康检查：让平台能确认进程已启动。
+  res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify({
+    ok: true,
+    service: "telegram-support-bot",
+    status: "running"
+  }));
+});
+
+server.listen(port, "0.0.0.0", () => {
+  console.log("HTTP 健康检查服务已启动，监听端口：" + port);
+  console.log("客服机器人启动，数据文件：" + file);
+  loop();
+});
+
+server.on("error", error => {
+  console.error("HTTP 服务启动失败：", error.message);
+  process.exit(1);
+});
