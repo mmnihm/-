@@ -5,7 +5,7 @@ const token = process.env.BOT_TOKEN;
 if (!token) throw new Error("请设置 BOT_TOKEN 环境变量");
 
 const apiUrl = "https://api.telegram.org/bot" + token + "/";
-const rawDataDir = (process.env.DATA_DIR || "./data").trim().replace(/^["']+|["']+$/g, "");
+const rawDataDir = String(process.env.DATA_DIR || "./data").trim().replace(/["']/g, "").trim();
 const dir = path.resolve(rawDataDir || "./data");
 const file = path.join(dir, "support-data.json");
 fs.mkdirSync(dir, { recursive: true });
