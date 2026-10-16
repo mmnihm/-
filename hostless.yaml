@@ -1,0 +1,10 @@
+build:
+  system: auto
+  command: "npm install"
+
+start_command: "npm start"
+
+health_check:
+  type: http
+  http_path: "/"
+  interval_in_seconds: 30
