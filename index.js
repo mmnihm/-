@@ -6,14 +6,15 @@ const token = process.env.BOT_TOKEN;
 if (!token) throw new Error("请设置 BOT_TOKEN 环境变量");
 
 const apiUrl = "https://api.telegram.org/bot" + token + "/";
+const dataDirWasConfigured = Boolean(String(process.env.DATA_DIR || "").trim());
 const configuredDataDir = String(process.env.DATA_DIR || "/app/data");
-// 先输出诊断信息，避免 mkdirSync 崩溃时看不到版本标记。
-console.log("BOOT_VERSION=hostless-diagnostics-2026-10-17");
+// 先输出诊断信息，避免目录创建失败时看不到版本标记。
+console.log("BOOT_VERSION=hostless-data-dir-fallback-2026-10-17");
 console.log("PROCESS_CWD=" + JSON.stringify(process.cwd()));
 console.log("DATA_DIR_CONFIG=" + JSON.stringify(configuredDataDir));
-const rawDataDir = configuredDataDir.replace(/[\u0000-\u001f]/g, "").replace(/["\']/g, "").trim();
-const dir = path.resolve(rawDataDir || "/app/data");
-const file = path.join(dir, "support-data.json");
+const rawDataDir = configuredDataDir.replace(/[\\u0000-\\u001f]/g, "").replace(/["\\']/g, "").trim();
+let dir = path.resolve(rawDataDir || "/app/data");
+let file = path.join(dir, "support-data.json");
 console.log("DATA_DIR_RESOLVED=" + JSON.stringify(dir));
 console.log("APP_DIR_EXISTS=" + fs.existsSync("/app"));
 try {
@@ -28,7 +29,14 @@ try {
     appDirExists: fs.existsSync("/app"),
     dataDir: dir
   }));
-  throw error;
+  // 显式指定 DATA_DIR 时不偷偷换目录，避免用户以为数据仍写入持久化盘。
+  if (dataDirWasConfigured) throw error;
+  // Hostless 未提供 DATA_DIR 且默认目录不可写时，退回临时目录以便服务能启动。
+  // 临时目录可能在重启/重新部署后清空；配置持久化目录后应设置 DATA_DIR。
+  dir = path.join("/tmp", "telegram-support-bot-data");
+  file = path.join(dir, "support-data.json");
+  fs.mkdirSync(dir, { recursive: true });
+  console.warn("DATA_DIR_FALLBACK=/tmp/telegram-support-bot-data; persistence may not survive redeploy");
 }
 
 const configuredAdminId = String(process.env.ADMIN_ID || "").trim();
